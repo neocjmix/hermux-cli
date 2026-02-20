@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const fsp = require('fs/promises');
 const { pipeline } = require('stream/promises');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const TelegramBot = require('node-telegram-bot-api');
 const { load, getEnabledRepos, addChatIdToRepo, addOrUpdateRepo, setGlobalBotToken, resetConfig, CONFIG_PATH } = require('./lib/config');
 const { runOpencode } = require('./lib/runner');
@@ -18,6 +18,9 @@ const IMAGE_UPLOAD_DIR = '.opencode_mobile_gateway/uploads';
 const RUNTIME_DIR = path.join(__dirname, '..', 'runtime');
 const PID_PATH = path.join(RUNTIME_DIR, 'gateway.pid');
 const LOG_PATH = path.join(RUNTIME_DIR, 'gateway.log');
+const MERMAID_RENDER_DIR = '.opencode_mobile_gateway/mermaid';
+const STREAM_EDIT_MIN_INTERVAL_COMPACT_MS = 1200;
+const STREAM_EDIT_MIN_INTERVAL_VERBOSE_MS = 350;
 let connectMutationQueue = Promise.resolve();
 
 function withConnectMutationLock(task) {
@@ -39,6 +42,7 @@ function getHelpText() {
     '/status - show runtime state',
     '/session - show current opencode session id',
     '/version - show opencode output + hermux version',
+    '/interrupt - stop current running task',
     '/restart - restart daemon process',
     '/reset - reset current chat session',
     '/verbose on - enable tool/step stream',
@@ -459,6 +463,68 @@ async function editHtml(bot, chatId, messageId, html) {
   }
 }
 
+async function safeSendPhoto(bot, chatId, filePath, caption) {
+  try {
+    const stream = fs.createReadStream(filePath);
+    return await bot.sendPhoto(chatId, stream, caption ? { caption } : undefined);
+  } catch (err) {
+    console.error('send photo failed:', err.message);
+    return null;
+  }
+}
+
+function extractMermaidBlocks(text) {
+  const src = String(text || '');
+  const out = [];
+  const re = /```mermaid\s*([\s\S]*?)```/gi;
+  let m = null;
+  while ((m = re.exec(src)) !== null) {
+    const body = String(m[1] || '').trim();
+    if (body) out.push(body);
+  }
+  return out;
+}
+
+function hasMermaidRenderer() {
+  try {
+    const found = spawnSync('which', ['mmdc'], { stdio: 'ignore' });
+    return found.status === 0;
+  } catch (_err) {
+    return false;
+  }
+}
+
+function renderMermaidToPng(instance, chatId, blocks) {
+  const capped = blocks.slice(0, 3);
+  const outPaths = [];
+  const dir = path.resolve(instance.workdir, MERMAID_RENDER_DIR);
+  fs.mkdirSync(dir, { recursive: true });
+
+  for (let i = 0; i < capped.length; i++) {
+    const now = new Date().toISOString().replace(/[.:]/g, '-');
+    const base = `tg_${String(chatId).replace(/[^0-9-]/g, '_')}_${now}_${i + 1}`;
+    const inPath = path.join(dir, `${base}.mmd`);
+    const outPath = path.join(dir, `${base}.png`);
+    fs.writeFileSync(inPath, capped[i] + '\n', 'utf8');
+
+    const rendered = spawnSync('mmdc', ['-i', inPath, '-o', outPath, '-b', 'transparent'], {
+      cwd: instance.workdir,
+      env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' },
+      stdio: 'pipe',
+      encoding: 'utf8',
+    });
+
+    if (rendered.status === 0 && fs.existsSync(outPath)) {
+      outPaths.push(outPath);
+    } else {
+      const stderr = String(rendered.stderr || '').trim();
+      console.error(`[mermaid] render failed (${i + 1}): ${stderr || 'unknown error'}`);
+    }
+  }
+
+  return outPaths;
+}
+
 function formatToolBrief(evt) {
   const name = evt.name || 'tool';
   const input = evt.input || {};
@@ -506,6 +572,107 @@ function appendHermuxVersion(text, version) {
   const tag = `hermux version: ${version}`;
   if (!base) return tag;
   return `${base}\n\n${tag}`;
+}
+
+function buildStreamingStatusHtml(text, verbose) {
+  const raw = String(text || '');
+  if (verbose) {
+    const tailVerbose = raw.length > 1800 ? '...' + raw.slice(-1800) : raw;
+    return `<b>Streaming response...</b>\n\n<pre>${escapeHtml(tailVerbose)}</pre>`;
+  }
+
+  const compact = raw.replace(/\s+/g, ' ').trim();
+  const tailCompact = compact.length > 240 ? '...' + compact.slice(-240) : compact;
+  const chars = compact.length;
+  return `<b>Streaming response...</b>\n<code>mode: compact | chars: ${chars}</code>\n\n${escapeHtml(tailCompact || '(waiting for content)')}`;
+}
+
+function buildLiveStatusPanelHtml({
+  repoName,
+  verbose,
+  phase,
+  stepCount,
+  toolCount,
+  queueLength,
+  queuedPreview,
+  sessionId,
+  promptPreview,
+  replyContext,
+  streamText,
+  lastTool,
+  lastRaw,
+  lastStepReason,
+}) {
+  const phaseIcon = phase === 'running'
+    ? '🏃'
+    : phase === 'done'
+      ? '✅'
+      : phase === 'interrupted'
+        ? '🛑'
+        : phase === 'timeout'
+          ? '⏱️'
+          : '❌';
+
+  const lines = [];
+  lines.push(`<b>${phaseIcon} ${escapeHtml(repoName)} · ${escapeHtml(phase)}</b>`);
+  lines.push(`<code>🧠 ${verbose ? 'verbose' : 'compact'}</code>`);
+  lines.push(`<code>🔁 ${stepCount} · 🧰 ${toolCount}</code>`);
+  lines.push(`<code>📥 queue: ${queueLength || 0}</code>`);
+
+  if (queuedPreview) {
+    const qv = String(queuedPreview).replace(/\s+/g, ' ').trim();
+    const qvTail = qv.length > 80 ? qv.slice(0, 80) + '...' : qv;
+    lines.push(`⏭️ ${escapeHtml(qvTail)}`);
+  }
+
+  const shortSession = String(sessionId || '').trim();
+  if (shortSession) {
+    lines.push(`<code>🪪 ${escapeHtml(shortSession.slice(0, 20))}</code>`);
+  }
+
+  if (promptPreview) {
+    const pv = String(promptPreview).replace(/\s+/g, ' ').trim();
+    const pvTail = pv.length > 120 ? pv.slice(0, 120) + '...' : pv;
+    lines.push(`📝 ${escapeHtml(pvTail)}`);
+  }
+
+  if (replyContext) {
+    const rc = String(replyContext).replace(/\s+/g, ' ').trim();
+    const rcTail = rc.length > 120 ? rc.slice(0, 120) + '...' : rc;
+    lines.push(`[Reply context] ${escapeHtml(rcTail)}`);
+  }
+
+  const streamRaw = String(streamText || '');
+  if (streamRaw) {
+    if (verbose) {
+      const tailVerbose = streamRaw.length > 900 ? '...' + streamRaw.slice(-900) : streamRaw;
+      lines.push(`<pre>${escapeHtml(tailVerbose)}</pre>`);
+    } else {
+      const compact = streamRaw.replace(/\s+/g, ' ').trim();
+      const tailCompact = compact.length > 160 ? '...' + compact.slice(-160) : compact;
+      lines.push(`✍️ ${escapeHtml(tailCompact || '(waiting)')}`);
+    }
+  }
+
+  if (lastTool) {
+    const t = String(lastTool).trim();
+    const tt = t.length > 110 ? t.slice(0, 110) + '...' : t;
+    lines.push(`🔧 <code>${escapeHtml(tt)}</code>`);
+  }
+
+  if (lastStepReason) {
+    const r = String(lastStepReason).trim();
+    if (r) lines.push(`📍 <code>${escapeHtml(r)}</code>`);
+  }
+
+  if (lastRaw && verbose) {
+    const raw = String(lastRaw).trim();
+    const rawTail = raw.length > 160 ? raw.slice(0, 160) + '...' : raw;
+    lines.push(`🧾 <code>${escapeHtml(rawTail)}</code>`);
+  }
+
+  const out = lines.join('\n');
+  return out.length > 3800 ? out.slice(0, 3797) + '...' : out;
 }
 
 function getImagePayloadFromMessage(msg) {
@@ -654,7 +821,14 @@ function refreshRuntimeRouting(chatRouter, states) {
   const enabledNames = new Set(repos.map(r => r.name));
   for (const repo of repos) {
     if (!states.has(repo.name)) {
-      states.set(repo.name, { running: false, verbose: false });
+      states.set(repo.name, {
+        running: false,
+        verbose: false,
+        currentProc: null,
+        interruptRequested: false,
+        queue: [],
+        panelRefresh: null,
+      });
     }
   }
   for (const name of states.keys()) {
@@ -916,6 +1090,212 @@ async function handleRestartCommand(bot, chatId, repo, state) {
   setTimeout(() => process.exit(0), 50);
 }
 
+async function startPromptRun(bot, repo, state, runItem) {
+  const chatId = runItem.chatId;
+  const promptText = runItem.promptText;
+  const promptPreview = runItem.promptPreview;
+  const isVersionPrompt = !!runItem.isVersionPrompt;
+  const replyContextPreview = runItem.replyContextPreview || '';
+
+  state.running = true;
+  state.interruptRequested = false;
+  state.currentProc = null;
+
+  console.log(`[${repo.name}] run: ${promptPreview.slice(0, 80)}`);
+
+  let finalText = '';
+  let toolCount = 0;
+  let stepCount = 0;
+  const toolNames = [];
+  const rawSamples = [];
+  let lastStepReason = null;
+  let activeSessionId = getSessionId(repo.name, chatId);
+  const hermuxVersion = String(HERMUX_VERSION || '').trim() || '0.0.0';
+  let lastStreamEditAt = 0;
+  let lastStreamSnapshot = '';
+  let lastToolBrief = '';
+  let lastRawBrief = '';
+  let lastPanelHtml = '';
+
+  const buildPanel = (phase) => buildLiveStatusPanelHtml({
+    repoName: repo.name,
+    verbose: !!state.verbose,
+    phase,
+    stepCount,
+    toolCount,
+    queueLength: Array.isArray(state.queue) ? state.queue.length : 0,
+    queuedPreview: Array.isArray(state.queue) && state.queue.length > 0 ? state.queue[0].promptPreview : '',
+    sessionId: activeSessionId,
+    promptPreview,
+    replyContext: replyContextPreview,
+    streamText: finalText,
+    lastTool: lastToolBrief,
+    lastRaw: lastRawBrief,
+    lastStepReason,
+  });
+
+  const statusMsg = await safeSend(bot, chatId, buildPanel('running'), { parse_mode: 'HTML' });
+  const statusMsgId = statusMsg ? statusMsg.message_id : null;
+
+  const refreshPanel = async (phase, force) => {
+    if (!statusMsgId) return;
+    const now = Date.now();
+    const minInterval = state.verbose ? STREAM_EDIT_MIN_INTERVAL_VERBOSE_MS : STREAM_EDIT_MIN_INTERVAL_COMPACT_MS;
+    if (!force && now - lastStreamEditAt < minInterval) return;
+    const html = buildPanel(phase);
+    if (!force && html === lastPanelHtml) return;
+    lastStreamEditAt = now;
+    lastPanelHtml = html;
+    await editHtml(bot, chatId, statusMsgId, html);
+  };
+  state.panelRefresh = async (force) => refreshPanel('running', !!force);
+
+  const proc = runOpencode(repo, promptText, {
+    sessionId: activeSessionId,
+    onEvent: async (evt) => {
+      const type = evt.type;
+      if (evt.sessionId) activeSessionId = evt.sessionId;
+
+      if (type === 'step_start') {
+        stepCount++;
+        await refreshPanel('running', false);
+        return;
+      }
+
+      if (type === 'text') {
+        if ((evt.content || '').trim()) {
+          finalText = evt.content;
+          if (statusMsgId && evt.content !== lastStreamSnapshot) {
+            lastStreamSnapshot = evt.content;
+            await refreshPanel('running', false);
+          }
+        }
+        return;
+      }
+
+      if (type === 'tool_use') {
+        toolCount++;
+        const brief = formatToolBrief(evt);
+        lastToolBrief = brief;
+        toolNames.push(brief);
+        await refreshPanel('running', false);
+        if (state.verbose && !statusMsgId) {
+          const toolMsg = `<code>${escapeHtml(brief)}</code>`;
+          await safeSend(bot, chatId, toolMsg, { parse_mode: 'HTML' });
+        }
+        return;
+      }
+
+      if (type === 'step_finish') {
+        lastStepReason = evt.reason || lastStepReason;
+        await refreshPanel('running', false);
+        return;
+      }
+
+      if (type === 'raw') {
+        const trimmed = (evt.content || '').trim().slice(0, 200);
+        if (trimmed) {
+          rawSamples.push(trimmed);
+          if (rawSamples.length > 3) rawSamples.shift();
+          lastRawBrief = trimmed;
+          await refreshPanel('running', false);
+          if (state.verbose && !statusMsgId) {
+            await safeSend(bot, chatId, `<pre>${escapeHtml(trimmed)}</pre>`, { parse_mode: 'HTML' });
+          }
+        }
+      }
+    },
+
+    onDone: async (exitCode, timeoutMsg, meta) => {
+      state.running = false;
+      const interrupted = !!state.interruptRequested;
+      state.interruptRequested = false;
+      state.currentProc = null;
+      state.panelRefresh = null;
+      if (meta && meta.sessionId) activeSessionId = meta.sessionId;
+      if (activeSessionId) {
+        try {
+          setSessionId(repo.name, chatId, activeSessionId);
+        } catch (e) {
+          console.error(`[${repo.name}] failed to persist session id:`, e.message);
+        }
+      }
+      const status = interrupted ? 'interrupted' : (timeoutMsg ? 'timeout' : (exitCode === 0 ? 'done' : `exit ${exitCode}`));
+
+      if (interrupted) {
+        await safeSend(bot, chatId, 'Interrupted current task.');
+      } else if (timeoutMsg) {
+        await safeSend(bot, chatId, `Timed out: ${timeoutMsg}`);
+      } else if (finalText.trim()) {
+        const mermaidBlocks = extractMermaidBlocks(finalText);
+        if (mermaidBlocks.length > 0) {
+          if (!hasMermaidRenderer()) {
+            await safeSend(
+              bot,
+              chatId,
+              'Mermaid blocks detected, but renderer is unavailable. Install mermaid-cli (`mmdc`) to receive rendered diagrams.'
+            );
+          } else {
+            const renderedPaths = renderMermaidToPng(repo, chatId, mermaidBlocks);
+            for (let i = 0; i < renderedPaths.length; i++) {
+              const caption = renderedPaths.length > 1 ? `Mermaid diagram ${i + 1}/${renderedPaths.length}` : 'Mermaid diagram';
+              await safeSendPhoto(bot, chatId, renderedPaths[i], caption);
+            }
+          }
+        }
+
+        const outgoingText = isVersionPrompt ? appendHermuxVersion(finalText, hermuxVersion) : finalText;
+        const html = md2html(outgoingText);
+        await sendHtml(bot, chatId, html);
+      } else {
+        const fallbackBase = buildNoOutputMessage({
+          exitCode,
+          stepCount,
+          toolCount,
+          toolNames,
+          stepReason: lastStepReason,
+          rawSamples,
+          logFile: repo.logFile,
+        });
+        const fallback = isVersionPrompt ? appendHermuxVersion(fallbackBase, hermuxVersion) : fallbackBase;
+        await safeSend(bot, chatId, fallback);
+      }
+
+      const summary = `[${status}] ${stepCount} step(s), ${toolCount} tool(s)`;
+      console.log(`[${repo.name}] ${summary}`);
+
+      if (statusMsgId) {
+        await refreshPanel(status, true);
+      }
+
+      if (Array.isArray(state.queue) && state.queue.length > 0) {
+        const nextItem = state.queue.shift();
+        await startPromptRun(bot, repo, state, nextItem);
+      }
+    },
+
+    onError: async (err) => {
+      state.running = false;
+      state.interruptRequested = false;
+      state.currentProc = null;
+      state.panelRefresh = null;
+      console.error(`[${repo.name}] error:`, err.message);
+      await safeSend(
+        bot,
+        chatId,
+        `Error: ${err.message}\n\nCheck that opencode is installed and workdir is accessible.`
+      );
+
+      if (Array.isArray(state.queue) && state.queue.length > 0) {
+        const nextItem = state.queue.shift();
+        await startPromptRun(bot, repo, state, nextItem);
+      }
+    },
+  });
+
+  state.currentProc = proc;
+}
+
 async function handleRepoMessage(bot, repo, state, msg) {
   const chatId = String(msg.chat.id);
   const text = (msg.text || '').trim();
@@ -932,7 +1312,7 @@ async function handleRepoMessage(bot, repo, state, msg) {
         `workdir: ${repo.workdir}`,
         '',
         `mode: ${state.verbose ? 'verbose (stream events)' : 'compact (final output only)'}`,
-        'commands: /repos, /status, /session, /version, /restart, /reset, /init, /verbose on, /verbose off, /whereami',
+        'commands: /repos, /status, /session, /version, /interrupt, /restart, /reset, /init, /verbose on, /verbose off, /whereami',
         '',
         'Send any prompt to run opencode.',
       ].join('\n')
@@ -944,7 +1324,7 @@ async function handleRepoMessage(bot, repo, state, msg) {
     await safeSend(
       bot,
       chatId,
-      `${repo.name}\nworkdir: ${repo.workdir}\nbusy: ${state.running ? 'yes' : 'no'}\nverbose: ${state.verbose ? 'on' : 'off'}`
+      `${repo.name}\nworkdir: ${repo.workdir}\nbusy: ${state.running ? 'yes' : 'no'}\nverbose: ${state.verbose ? 'on' : 'off'}\nqueue: ${Array.isArray(state.queue) ? state.queue.length : 0}`
     );
     return;
   }
@@ -1016,8 +1396,19 @@ async function handleRepoMessage(bot, repo, state, msg) {
     return;
   }
 
-  if (state.running) {
-    await safeSend(bot, chatId, 'Already running a task. Please wait.');
+  if (command === '/interrupt') {
+    if (!state.running || !state.currentProc) {
+      await safeSend(bot, chatId, 'No running task to interrupt.');
+      return;
+    }
+    state.interruptRequested = true;
+    try {
+      state.currentProc.kill('SIGTERM');
+      await safeSend(bot, chatId, 'Interrupt requested. Stopping current task...');
+    } catch (err) {
+      state.interruptRequested = false;
+      await safeSend(bot, chatId, `Failed to interrupt current task: ${err.message}`);
+    }
     return;
   }
 
@@ -1032,126 +1423,29 @@ async function handleRepoMessage(bot, repo, state, msg) {
 
   if (!preparedPrompt) return;
 
-  state.running = true;
+  if (!Array.isArray(state.queue)) state.queue = [];
+
   const promptText = preparedPrompt.prompt;
   const promptPreviewRaw = preparedPrompt.preview || '';
   const promptPreview = promptPreviewRaw.length > 200 ? promptPreviewRaw.slice(0, 200) + '...' : promptPreviewRaw;
-  console.log(`[${repo.name}] run: ${promptPreview.slice(0, 80)}`);
+  const replyContextPreview = getReplyContext(msg);
+  const queuedItem = {
+    chatId,
+    promptText,
+    promptPreview,
+    isVersionPrompt,
+    replyContextPreview,
+  };
 
-  const statusMsg = await safeSend(bot, chatId, `Running...\n${escapeHtml(promptPreview)}`, { parse_mode: 'HTML' });
-  const statusMsgId = statusMsg ? statusMsg.message_id : null;
+  if (state.running) {
+    state.queue.push(queuedItem);
+    if (typeof state.panelRefresh === 'function') {
+      await state.panelRefresh(true);
+    }
+    return;
+  }
 
-  let finalText = '';
-  let toolCount = 0;
-  let stepCount = 0;
-  const toolNames = [];
-  const rawSamples = [];
-  let lastStepReason = null;
-  let activeSessionId = getSessionId(repo.name, chatId);
-  const hermuxVersion = String(HERMUX_VERSION || '').trim() || '0.0.0';
-
-  runOpencode(repo, promptText, {
-    sessionId: activeSessionId,
-    onEvent: async (evt) => {
-      const type = evt.type;
-      if (evt.sessionId) activeSessionId = evt.sessionId;
-
-      if (type === 'step_start') {
-        stepCount++;
-        if (state.verbose && statusMsgId) {
-          const progress = toolCount > 0
-            ? `Running... (step ${stepCount}, ${toolCount} tool calls)`
-            : `Running... (step ${stepCount})`;
-          await editHtml(bot, chatId, statusMsgId, progress);
-        }
-        return;
-      }
-
-      if (type === 'text') {
-        if ((evt.content || '').trim()) {
-          finalText = evt.content;
-        }
-        return;
-      }
-
-      if (type === 'tool_use') {
-        toolCount++;
-        const brief = formatToolBrief(evt);
-        toolNames.push(brief);
-        if (state.verbose) {
-          const toolMsg = `<code>${escapeHtml(brief)}</code>`;
-          await safeSend(bot, chatId, toolMsg, { parse_mode: 'HTML' });
-        }
-        return;
-      }
-
-      if (type === 'step_finish') {
-        lastStepReason = evt.reason || lastStepReason;
-        return;
-      }
-
-      if (type === 'raw') {
-        const trimmed = (evt.content || '').trim().slice(0, 200);
-        if (trimmed) {
-          rawSamples.push(trimmed);
-          if (rawSamples.length > 3) rawSamples.shift();
-          if (state.verbose) {
-            await safeSend(bot, chatId, `<pre>${escapeHtml(trimmed)}</pre>`, { parse_mode: 'HTML' });
-          }
-        }
-      }
-    },
-
-    onDone: async (exitCode, timeoutMsg, meta) => {
-      state.running = false;
-      if (meta && meta.sessionId) activeSessionId = meta.sessionId;
-      if (activeSessionId) {
-        try {
-          setSessionId(repo.name, chatId, activeSessionId);
-        } catch (e) {
-          console.error(`[${repo.name}] failed to persist session id:`, e.message);
-        }
-      }
-      const status = timeoutMsg ? 'timeout' : (exitCode === 0 ? 'done' : `exit ${exitCode}`);
-
-      if (timeoutMsg) {
-        await safeSend(bot, chatId, `Timed out: ${timeoutMsg}`);
-      } else if (finalText.trim()) {
-        const outgoingText = isVersionPrompt ? appendHermuxVersion(finalText, hermuxVersion) : finalText;
-        const html = md2html(outgoingText);
-        await sendHtml(bot, chatId, html);
-      } else {
-        const fallbackBase = buildNoOutputMessage({
-          exitCode,
-          stepCount,
-          toolCount,
-          toolNames,
-          stepReason: lastStepReason,
-          rawSamples,
-          logFile: repo.logFile,
-        });
-        const fallback = isVersionPrompt ? appendHermuxVersion(fallbackBase, hermuxVersion) : fallbackBase;
-        await safeSend(bot, chatId, fallback);
-      }
-
-      const summary = `[${status}] ${stepCount} step(s), ${toolCount} tool(s)`;
-      console.log(`[${repo.name}] ${summary}`);
-
-      if (statusMsgId) {
-        await editHtml(bot, chatId, statusMsgId, summary);
-      }
-    },
-
-    onError: async (err) => {
-      state.running = false;
-      console.error(`[${repo.name}] error:`, err.message);
-      await safeSend(
-        bot,
-        chatId,
-        `Error: ${err.message}\n\nCheck that opencode is installed and workdir is accessible.`
-      );
-    },
-  });
+  await startPromptRun(bot, repo, state, queuedItem);
 }
 
 function main() {
@@ -1169,8 +1463,20 @@ function main() {
     console.log('Runtime will stay online for /onboard setup.');
   }
 
+  if (!hasMermaidRenderer()) {
+    console.log('[warn] mmdc not found. Mermaid blocks will remain text-only until renderer is installed.');
+    console.log('[hint] Run: npm install -g @mermaid-js/mermaid-cli');
+  }
+
   const chatRouter = buildChatRouter(repos);
-  const states = new Map(repos.map(repo => [repo.name, { running: false, verbose: false }]));
+  const states = new Map(repos.map(repo => [repo.name, {
+    running: false,
+    verbose: false,
+    currentProc: null,
+    interruptRequested: false,
+    queue: [],
+    panelRefresh: null,
+  }]));
   const onboardingSessions = new Map();
   const initSessions = new Map();
   const bot = new TelegramBot(botToken, { polling: true });
@@ -1186,6 +1492,7 @@ function main() {
     { command: 'status', description: 'Show current runtime status' },
     { command: 'session', description: 'Show current opencode session' },
     { command: 'version', description: 'Show opencode and hermux version' },
+    { command: 'interrupt', description: 'Stop current running task' },
     { command: 'restart', description: 'Restart daemon process' },
     { command: 'reset', description: 'Reset current chat session' },
     { command: 'verbose', description: 'Show or toggle verbose mode' },
@@ -1238,7 +1545,7 @@ function main() {
     const repo = chatRouter.get(chatId);
 
     if (!repo) {
-      if (command === '/start' || command === '/whereami' || command === '/restart') {
+      if (command === '/start' || command === '/whereami' || command === '/restart' || command === '/interrupt') {
         await safeSend(
           bot,
           chatId,
@@ -1349,6 +1656,9 @@ module.exports = {
     splitByLimit,
     buildNoOutputMessage,
     appendHermuxVersion,
+    buildStreamingStatusHtml,
+    buildLiveStatusPanelHtml,
+    extractMermaidBlocks,
     buildConnectKeyboard,
     buildVerboseKeyboard,
     getReplyContext,

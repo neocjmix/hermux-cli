@@ -53,6 +53,25 @@ function preflightCheck() {
     process.exit(1);
   }
   ok('opencode found in PATH');
+
+  if (process.env.OMG_ONBOARD_SKIP_MERMAID_SETUP === '1') {
+    console.log('    ! mermaid setup skipped by OMG_ONBOARD_SKIP_MERMAID_SETUP=1');
+    return;
+  }
+
+  if (hasCommand('mmdc')) {
+    ok('mmdc found in PATH');
+    return;
+  }
+
+  console.log('    ! mmdc not found. Installing @mermaid-js/mermaid-cli...');
+  const install = spawnSync('npm', ['install', '-g', '@mermaid-js/mermaid-cli'], { stdio: 'inherit' });
+  if (install.status === 0 && hasCommand('mmdc')) {
+    ok('mmdc installed in PATH');
+    return;
+  }
+
+  console.log('    ! mermaid renderer install failed; Mermaid diagrams will be text-only until mmdc is installed.');
 }
 
 function maybeStartRuntime() {

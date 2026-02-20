@@ -39,9 +39,10 @@ What this single command does:
 2. Guides Telegram bot prerequisite (BotFather token).
 3. Collects and validates repo config values.
 4. Saves `config/instances.json` (repo upsert).
-5. Installs a local `hermux` launcher command at `~/.local/bin/hermux`.
-6. Starts runtime daemon automatically.
-7. Prints exact Telegram verification sequence (`/repos` -> `/connect <repo>` -> `/whereami`).
+5. Installs Mermaid renderer (`mmdc`) if missing (best effort).
+6. Installs a local `hermux` launcher command at `~/.local/bin/hermux`.
+7. Starts runtime daemon automatically.
+8. Prints exact Telegram verification sequence (`/repos` -> `/connect <repo>` -> `/whereami`).
 
 Validation rules:
 - token: `\d+:[A-Za-z0-9_-]+`
@@ -75,6 +76,7 @@ Bot commands:
 | `/help` | Show onboarding and command help |
 | `/status` | Show repo name/workdir/busy/verbose |
 | `/version` | Show opencode output plus hermux version |
+| `/interrupt` | Stop current running task |
 | `/restart` | Restart daemon process (keep settings/sessions) |
 | `/verbose on` | Show intermediate step/tool events |
 | `/verbose off` | Final output only |

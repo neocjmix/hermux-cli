@@ -81,6 +81,69 @@ test('buildVerboseKeyboard returns on/off callback buttons', () => {
   });
 });
 
+test('buildStreamingStatusHtml wraps and escapes text tail', () => {
+  const html = _internal.buildStreamingStatusHtml('line <a> & b', false);
+  assert.match(html, /Streaming response/);
+  assert.match(html, /mode: compact/);
+  assert.match(html, /&lt;a&gt; &amp; b/);
+});
+
+test('buildStreamingStatusHtml uses preformatted block in verbose mode', () => {
+  const html = _internal.buildStreamingStatusHtml('line <a> & b', true);
+  assert.match(html, /Streaming response/);
+  assert.match(html, /<pre>/);
+  assert.match(html, /&lt;a&gt; &amp; b/);
+});
+
+test('buildLiveStatusPanelHtml shows emoji-rich compact panel', () => {
+  const html = _internal.buildLiveStatusPanelHtml({
+    repoName: 'demo-repo',
+    verbose: false,
+    phase: 'running',
+    stepCount: 2,
+    toolCount: 1,
+    queueLength: 2,
+    queuedPreview: 'next queued prompt',
+    sessionId: 'sess-abcdef',
+    promptPreview: 'check current issue',
+    replyContext: 'previous prompt body',
+    streamText: 'draft response text',
+    lastTool: 'bash: ls',
+    lastRaw: '',
+    lastStepReason: 'continue',
+  });
+
+  assert.match(html, /🏃/);
+  assert.match(html, /🧠 compact/);
+  assert.match(html, /🔁 2/);
+  assert.match(html, /🧰 1/);
+  assert.match(html, /📥 queue: 2/);
+  assert.match(html, /⏭️/);
+  assert.match(html, /✍️/);
+  assert.match(html, /🔧/);
+  assert.match(html, /\[Reply context\]/);
+});
+
+test('extractMermaidBlocks parses fenced mermaid blocks', () => {
+  const src = [
+    'hello',
+    '```mermaid',
+    'graph TD',
+    'A-->B',
+    '```',
+    '',
+    '```mermaid',
+    'sequenceDiagram',
+    'Alice->>Bob: Hi',
+    '```',
+  ].join('\n');
+
+  const blocks = _internal.extractMermaidBlocks(src);
+  assert.equal(blocks.length, 2);
+  assert.match(blocks[0], /graph TD/);
+  assert.match(blocks[1], /sequenceDiagram/);
+});
+
 test('getReplyContext extracts replied text', () => {
   const msg = {
     reply_to_message: {
