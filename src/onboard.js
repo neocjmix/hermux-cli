@@ -4,7 +4,7 @@
 const readline = require('readline');
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+const { execSync, spawnSync } = require('child_process');
 const config = require('./lib/config');
 
 function ask(rl, question, defaultVal) {
@@ -26,12 +26,58 @@ async function askYesNo(rl, question, defaultYes) {
 function ok(label)   { console.log(`    \u2713 ${label}`); }
 function fail(label) { console.error(`    \u2717 ${label}`); }
 
+function hasCommand(cmd) {
+  try {
+    execSync(`command -v ${cmd}`, { stdio: 'ignore' });
+    return true;
+  } catch (_err) {
+    return false;
+  }
+}
+
+function preflightCheck() {
+  console.log('  Step 0) Local prerequisites');
+
+  if (!hasCommand('git')) {
+    fail('git not found in PATH');
+    process.exit(1);
+  }
+  ok('git found in PATH');
+
+  if (!hasCommand('opencode')) {
+    fail('opencode not found in PATH');
+    process.exit(1);
+  }
+  ok('opencode found in PATH');
+}
+
+function maybeStartRuntime() {
+  if (process.env.OMG_ONBOARD_SKIP_START === '1') {
+    console.log('    ! runtime auto-start skipped by OMG_ONBOARD_SKIP_START=1');
+    return;
+  }
+
+  const cliPath = path.join(__dirname, 'cli.js');
+  const started = spawnSync(process.execPath, [cliPath, 'start'], { stdio: 'inherit' });
+  if (started.status !== 0) {
+    fail('runtime start failed during onboarding');
+    process.exit(started.status || 1);
+  }
+}
+
 async function main() {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   console.log('');
   console.log('\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557');
   console.log('\u2551  opencode_mobile_gateway  onboarding \u2551');
   console.log('\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d');
+  console.log('');
+
+  preflightCheck();
+  console.log('');
+  console.log('  Step 1) Telegram bot prerequisite');
+  console.log('    - Create a bot with @BotFather (Telegram)');
+  console.log('    - Copy the bot token (format: 123456789:ABC-DEF...)');
   console.log('');
 
   const existing = config.load();
@@ -86,13 +132,6 @@ async function main() {
 
   const opencodeCmd = await ask(rl, 'opencode command', 'opencode run');
 
-  try {
-    execSync('which opencode', { stdio: 'ignore' });
-    ok('opencode found in PATH');
-  } catch {
-    console.log('    ! opencode not found in PATH (may still work if installed elsewhere)');
-  }
-
   const repo = {
     name,
     enabled: true,
@@ -104,20 +143,24 @@ async function main() {
 
   config.setGlobalBotToken(botToken);
   config.addOrUpdateRepo(repo);
+  ok('configuration saved');
+
+  console.log('');
+  console.log('  Step 4) Start runtime daemon');
+  maybeStartRuntime();
 
   console.log('');
   console.log(`  Saved to ${config.CONFIG_PATH}`);
   console.log('');
-  console.log('  Next steps:');
-  console.log('    npx hermux start      # start the gateway');
-  console.log('    npx hermux onboard    # add another repo/chat mapping');
+  console.log('  Step 5) Telegram connection check (required)');
+  console.log('    1) Open target Telegram chat/group where the bot is present');
+  console.log('    2) Run /repos');
+  console.log(`    3) Run /connect ${name}`);
+  console.log('    4) Run /whereami');
+  console.log('    5) Send a test prompt');
   console.log('');
-  console.log('  Telegram group onboarding (no manual chat ID required):');
-  console.log('    1) Create a group for this repo');
-  console.log('    2) Invite your bot to the group');
-  console.log('    3) In that group, run /repos');
-  console.log('    4) In that group, run /connect <repo-name>');
-  console.log('    5) Retry your prompt in the same group');
+  console.log('  Onboarding complete.');
+  console.log('    - Re-run npx hermux onboard to add or update a repo');
   console.log('');
 
   rl.close();

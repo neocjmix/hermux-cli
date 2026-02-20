@@ -37,65 +37,27 @@ npm run npx:local
 
 ## Onboarding
 
-Recommended (chat wizard):
-
-1. Start runtime:
-
-```bash
-npx hermux start
-```
-
-2. In Telegram (private chat or target group), run:
-
-```text
-/onboard
-```
-
-3. Answer prompts in chat:
-- Global Telegram bot token (reuse/replace if already set)
-- Repo name
-- Repo workdir (absolute path)
-- opencode command (or `default`)
-- Whether to connect current chat immediately
-
-Optional (terminal wizard):
+Single standard onboarding path:
 
 ```bash
 npx hermux onboard
 ```
 
-Interactive prompts:
-1. Global Telegram bot token (reuse or replace)
-2. Repo name
-3. Allowed chat IDs (comma-separated, optional)
-4. Repo workdir (absolute path)
-5. opencode command (default: `opencode run`)
+What this single command does:
+1. Checks local prerequisites (`git`, `opencode`).
+2. Guides Telegram bot prerequisite (BotFather token).
+3. Collects and validates repo config values.
+4. Saves `config/instances.json` (repo upsert).
+5. Starts runtime daemon automatically.
+6. Prints exact Telegram verification sequence (`/repos` -> `/connect <repo>` -> `/whereami`).
 
-Validation:
+Validation rules:
 - token: `\d+:[A-Za-z0-9_-]+`
 - repo name: alphanumeric, `-`, `_`
 - chat IDs: numeric, unique (optional)
 - workdir: absolute path + existing directory
 
-Telegram group onboarding pattern:
-1. Create a group for a repo
-2. Invite the bot
-3. Run `/onboard` and complete setup (or run it once in private chat)
-4. In that group, run `/repos`
-5. In that group, run `/connect <repo>`
-6. Retry your prompt in the same group
-
-`/connect <repo>` is idempotent. If a connect attempt fails, retry the same command to resume.
-
-## Beginner Flow (No Manual chat ID)
-
-1. Start runtime with `npx hermux start`.
-2. In Telegram, run `/onboard` and answer prompts.
-3. In a Telegram group where the bot is present, run `/repos`.
-4. Pick one repo and run `/connect <repo>`.
-5. Confirm with `/whereami`, then send your first prompt.
-
-If you get interrupted mid-onboarding, continue from step 3. The flow is safe to repeat.
+Re-run `npx hermux onboard` anytime to add/update repos safely.
 
 ## Runtime
 
@@ -139,21 +101,19 @@ Routing rules:
 
 ## Agent-First Onboarding (Openclaw / ClaudeCode)
 
-Do not assume the agent should run terminal onboarding by itself.
-
 Use this sequence as-is:
 
 ```bash
 npm install
 npm run check
-npx hermux start
+npx hermux onboard
 ```
 
 Required interaction contract for agents:
 
-1. Keep runtime running.
-2. Ask the user for onboarding values explicitly (token, repo name, workdir, command, connect-now choice).
-3. In Telegram, instruct user to run `/onboard` and answer prompts.
+1. Start from `npx hermux onboard` as the only onboarding entrypoint.
+2. Ask the user for onboarding values explicitly (token, repo name, workdir, command, chat IDs if needed).
+3. Let onboard start runtime, then guide Telegram verification.
 4. In each target Telegram group:
    - call `/repos`
    - call `/connect <repo>`
@@ -162,7 +122,6 @@ Required interaction contract for agents:
 
 Operational guarantees useful to agents:
 
-- `/onboard` is step-driven and resumable until cancelled.
 - `/connect <repo>` is idempotent for the same chat+repo pair.
 - Mapping conflicts are explicit and non-destructive.
 - Config writes are atomic (temp file + rename).

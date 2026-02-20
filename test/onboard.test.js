@@ -45,6 +45,7 @@ test('onboard CLI fails fast on invalid token format', () => {
       cwd: path.resolve(__dirname, '..'),
       encoding: 'utf8',
       input,
+      env: { ...process.env, OMG_ONBOARD_SKIP_START: '1' },
     });
 
     assert.equal(out.status, 1);
