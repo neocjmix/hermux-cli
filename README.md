@@ -1,5 +1,11 @@
 # opencode_mobile_gateway
 
+## Important Notice
+
+- This project is built as a fork/derivative of the OpenClaw gateway.
+- The codebase is 100% AI-generated, and no part of the source has undergone formal human code review.
+- You are solely responsible for assessing and accepting all operational, security, and compliance risks before use.
+
 Telegram gateway that runs local `opencode run` from inbound Telegram messages.
 
 Current behavior:
@@ -112,12 +118,14 @@ Bot commands:
 | `/connect <repo>` | Bind current chat to a repo |
 | `/help` | Show onboarding and command help |
 | `/status` | Show repo name/workdir/busy/verbose |
+| `/version` | Show opencode output plus hermux version |
+| `/restart` | Restart daemon process (keep settings/sessions) |
 | `/verbose on` | Show intermediate step/tool events |
 | `/verbose off` | Final output only |
 | `/whereami` | Show current chat ID and mapped repo |
 
 Routing rules:
-- Unmapped chat IDs are ignored except onboarding commands (`/onboard`, `/init`, `/start`, `/whereami`, `/repos`, `/connect`, `/help`)
+- Unmapped chat IDs are ignored except onboarding commands (`/onboard`, `/init`, `/start`, `/whereami`, `/repos`, `/connect`, `/help`, `/restart`)
 - Repo mapping is by chat ID
 - Duplicate chat IDs across enabled repos fail fast at startup
 - Execution lock is per repo (`running` state is isolated)

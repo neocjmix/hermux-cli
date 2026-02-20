@@ -53,6 +53,55 @@ test('buildNoOutputMessage includes diagnostics context', () => {
   assert.match(text, /log: .\/logs\/x\.log/);
 });
 
+test('appendHermuxVersion appends version footer', () => {
+  const text = _internal.appendHermuxVersion('opencode says hi', '0.1.1');
+  assert.equal(text, 'opencode says hi\n\nhermux version: 0.1.1');
+});
+
+test('buildConnectKeyboard creates callback buttons per repo', () => {
+  const keyboard = _internal.buildConnectKeyboard([
+    { name: 'beta', enabled: true },
+    { name: 'alpha', enabled: true },
+  ]);
+  assert.deepEqual(keyboard, {
+    inline_keyboard: [
+      [{ text: 'alpha', callback_data: 'connect:alpha' }],
+      [{ text: 'beta', callback_data: 'connect:beta' }],
+    ],
+  });
+});
+
+test('buildVerboseKeyboard returns on/off callback buttons', () => {
+  const keyboard = _internal.buildVerboseKeyboard();
+  assert.deepEqual(keyboard, {
+    inline_keyboard: [[
+      { text: 'Verbose On', callback_data: 'verbose:on' },
+      { text: 'Verbose Off', callback_data: 'verbose:off' },
+    ]],
+  });
+});
+
+test('getReplyContext extracts replied text', () => {
+  const msg = {
+    reply_to_message: {
+      text: 'previous assistant response',
+    },
+  };
+  assert.equal(_internal.getReplyContext(msg), 'previous assistant response');
+});
+
+test('getReplyContext truncates long replied text', () => {
+  const long = 'a'.repeat(1300);
+  const msg = {
+    reply_to_message: {
+      text: long,
+    },
+  };
+  const got = _internal.getReplyContext(msg);
+  assert.equal(got.length, 1203);
+  assert.equal(got.endsWith('...'), true);
+});
+
 test('formatRepoList shows empty-state hint', () => {
   const text = _internal.formatRepoList([], '');
   assert.match(text, /No enabled repos are configured yet/);

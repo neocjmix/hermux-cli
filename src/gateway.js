@@ -5,14 +5,19 @@ const fs = require('fs');
 const path = require('path');
 const fsp = require('fs/promises');
 const { pipeline } = require('stream/promises');
+const { spawn } = require('child_process');
 const TelegramBot = require('node-telegram-bot-api');
 const { load, getEnabledRepos, addChatIdToRepo, addOrUpdateRepo, setGlobalBotToken, resetConfig, CONFIG_PATH } = require('./lib/config');
 const { runOpencode } = require('./lib/runner');
 const { md2html, escapeHtml } = require('./lib/md2html');
 const { getSessionId, setSessionId, clearSessionId, getSessionInfo, clearAllSessions, SESSION_MAP_PATH } = require('./lib/session-map');
+const { version: HERMUX_VERSION } = require('../package.json');
 
 const TG_MAX_LEN = 4000;
 const IMAGE_UPLOAD_DIR = '.opencode_mobile_gateway/uploads';
+const RUNTIME_DIR = path.join(__dirname, '..', 'runtime');
+const PID_PATH = path.join(RUNTIME_DIR, 'gateway.pid');
+const LOG_PATH = path.join(RUNTIME_DIR, 'gateway.log');
 let connectMutationQueue = Promise.resolve();
 
 function withConnectMutationLock(task) {
@@ -33,6 +38,8 @@ function getHelpText() {
     '/connect <repo> - bind this chat to a repo',
     '/status - show runtime state',
     '/session - show current opencode session id',
+    '/version - show opencode output + hermux version',
+    '/restart - restart daemon process',
     '/reset - reset current chat session',
     '/verbose on - enable tool/step stream',
     '/verbose off - final output only',
@@ -48,6 +55,7 @@ function getHelpText() {
     '2) Create repo group and invite this bot',
     '3) In that group, run /repos',
     '4) In that group, run /connect <repo>',
+    'Tip: /connect and /verbose support button selections too.',
     '',
     'Note: if group messages are not visible, check Telegram bot privacy mode.',
   ].join('\n');
@@ -493,6 +501,13 @@ function buildNoOutputMessage({ exitCode, stepCount, toolCount, toolNames, stepR
   return lines.join('\n');
 }
 
+function appendHermuxVersion(text, version) {
+  const base = String(text || '').trimEnd();
+  const tag = `hermux version: ${version}`;
+  if (!base) return tag;
+  return `${base}\n\n${tag}`;
+}
+
 function getImagePayloadFromMessage(msg) {
   if (Array.isArray(msg.photo) && msg.photo.length > 0) {
     const bestPhoto = msg.photo[msg.photo.length - 1];
@@ -527,6 +542,16 @@ function normalizeImageExt(ext) {
   return cleaned;
 }
 
+function getReplyContext(msg) {
+  const replied = msg && msg.reply_to_message;
+  if (!replied) return '';
+
+  const candidate = String(replied.text || replied.caption || '').trim();
+  if (!candidate) return '';
+
+  return candidate.length > 1200 ? candidate.slice(0, 1200) + '...' : candidate;
+}
+
 async function downloadTelegramImage(bot, instance, fileId, ext, msg) {
   const dir = path.resolve(instance.workdir, IMAGE_UPLOAD_DIR);
   await fsp.mkdir(dir, { recursive: true });
@@ -545,11 +570,33 @@ async function downloadTelegramImage(bot, instance, fileId, ext, msg) {
 
 async function buildPromptFromMessage(bot, instance, msg) {
   const text = (msg.text || '').trim();
+  const replyContext = getReplyContext(msg);
   const imagePayload = getImagePayloadFromMessage(msg);
 
   if (!imagePayload) {
-    if (!text) return null;
-    return { prompt: text, preview: text };
+    if (!text && !replyContext) return null;
+
+    if (text && !replyContext) {
+      return { prompt: text, preview: text };
+    }
+
+    if (!text && replyContext) {
+      const prompt = [
+        'Continue based on this replied Telegram message context:',
+        '',
+        '[Reply context]',
+        replyContext,
+      ].join('\n');
+      return { prompt, preview: '[reply context]' };
+    }
+
+    const prompt = [
+      text,
+      '',
+      '[Reply context]',
+      replyContext,
+    ].join('\n');
+    return { prompt, preview: text };
   }
 
   const imagePath = await downloadTelegramImage(bot, instance, imagePayload.fileId, imagePayload.ext, msg);
@@ -561,6 +608,12 @@ async function buildPromptFromMessage(bot, instance, msg) {
     promptLines.push(userText);
   } else {
     promptLines.push('Use the attached Telegram image to complete my request.');
+  }
+
+  if (replyContext) {
+    promptLines.push('');
+    promptLines.push('[Reply context]');
+    promptLines.push(replyContext);
   }
 
   promptLines.push('');
@@ -633,14 +686,41 @@ function formatRepoList(repos, mappedRepoName) {
   }
   lines.push('');
   lines.push('Connect this chat: /connect <repo>');
+  lines.push('Or tap a repo button below.');
   lines.push('Example: /connect my-repo');
   return lines.join('\n');
 }
 
+function buildConnectKeyboard(repos) {
+  const enabled = repos
+    .filter(repo => repo.enabled !== false)
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  if (enabled.length === 0) return null;
+
+  return {
+    inline_keyboard: enabled.map((repo) => ([
+      { text: repo.name, callback_data: `connect:${repo.name}` },
+    ])),
+  };
+}
+
+function buildVerboseKeyboard() {
+  return {
+    inline_keyboard: [[
+      { text: 'Verbose On', callback_data: 'verbose:on' },
+      { text: 'Verbose Off', callback_data: 'verbose:off' },
+    ]],
+  };
+}
+
 async function sendRepoList(bot, chatId, chatRouter) {
+  const repos = getEnabledRepos();
   const mappedRepo = chatRouter.get(chatId);
-  const text = formatRepoList(getEnabledRepos(), mappedRepo ? mappedRepo.name : '');
-  await safeSend(bot, chatId, text);
+  const text = formatRepoList(repos, mappedRepo ? mappedRepo.name : '');
+  const keyboard = buildConnectKeyboard(repos);
+  const opts = keyboard ? { reply_markup: keyboard } : undefined;
+  await safeSend(bot, chatId, text, opts);
 }
 
 async function handleConnectCommand(bot, chatId, args, chatRouter, states) {
@@ -652,6 +732,7 @@ async function handleConnectCommand(bot, chatId, args, chatRouter, states) {
 
   const requestedRepo = String(args[0] || '').trim();
   if (!requestedRepo) {
+    const keyboard = buildConnectKeyboard(availableRepos);
     await safeSend(
       bot,
       chatId,
@@ -662,7 +743,8 @@ async function handleConnectCommand(bot, chatId, args, chatRouter, states) {
         formatRepoList(availableRepos, chatRouter.get(chatId)?.name || ''),
         '',
         'Resume anytime by sending: /connect <repo>',
-      ].join('\n')
+      ].join('\n'),
+      keyboard ? { reply_markup: keyboard } : undefined
     );
     return;
   }
@@ -691,6 +773,7 @@ async function handleConnectCommand(bot, chatId, args, chatRouter, states) {
 
     if (!result.ok) {
       if (result.reason === 'repo_not_found') {
+        const keyboard = buildConnectKeyboard(availableRepos);
         await safeSend(
           bot,
           chatId,
@@ -700,7 +783,8 @@ async function handleConnectCommand(bot, chatId, args, chatRouter, states) {
             formatRepoList(availableRepos, chatRouter.get(chatId)?.name || ''),
             '',
             'Resume by retrying with an exact repo name: /connect <repo>',
-          ].join('\n')
+          ].join('\n'),
+          keyboard ? { reply_markup: keyboard } : undefined
         );
         return;
       }
@@ -758,11 +842,86 @@ async function handleConnectCommand(bot, chatId, args, chatRouter, states) {
   }
 }
 
+async function handleVerboseAction(bot, chatId, state, action) {
+  if (action === 'status') {
+    await safeSend(bot, chatId, `verbose is ${state.verbose ? 'on' : 'off'}`, { reply_markup: buildVerboseKeyboard() });
+    return;
+  }
+
+  if (action === 'on') {
+    state.verbose = true;
+    await safeSend(bot, chatId, 'verbose on - tool calls and intermediate steps will be shown', { reply_markup: buildVerboseKeyboard() });
+    return;
+  }
+
+  if (action === 'off') {
+    state.verbose = false;
+    await safeSend(bot, chatId, 'verbose off - only final output will be sent', { reply_markup: buildVerboseKeyboard() });
+  }
+}
+
+function writePidAtomic(pid) {
+  fs.mkdirSync(RUNTIME_DIR, { recursive: true });
+  const tmp = PID_PATH + '.tmp';
+  fs.writeFileSync(tmp, String(pid) + '\n', 'utf8');
+  fs.renameSync(tmp, PID_PATH);
+}
+
+function spawnReplacementDaemon() {
+  fs.mkdirSync(RUNTIME_DIR, { recursive: true });
+  const outFd = fs.openSync(LOG_PATH, 'a');
+  const child = spawn(process.execPath, [path.join(__dirname, 'cli.js'), 'start', '--foreground'], {
+    detached: true,
+    stdio: ['ignore', outFd, outFd],
+    env: { ...process.env, OMG_DAEMON_CHILD: '1' },
+  });
+  child.unref();
+  fs.closeSync(outFd);
+  writePidAtomic(child.pid);
+  return child.pid;
+}
+
+async function handleRestartCommand(bot, chatId, repo, state) {
+  if (state.running) {
+    await safeSend(bot, chatId, 'Cannot restart while running. Wait for current task to finish.');
+    return;
+  }
+
+  if (process.env.OMG_DAEMON_CHILD !== '1') {
+    await safeSend(
+      bot,
+      chatId,
+      [
+        'Restart is available only in daemon mode.',
+        'If you run foreground manually, stop and start again: hermux start --foreground',
+      ].join('\n')
+    );
+    return;
+  }
+
+  await safeSend(bot, chatId, `Restarting daemon for repo ${repo.name}...`);
+
+  try {
+    await bot.stopPolling();
+  } catch (_err) {
+  }
+
+  try {
+    const nextPid = spawnReplacementDaemon();
+    console.log(`[restart] spawned replacement daemon pid: ${nextPid}`);
+  } catch (err) {
+    console.error('[restart] failed to spawn replacement daemon:', err.message);
+  }
+
+  setTimeout(() => process.exit(0), 50);
+}
+
 async function handleRepoMessage(bot, repo, state, msg) {
   const chatId = String(msg.chat.id);
   const text = (msg.text || '').trim();
   const parsed = parseCommand(text);
   const command = parsed ? parsed.command : '';
+  const isVersionPrompt = command === '/version' || text.toLowerCase() === '\\version';
 
   if (command === '/start') {
     await safeSend(
@@ -773,7 +932,7 @@ async function handleRepoMessage(bot, repo, state, msg) {
         `workdir: ${repo.workdir}`,
         '',
         `mode: ${state.verbose ? 'verbose (stream events)' : 'compact (final output only)'}`,
-        'commands: /repos, /status, /session, /reset, /init, /verbose on, /verbose off, /whereami',
+        'commands: /repos, /status, /session, /version, /restart, /reset, /init, /verbose on, /verbose off, /whereami',
         '',
         'Send any prompt to run opencode.',
       ].join('\n')
@@ -818,6 +977,11 @@ async function handleRepoMessage(bot, repo, state, msg) {
     return;
   }
 
+  if (command === '/restart') {
+    await handleRestartCommand(bot, chatId, repo, state);
+    return;
+  }
+
   if (command === '/help') {
     await safeSend(bot, chatId, getHelpText());
     return;
@@ -838,19 +1002,17 @@ async function handleRepoMessage(bot, repo, state, msg) {
   }
 
   if (command === '/verbose' && (!parsed || parsed.args.length === 0 || parsed.args[0] === 'status')) {
-    await safeSend(bot, chatId, `verbose is ${state.verbose ? 'on' : 'off'}`);
+    await handleVerboseAction(bot, chatId, state, 'status');
     return;
   }
 
   if (command === '/verbose' && parsed && parsed.args[0] === 'on') {
-    state.verbose = true;
-    await safeSend(bot, chatId, 'verbose on - tool calls and intermediate steps will be shown');
+    await handleVerboseAction(bot, chatId, state, 'on');
     return;
   }
 
   if (command === '/verbose' && parsed && parsed.args[0] === 'off') {
-    state.verbose = false;
-    await safeSend(bot, chatId, 'verbose off - only final output will be sent');
+    await handleVerboseAction(bot, chatId, state, 'off');
     return;
   }
 
@@ -886,6 +1048,7 @@ async function handleRepoMessage(bot, repo, state, msg) {
   const rawSamples = [];
   let lastStepReason = null;
   let activeSessionId = getSessionId(repo.name, chatId);
+  const hermuxVersion = String(HERMUX_VERSION || '').trim() || '0.0.0';
 
   runOpencode(repo, promptText, {
     sessionId: activeSessionId,
@@ -954,10 +1117,11 @@ async function handleRepoMessage(bot, repo, state, msg) {
       if (timeoutMsg) {
         await safeSend(bot, chatId, `Timed out: ${timeoutMsg}`);
       } else if (finalText.trim()) {
-        const html = md2html(finalText);
+        const outgoingText = isVersionPrompt ? appendHermuxVersion(finalText, hermuxVersion) : finalText;
+        const html = md2html(outgoingText);
         await sendHtml(bot, chatId, html);
       } else {
-        const fallback = buildNoOutputMessage({
+        const fallbackBase = buildNoOutputMessage({
           exitCode,
           stepCount,
           toolCount,
@@ -966,6 +1130,7 @@ async function handleRepoMessage(bot, repo, state, msg) {
           rawSamples,
           logFile: repo.logFile,
         });
+        const fallback = isVersionPrompt ? appendHermuxVersion(fallbackBase, hermuxVersion) : fallbackBase;
         await safeSend(bot, chatId, fallback);
       }
 
@@ -1020,6 +1185,8 @@ function main() {
     { command: 'connect', description: 'Connect this chat to a repo' },
     { command: 'status', description: 'Show current runtime status' },
     { command: 'session', description: 'Show current opencode session' },
+    { command: 'version', description: 'Show opencode and hermux version' },
+    { command: 'restart', description: 'Restart daemon process' },
     { command: 'reset', description: 'Reset current chat session' },
     { command: 'verbose', description: 'Show or toggle verbose mode' },
     { command: 'whereami', description: 'Show current chat ID and mapping' },
@@ -1071,7 +1238,7 @@ function main() {
     const repo = chatRouter.get(chatId);
 
     if (!repo) {
-      if (command === '/start' || command === '/whereami') {
+      if (command === '/start' || command === '/whereami' || command === '/restart') {
         await safeSend(
           bot,
           chatId,
@@ -1108,6 +1275,55 @@ function main() {
     await handleRepoMessage(bot, repo, state, msg);
   });
 
+  bot.on('callback_query', async (query) => {
+    const data = String((query && query.data) || '').trim();
+    const chat = query && query.message && query.message.chat;
+    const chatId = chat ? String(chat.id) : '';
+
+    if (!data || !chatId) {
+      if (query && query.id) {
+        await bot.answerCallbackQuery(query.id).catch(() => {});
+      }
+      return;
+    }
+
+    try {
+      if (data.startsWith('connect:')) {
+        const repoName = data.slice('connect:'.length).trim();
+        await handleConnectCommand(bot, chatId, [repoName], chatRouter, states);
+        if (query.id) {
+          await bot.answerCallbackQuery(query.id, { text: `connect: ${repoName}` }).catch(() => {});
+        }
+        return;
+      }
+
+      if (data.startsWith('verbose:')) {
+        const action = data.slice('verbose:'.length).trim();
+        const repo = chatRouter.get(chatId);
+        if (!repo) {
+          await safeSend(bot, chatId, 'This chat is not mapped to a repo. Run /repos then /connect <repo>.');
+          if (query.id) {
+            await bot.answerCallbackQuery(query.id, { text: 'not mapped' }).catch(() => {});
+          }
+          return;
+        }
+
+        const state = states.get(repo.name);
+        await handleVerboseAction(bot, chatId, state, action === 'on' || action === 'off' ? action : 'status');
+        if (query.id) {
+          await bot.answerCallbackQuery(query.id, { text: `verbose: ${action}` }).catch(() => {});
+        }
+        return;
+      }
+    } catch (err) {
+      console.error('[callback_query] failed:', err.message);
+    }
+
+    if (query.id) {
+      await bot.answerCallbackQuery(query.id).catch(() => {});
+    }
+  });
+
   bot.on('polling_error', (err) => {
     console.error(`[bot] polling error:`, err.code || err.message);
   });
@@ -1132,6 +1348,10 @@ module.exports = {
     parseCommand,
     splitByLimit,
     buildNoOutputMessage,
+    appendHermuxVersion,
+    buildConnectKeyboard,
+    buildVerboseKeyboard,
+    getReplyContext,
     normalizeImageExt,
     getImagePayloadFromMessage,
     formatRepoList,
