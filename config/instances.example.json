@@ -1,0 +1,15 @@
+{
+  "global": {
+    "telegramBotToken": "123456789:REPLACE_WITH_BOT_TOKEN"
+  },
+  "repos": [
+    {
+      "name": "sample-repo",
+      "enabled": true,
+      "workdir": "/Users/chanjinpark/.openclaw/workspace/aether-dsl-lab",
+      "chatIds": ["-1001234567890"],
+      "opencodeCommand": "opencode run",
+      "logFile": "./logs/sample-repo.log"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+node_modules/
+config/instances.json
+.env
+.env.local
+.env.*.local
+logs/*.log
+logs/
+runtime/
+state/session-map.json
+.opencode_mobile_gateway/
+tmp/

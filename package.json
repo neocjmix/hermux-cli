@@ -1,0 +1,21 @@
+{
+  "name": "@hermux/cli",
+  "version": "0.1.0",
+  "description": "Telegram <-> opencode run gateway (production-grade dev base)",
+  "bin": {
+    "hermux": "./src/cli.js",
+    "opencode-mobile-gateway": "./src/cli.js"
+  },
+  "scripts": {
+    "onboard": "node src/cli.js onboard",
+    "start": "node src/cli.js start",
+    "check": "bash scripts/check_prereqs.sh",
+    "test": "node --test --test-concurrency=1 test/*.test.js"
+  },
+  "dependencies": {
+    "node-telegram-bot-api": "^0.66.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
