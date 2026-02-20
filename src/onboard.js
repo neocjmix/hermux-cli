@@ -7,6 +7,10 @@ const path = require('path');
 const { execSync, spawnSync } = require('child_process');
 const config = require('./lib/config');
 
+const HOME = process.env.HOME || process.env.USERPROFILE || '';
+const LOCAL_BIN_DIR = path.join(HOME || '.', '.local', 'bin');
+const LOCAL_HERMUX_PATH = path.join(LOCAL_BIN_DIR, 'hermux');
+
 function ask(rl, question, defaultVal) {
   return new Promise(resolve => {
     const suffix = defaultVal ? ` [${defaultVal}]` : '';
@@ -63,6 +67,30 @@ function maybeStartRuntime() {
     fail('runtime start failed during onboarding');
     process.exit(started.status || 1);
   }
+}
+
+function buildHermuxLauncherScript() {
+  const cliPath = path.join(__dirname, 'cli.js');
+  const nodePath = process.execPath;
+  return [
+    '#!/usr/bin/env bash',
+    `exec "${nodePath}" "${cliPath}" "$@"`,
+    '',
+  ].join('\n');
+}
+
+function ensureHermuxCommand() {
+  if (!HOME) {
+    return { ok: false, reason: 'home_not_found' };
+  }
+
+  fs.mkdirSync(LOCAL_BIN_DIR, { recursive: true });
+  fs.writeFileSync(LOCAL_HERMUX_PATH, buildHermuxLauncherScript(), { mode: 0o755 });
+  fs.chmodSync(LOCAL_HERMUX_PATH, 0o755);
+
+  const pathList = String(process.env.PATH || '').split(path.delimiter);
+  const inPath = pathList.includes(LOCAL_BIN_DIR);
+  return { ok: true, path: LOCAL_HERMUX_PATH, binDir: LOCAL_BIN_DIR, inPath };
 }
 
 async function main() {
@@ -144,6 +172,16 @@ async function main() {
   config.setGlobalBotToken(botToken);
   config.addOrUpdateRepo(repo);
   ok('configuration saved');
+
+  const launcher = ensureHermuxCommand();
+  if (launcher.ok) {
+    ok(`local hermux command ready: ${launcher.path}`);
+    if (!launcher.inPath) {
+      console.log(`    ! add ${launcher.binDir} to PATH to run 'hermux' directly`);
+    }
+  } else {
+    console.log('    ! could not prepare local hermux command launcher');
+  }
 
   console.log('');
   console.log('  Step 4) Start runtime daemon');
