@@ -67,3 +67,33 @@ test('runOpencode times out and reports timeout message', async () => {
   assert.equal(done.exitCode, null);
   assert.match(done.timeoutMsg, /timed out/i);
 });
+
+test('runOpencode captures rate limit from stderr metadata', async () => {
+  const { runOpencode } = loadRunnerWithEnv(10);
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runner-ratelimit-'));
+
+  const done = await new Promise((resolve, reject) => {
+    runOpencode(
+      {
+        opencodeCommand: 'node test/fixtures/rate-limit-opencode.js',
+        workdir: process.cwd(),
+        logFile: path.join(tmpDir, 'runner-ratelimit.log'),
+      },
+      'ratelimit-case',
+      {
+        onEvent: () => {},
+        onDone: (exitCode, timeoutMsg, meta) => resolve({ exitCode, timeoutMsg, meta }),
+        onError: reject,
+        sessionId: '',
+      }
+    );
+  });
+
+  assert.equal(done.exitCode, 1);
+  assert.equal(done.timeoutMsg, null);
+  assert.equal(done.meta.rateLimit.detected, true);
+  assert.equal(done.meta.rateLimit.retryAfterSeconds, 42);
+  assert.match(done.meta.rateLimit.line, /429/i);
+  assert.equal(Array.isArray(done.meta.stderrSamples), true);
+  assert.equal(done.meta.stderrSamples.length > 0, true);
+});

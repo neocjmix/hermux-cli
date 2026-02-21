@@ -662,13 +662,22 @@ function formatToolBrief(evt) {
   return title;
 }
 
-function buildNoOutputMessage({ exitCode, stepCount, toolCount, toolNames, stepReason, rawSamples, logFile }) {
+function buildNoOutputMessage({ exitCode, stepCount, toolCount, toolNames, stepReason, rawSamples, logFile, rateLimit, stderrSamples }) {
   const status = exitCode === 0 ? 'done (no final text)' : `exit ${exitCode}`;
   const lines = [
     'No final answer text was produced by opencode.',
     `status: ${status}`,
     `steps: ${stepCount}, tools: ${toolCount}`,
   ];
+
+  if (rateLimit && rateLimit.detected) {
+    lines.push('Detected model/API rate limit from opencode output.');
+    if (Number.isFinite(rateLimit.retryAfterSeconds) && rateLimit.retryAfterSeconds > 0) {
+      lines.push(`recommended wait: ${rateLimit.retryAfterSeconds}s before retry`);
+    } else {
+      lines.push('recommended wait: 30-60s before retry');
+    }
+  }
 
   const recentTools = toolNames.slice(-5);
   if (recentTools.length > 0) {
@@ -682,6 +691,13 @@ function buildNoOutputMessage({ exitCode, stepCount, toolCount, toolNames, stepR
   if (rawSamples.length > 0) {
     lines.push('recent raw events:');
     rawSamples.forEach((raw, idx) => {
+      lines.push(`${idx + 1}. ${raw}`);
+    });
+  }
+
+  if (Array.isArray(stderrSamples) && stderrSamples.length > 0) {
+    lines.push('recent stderr lines:');
+    stderrSamples.slice(-3).forEach((raw, idx) => {
       lines.push(`${idx + 1}. ${raw}`);
     });
   }
@@ -1192,11 +1208,6 @@ async function handleRestartCommand(bot, chatId, repo, state) {
       return;
     }
 
-    if (state.running) {
-      await safeSend(bot, chatId, 'Cannot restart while running. Wait for current task to finish.');
-      return;
-    }
-
     if (process.env.OMG_DAEMON_CHILD !== '1') {
       await safeSend(
         bot,
@@ -1210,7 +1221,18 @@ async function handleRestartCommand(bot, chatId, repo, state) {
     }
 
     restartInProgress = true;
-    await safeSend(bot, chatId, `Restarting daemon for repo ${repo.name}...`);
+    if (state.running && state.currentProc) {
+      requestInterrupt(state, { forceAfterMs: 800 });
+      try {
+        sendInterruptSignal(state.currentProc, 'SIGKILL');
+        if (state.currentProc.stdout && !state.currentProc.stdout.destroyed) state.currentProc.stdout.destroy();
+        if (state.currentProc.stderr && !state.currentProc.stderr.destroyed) state.currentProc.stderr.destroy();
+      } catch (_err) {
+      }
+      await safeSend(bot, chatId, `Restarting daemon for repo ${repo.name}. Current task is being interrupted now.`);
+    } else {
+      await safeSend(bot, chatId, `Restarting daemon for repo ${repo.name}...`);
+    }
 
     try {
       writeRestartNotice({
@@ -1409,6 +1431,8 @@ async function startPromptRun(bot, repo, state, runItem) {
           stepReason: lastStepReason,
           rawSamples,
           logFile: repo.logFile,
+          rateLimit: meta && meta.rateLimit ? meta.rateLimit : null,
+          stderrSamples: meta && Array.isArray(meta.stderrSamples) ? meta.stderrSamples : [],
         });
         const fallback = isVersionPrompt ? appendHermuxVersion(fallbackBase, hermuxVersion) : fallbackBase;
         await safeSend(bot, chatId, fallback);

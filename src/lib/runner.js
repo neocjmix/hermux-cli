@@ -34,8 +34,45 @@ function runOpencode(instance, prompt, { onEvent, onDone, onError, sessionId }) 
   });
 
   let lineBuf = '';
+  let stderrBuf = '';
   let killed = false;
   let latestSessionId = sessionId || '';
+  const stderrSamples = [];
+  let rateLimit = null;
+
+  function parseRetryAfterSeconds(text) {
+    const src = String(text || '');
+    const secMatch = src.match(/retry(?:_|\s+)after[^0-9]{0,8}(\d{1,6})\s*s/i);
+    if (secMatch) return Number(secMatch[1]);
+    const bareMatch = src.match(/retry(?:_|\s+)after[^0-9]{0,8}(\d{1,6})/i);
+    if (bareMatch) return Number(bareMatch[1]);
+    return null;
+  }
+
+  function maybeCaptureRateLimit(line) {
+    const src = String(line || '');
+    if (!src) return;
+    if (!/(rate\s*limit|too\s*many\s*requests|quota\s*exceeded|\b429\b)/i.test(src)) return;
+    const retryAfterSeconds = parseRetryAfterSeconds(src);
+    rateLimit = {
+      detected: true,
+      line: src,
+      retryAfterSeconds,
+    };
+  }
+
+  function parseStderrChunk(chunk) {
+    stderrBuf += chunk;
+    const lines = stderrBuf.split('\n');
+    stderrBuf = lines.pop();
+    lines.forEach((line) => {
+      const trimmed = String(line || '').trim();
+      if (!trimmed) return;
+      stderrSamples.push(trimmed);
+      if (stderrSamples.length > 5) stderrSamples.shift();
+      maybeCaptureRateLimit(trimmed);
+    });
+  }
 
   function parseLine(line) {
     const trimmed = line.trim();
@@ -90,7 +127,9 @@ function runOpencode(instance, prompt, { onEvent, onDone, onError, sessionId }) 
   });
 
   proc.stderr.on('data', (data) => {
-    logStream.write(data.toString());
+    const str = data.toString();
+    logStream.write(str);
+    parseStderrChunk(str);
   });
 
   const timeout = setTimeout(() => {
@@ -112,11 +151,22 @@ function runOpencode(instance, prompt, { onEvent, onDone, onError, sessionId }) 
   proc.on('close', (code) => {
     clearTimeout(timeout);
     if (lineBuf.trim()) parseLine(lineBuf);
+    if (stderrBuf.trim()) {
+      const tail = stderrBuf.trim();
+      stderrSamples.push(tail);
+      if (stderrSamples.length > 5) stderrSamples.shift();
+      maybeCaptureRateLimit(tail);
+    }
     logStream.end();
+    const meta = {
+      sessionId: latestSessionId,
+      rateLimit,
+      stderrSamples: stderrSamples.slice(),
+    };
     if (killed) {
-      onDone(null, `Process timed out after ${MAX_PROCESS_SEC}s`, { sessionId: latestSessionId });
+      onDone(null, `Process timed out after ${MAX_PROCESS_SEC}s`, meta);
     } else {
-      onDone(code, null, { sessionId: latestSessionId });
+      onDone(code, null, meta);
     }
   });
 

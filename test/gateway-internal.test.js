@@ -53,6 +53,24 @@ test('buildNoOutputMessage includes diagnostics context', () => {
   assert.match(text, /log: .\/logs\/x\.log/);
 });
 
+test('buildNoOutputMessage includes rate-limit guidance when detected', () => {
+  const text = _internal.buildNoOutputMessage({
+    exitCode: 1,
+    stepCount: 0,
+    toolCount: 0,
+    toolNames: [],
+    stepReason: '',
+    rawSamples: [],
+    logFile: './logs/x.log',
+    rateLimit: { detected: true, retryAfterSeconds: 42, line: '429 too many requests' },
+    stderrSamples: ['Error: 429 Too Many Requests'],
+  });
+
+  assert.match(text, /Detected model\/API rate limit/);
+  assert.match(text, /recommended wait: 42s/);
+  assert.match(text, /recent stderr lines:/);
+});
+
 test('appendHermuxVersion appends version footer', () => {
   const text = _internal.appendHermuxVersion('opencode says hi', '0.1.1');
   assert.equal(text, 'opencode says hi\n\nhermux version: 0.1.1');
