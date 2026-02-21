@@ -20,12 +20,13 @@ function asUniqueStringArray(values) {
 }
 
 function normalizeRepo(repo) {
+  const opencodeCommand = 'opencode serve';
   return {
     name: String(repo.name || '').trim(),
     enabled: repo.enabled !== false,
     workdir: String(repo.workdir || '').trim(),
     chatIds: asUniqueStringArray(repo.chatIds),
-    opencodeCommand: String(repo.opencodeCommand || 'opencode run').trim() || 'opencode run',
+    opencodeCommand,
     logFile: String(repo.logFile || '').trim(),
   };
 }

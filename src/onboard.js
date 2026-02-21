@@ -177,14 +177,12 @@ async function main() {
   }
   ok('workdir exists');
 
-  const opencodeCmd = await ask(rl, 'opencode command', 'opencode run');
-
   const repo = {
     name,
     enabled: true,
     workdir,
     chatIds: uniqueChatIds,
-    opencodeCommand: opencodeCmd,
+    opencodeCommand: 'opencode serve',
     logFile: `./logs/${name}.log`,
   };
 

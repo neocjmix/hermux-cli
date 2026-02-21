@@ -153,7 +153,7 @@ function getHelpText() {
     '/whereami - show current chat ID and repo mapping',
     '',
     'Agent quick flow (copy to your coding agent):',
-    '1) Ask me for token/repo/workdir/opencode command',
+    '1) Ask me for token/repo/workdir',
     '2) Tell me to run /onboard in Telegram and answer prompts',
     '3) After setup, run /whereami and /status',
     '',
@@ -179,7 +179,7 @@ function parseYesNo(input) {
 function formatOnboardingQuestion(session) {
   if (session.step === 'token_mode') {
     return [
-      'Onboarding step 1/5',
+      'Onboarding step 1/4',
       'Global Telegram bot token already exists.',
       'Type: reuse or replace',
       'cancel anytime: /onboard cancel',
@@ -188,7 +188,7 @@ function formatOnboardingQuestion(session) {
 
   if (session.step === 'token_input') {
     return [
-      'Onboarding step 1/5',
+      'Onboarding step 1/4',
       'Send global Telegram bot token (format: 123456789:ABC-DEF...)',
       'cancel anytime: /onboard cancel',
     ].join('\n');
@@ -196,7 +196,7 @@ function formatOnboardingQuestion(session) {
 
   if (session.step === 'repo_name') {
     return [
-      'Onboarding step 2/5',
+      'Onboarding step 2/4',
       'Send repo name (letters, numbers, -, _)',
       'example: my-project',
     ].join('\n');
@@ -204,23 +204,15 @@ function formatOnboardingQuestion(session) {
 
   if (session.step === 'workdir') {
     return [
-      'Onboarding step 3/5',
+      'Onboarding step 3/4',
       'Send absolute repo workdir path',
       'example: /Users/name/work/my-project',
     ].join('\n');
   }
 
-  if (session.step === 'opencode_command') {
-    return [
-      'Onboarding step 4/5',
-      'Send opencode command, or type default',
-      'default: opencode run',
-    ].join('\n');
-  }
-
   if (session.step === 'attach_chat') {
     return [
-      'Onboarding step 5/5',
+      'Onboarding step 4/4',
       'Connect this chat to the new repo now? (yes/no)',
       'If no, you can connect later with /connect <repo>',
     ].join('\n');
@@ -239,7 +231,7 @@ function createOnboardingSession(chatId) {
       botToken: existingToken || '',
       name: '',
       workdir: '',
-      opencodeCommand: 'opencode run',
+      opencodeCommand: 'opencode serve',
       attachChat: true,
     },
   };
@@ -415,17 +407,6 @@ async function handleOnboardingInput(bot, chatId, text, chatRouter, states, onbo
       return true;
     }
     session.data.workdir = value;
-    session.step = 'opencode_command';
-    await safeSend(bot, chatId, formatOnboardingQuestion(session));
-    return true;
-  }
-
-  if (session.step === 'opencode_command') {
-    if (value.toLowerCase() === 'default' || !value) {
-      session.data.opencodeCommand = 'opencode run';
-    } else {
-      session.data.opencodeCommand = value;
-    }
     session.step = 'attach_chat';
     await safeSend(bot, chatId, formatOnboardingQuestion(session));
     return true;

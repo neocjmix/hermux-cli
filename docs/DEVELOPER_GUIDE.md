@@ -28,7 +28,7 @@ npx hermux onboard
 Required interaction contract for agents:
 
 1. Start from `npx hermux onboard` as the only onboarding entrypoint.
-2. Ask the user for onboarding values explicitly (token, repo name, workdir, command, chat IDs if needed).
+2. Ask the user for onboarding values explicitly (token, repo name, workdir, chat IDs if needed).
 3. Let onboard start runtime, then guide Telegram verification.
 4. In each target Telegram group:
    - call `/repos`
@@ -79,7 +79,7 @@ npx hermux init --yes --full
       "enabled": true,
       "workdir": "/absolute/path/to/repo",
       "chatIds": ["-1001111111111"],
-      "opencodeCommand": "opencode run",
+      "opencodeCommand": "opencode serve",
       "logFile": "./logs/my-repo.log"
     }
   ]

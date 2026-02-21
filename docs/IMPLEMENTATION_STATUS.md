@@ -17,7 +17,7 @@
 | `/status` 명령어 | `src/gateway.js` | **완료** |
 | `/verbose on\|off` 모드 | `src/gateway.js` | **완료** |
 | 단일 작업 동시성 제어 (running lock) | `src/gateway.js` | **완료** |
-| `opencode run --format json` 실행 | `src/lib/runner.js` | **완료** |
+| `opencode serve` 기반 실행 | `src/lib/runner.js` | **완료** |
 | JSON 이벤트 파싱 (step_start, text, tool_use, step_finish) | `src/lib/runner.js` | **완료** |
 | 프로세스 타임아웃 (SIGTERM → SIGKILL) | `src/lib/runner.js` | **완료** |
 | 로그 파일 기록 (append) | `src/lib/runner.js` | **완료** |
@@ -60,7 +60,7 @@
 | `/start` 명령어 | `src/gateway.js` | 인스턴스 정보 + 현재 모드 표시 |
 | `/status` 명령어 | `src/gateway.js` | workdir, busy 상태, verbose 상태 |
 | `/verbose on\|off` | `src/gateway.js` | tool call 실시간 표시 토글 |
-| JSON 이벤트 파싱 | `src/lib/runner.js` | `--format json` 출력 구조적 파싱 |
+| JSON 이벤트 파싱 | `src/lib/runner.js` | `/event` SSE 출력 구조적 파싱 |
 | Markdown→HTML 변환기 | `src/lib/md2html.js` | code block, bold, italic, heading 지원 |
 | 진행 상태 메시지 편집 | `src/gateway.js` | "Running..." → "[done] N step(s), M tool(s)" |
 | Tool call 브리핑 | `src/gateway.js` | command/filePath/pattern 기반 요약 표시 |

@@ -1,7 +1,7 @@
 # Architecture (MVP)
 
 ## 한 줄 요약
-Telegram 메시지를 받아 로컬에서 `opencode run --format json`을 실행하고, JSON 이벤트를 파싱하여 Markdown→HTML 변환 후 Telegram으로 전송하는 게이트웨이. 단일 글로벌 봇 + chat ID 기반 repo 라우팅을 사용한다.
+Telegram 메시지를 받아 로컬에서 `opencode serve` 백엔드를 기동하고 `/event` 스트림을 파싱하여 Markdown→HTML 변환 후 Telegram으로 전송하는 게이트웨이. 단일 글로벌 봇 + chat ID 기반 repo 라우팅을 사용한다.
 
 ## 모듈 구조
 
@@ -12,7 +12,7 @@ src/
 ├── onboard.js          # 인터랙티브 온보딩 CLI
 └── lib/
     ├── config.js       # config CRUD + legacy normalization
-    ├── runner.js       # opencode 프로세스 spawn + JSON 이벤트 파싱 + 로그 기록
+    ├── runner.js       # opencode serve 기동 + session/event API 처리 + 로그 기록
     └── md2html.js      # Markdown → Telegram HTML 변환 (code block, bold, italic, heading)
 ```
 
@@ -32,9 +32,9 @@ gateway.js — 단일 bot polling + chat id -> repo 라우팅
   └─ 일반 프롬프트 →
        │
        ▼
-     runner.js — `opencode run --format json <prompt>` spawn
-       │  ├── stdout: JSON line 파싱 → 이벤트 콜백
-       │  ├── stderr: 로그 파일에만 기록
+     runner.js — `opencode serve` 기동 + `/session/*` + `/event` 사용
+       │  ├── event stream 파싱 → 이벤트 콜백
+       │  ├── stderr: 로그 파일 기록 + rate-limit 힌트 추출
        │  └── 로그: logs/<instance>.log 에 append
        │
        ▼
@@ -67,12 +67,12 @@ gateway.js — 단일 bot polling + chat id -> repo 라우팅
 | `/verbose on` | tool call, step 진행 상황 실시간 표시 모드 |
 | `/verbose off` | 최종 결과만 표시 모드 (기본값) |
 | `/whereami` | 현재 chat ID와 매핑 repo 확인 |
-| 일반 텍스트 | `opencode run --format json <텍스트>` 실행 |
+| 일반 텍스트 | `opencode serve` 세션 메시지 실행 |
 
 ## 출력 처리 정책
 
 ### JSON 이벤트 파싱
-- `opencode run --format json` 출력을 줄 단위로 파싱
+- `opencode serve`의 `/event` SSE를 파싱
 - 이벤트 타입: `step_start`, `step_finish`, `text`, `tool_use`, `raw`
 - 파싱 실패 시 `raw` 이벤트로 fallback
 

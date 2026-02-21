@@ -7,7 +7,7 @@
 - 시간/크기 기반 스트리밍 버퍼링 (현재는 이벤트 기반)
 
 ## 반드시 지킬 것
-- Telegram 입력은 곧바로 로컬 `opencode run --format json`으로 전달
+- Telegram 입력은 곧바로 로컬 `opencode serve` 세션으로 전달
 - 출력은 Markdown→HTML 최소 변환만 수행 (구조 보존 우선)
 - 실패하면 간단히 우회 (HTML 실패 → plain text 재시도)
 - 단일 작업 동시성 보장 (인스턴스당 1개 작업 lock)

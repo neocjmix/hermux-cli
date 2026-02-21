@@ -28,7 +28,7 @@ Onboarding must follow strict prerequisite order. Each step unlocks the next.
    - Repo name (`^[a-zA-Z0-9_-]+$`)
    - Allowed chat IDs (comma-separated, optional; each `^-?\d+$`, deduplicated)
    - Repo workdir (absolute path + existing directory)
-   - opencode command (default: `opencode run`)
+   - opencode backend mode is fixed to `opencode serve`
 
 4. **Config persistence**
    - Save to `config/instances.json`.

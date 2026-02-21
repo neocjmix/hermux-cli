@@ -38,7 +38,10 @@ function shouldUseServe(instance) {
   const parts = cmd.split(/\s+/);
   const bin = parts[0];
   if (!bin) return false;
-  if (parts[1] === 'run' && /(^|\/)opencode$/.test(bin)) return true;
+  if (/^(.+\/)?opencode$/.test(bin)) {
+    const mode = String(parts[1] || '').trim().toLowerCase();
+    if (!mode || mode === 'run' || mode === 'serve') return true;
+  }
   return false;
 }
 

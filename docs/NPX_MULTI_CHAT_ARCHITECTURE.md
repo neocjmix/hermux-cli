@@ -38,7 +38,7 @@ Move to a split config model:
       "enabled": true,
       "workdir": "/abs/path/backend-api",
       "chatIds": ["-1001111111111", "-1002222222222"],
-      "opencodeCommand": "opencode run",
+      "opencodeCommand": "opencode serve",
       "logFile": "./logs/backend-api.log"
     }
   ]
@@ -96,7 +96,7 @@ Keep CLI-first onboarding and add a global/repo split.
 2. Repo name.
 3. Repo workdir (absolute existing directory).
 4. Allowed chat IDs (comma-separated numeric IDs).
-5. `opencode` command (default `opencode run`).
+5. `opencode` backend mode is fixed to `opencode serve`.
 
 Validation:
 

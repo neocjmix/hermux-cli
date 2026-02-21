@@ -3,7 +3,7 @@
 ## 구현된 전체 기능
 
 ### 1. 온보딩 (`npm run onboard`)
-- 인터랙티브 CLI: 인스턴스명 → 텔레그램 토큰 → chat ID → workdir → command
+- 인터랙티브 CLI: 인스턴스명 → 텔레그램 토큰 → chat ID → workdir
 - 입력별 즉시 검증 (이름 형식, 토큰 형식, 숫자 chat ID, 경로 존재)
 - `config/instances.json`에 upsert 저장
 - 로그 파일 경로 자동 생성
@@ -12,7 +12,7 @@
 - 인스턴스별 독립 Telegram polling
 - chat ID 기반 접근 제어
 - Bot 명령어: `/start`, `/status`, `/verbose on|off`
-- `opencode run --format json` 실행 + JSON 이벤트 파싱
+- `opencode serve` 실행 + `/event` 스트림 이벤트 파싱
 - 이벤트 타입 처리: `step_start`, `text`, `tool_use`, `step_finish`, `raw`
 - verbose 모드: tool call, step 진행 실시간 표시
 - Markdown → Telegram HTML 변환 (code block, bold, italic, heading)
