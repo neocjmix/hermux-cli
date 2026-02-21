@@ -738,6 +738,7 @@ function buildLiveStatusPanelHtml({
   toolCount,
   queueLength,
   sessionId,
+  waitInfo,
   lastTool,
   lastRaw,
   lastStepReason,
@@ -749,8 +750,10 @@ function buildLiveStatusPanelHtml({
       : phase === 'interrupted'
         ? '🛑'
         : phase === 'timeout'
-          ? '⏱️'
-          : '❌';
+            ? '⏱️'
+            : phase === 'waiting'
+              ? '⌛'
+            : '❌';
 
   const lines = [];
   lines.push(`<b>${phaseIcon} ${escapeHtml(repoName)} · ${escapeHtml(phase)}</b>`);
@@ -765,6 +768,15 @@ function buildLiveStatusPanelHtml({
   const shortSession = String(sessionId || '').trim();
   if (shortSession) {
     lines.push(`<code>🪪 ${escapeHtml(shortSession.slice(0, 20))}</code>`);
+  }
+
+  if (waitInfo && waitInfo.status === 'retry') {
+    const retryAfter = Number(waitInfo.retryAfterSeconds || 0);
+    if (retryAfter > 0) {
+      lines.push(`<code>⌛ waiting for model quota (${retryAfter}s)</code>`);
+    } else {
+      lines.push('<code>⌛ waiting for model quota</code>');
+    }
   }
 
 
@@ -942,6 +954,7 @@ function refreshRuntimeRouting(chatRouter, states) {
         interruptRequested: false,
         interruptEscalationTimer: null,
         interruptTrace: null,
+        waitingInfo: null,
         queue: [],
         panelRefresh: null,
         dispatchQueue: Promise.resolve(),
@@ -1269,6 +1282,7 @@ async function startPromptRun(bot, repo, state, runItem) {
   state.running = true;
   state.interruptRequested = false;
   state.interruptTrace = null;
+  state.waitingInfo = null;
   clearInterruptEscalationTimer(state);
   state.currentProc = null;
 
@@ -1287,15 +1301,17 @@ async function startPromptRun(bot, repo, state, runItem) {
   let lastToolBrief = '';
   let lastRawBrief = '';
   let lastPanelHtml = '';
+  let waitInfo = null;
 
   const buildPanel = (phase) => buildLiveStatusPanelHtml({
     repoName: repo.name,
     verbose: !!state.verbose,
-    phase,
+    phase: phase === 'running' && waitInfo ? 'waiting' : phase,
     stepCount,
     toolCount,
     queueLength: Array.isArray(state.queue) ? state.queue.length : 0,
     sessionId: activeSessionId,
+    waitInfo,
     lastTool: lastToolBrief,
     lastRaw: lastRawBrief,
     lastStepReason,
@@ -1324,12 +1340,16 @@ async function startPromptRun(bot, repo, state, runItem) {
       if (evt.sessionId) activeSessionId = evt.sessionId;
 
       if (type === 'step_start') {
+        waitInfo = null;
+        state.waitingInfo = null;
         stepCount++;
         await refreshPanel('running', false);
         return;
       }
 
       if (type === 'text') {
+        waitInfo = null;
+        state.waitingInfo = null;
         if ((evt.content || '').trim()) {
           finalText = evt.content;
           if (statusMsgId && evt.content !== lastStreamSnapshot) {
@@ -1341,6 +1361,8 @@ async function startPromptRun(bot, repo, state, runItem) {
       }
 
       if (type === 'tool_use') {
+        waitInfo = null;
+        state.waitingInfo = null;
         toolCount++;
         const brief = formatToolBrief(evt);
         lastToolBrief = brief;
@@ -1354,7 +1376,19 @@ async function startPromptRun(bot, repo, state, runItem) {
       }
 
       if (type === 'step_finish') {
+        waitInfo = null;
+        state.waitingInfo = null;
         lastStepReason = evt.reason || lastStepReason;
+        await refreshPanel('running', false);
+        return;
+      }
+
+      if (type === 'wait') {
+        waitInfo = {
+          status: String(evt.status || ''),
+          retryAfterSeconds: Number(evt.retryAfterSeconds || 0) || null,
+        };
+        state.waitingInfo = waitInfo;
         await refreshPanel('running', false);
         return;
       }
@@ -1380,6 +1414,7 @@ async function startPromptRun(bot, repo, state, runItem) {
       const interrupted = !!state.interruptRequested;
       state.interruptRequested = false;
       state.interruptTrace = null;
+      state.waitingInfo = null;
       state.currentProc = null;
       state.panelRefresh = null;
       if (meta && meta.sessionId) activeSessionId = meta.sessionId;
@@ -1471,6 +1506,7 @@ async function startPromptRun(bot, repo, state, runItem) {
       const interruptTrace = state.interruptTrace ? { ...state.interruptTrace } : null;
       state.interruptRequested = false;
       state.interruptTrace = null;
+      state.waitingInfo = null;
       state.currentProc = null;
       state.panelRefresh = null;
       console.error(`[${repo.name}] error:`, err.message);
@@ -1527,12 +1563,12 @@ async function handleRepoMessage(bot, repo, state, msg) {
   }
 
   if (command === '/status') {
-    await safeSend(
-      bot,
-      chatId,
-      `${repo.name}\nworkdir: ${repo.workdir}\nbusy: ${state.running ? 'yes' : 'no'}\nverbose: ${state.verbose ? 'on' : 'off'}\nqueue: ${Array.isArray(state.queue) ? state.queue.length : 0}`
-    );
-    return;
+      await safeSend(
+        bot,
+        chatId,
+        `${repo.name}\nworkdir: ${repo.workdir}\nbusy: ${state.running ? 'yes' : 'no'}\nwaiting: ${state.waitingInfo ? 'yes' : 'no'}\nverbose: ${state.verbose ? 'on' : 'off'}\nqueue: ${Array.isArray(state.queue) ? state.queue.length : 0}`
+      );
+      return;
   }
 
   if (command === '/session') {
@@ -1680,6 +1716,7 @@ function main() {
     interruptRequested: false,
     interruptEscalationTimer: null,
     interruptTrace: null,
+    waitingInfo: null,
     queue: [],
     panelRefresh: null,
     dispatchQueue: Promise.resolve(),

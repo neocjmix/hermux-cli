@@ -6,7 +6,7 @@
 - The codebase is 100% AI-generated, and no part of the source has undergone formal human code review.
 - You are solely responsible for assessing and accepting all operational, security, and compliance risks before use.
 
-Telegram gateway that runs local `opencode run` from inbound Telegram messages.
+Telegram gateway that runs a local `opencode serve` backend and streams session events from inbound Telegram messages.
 
 Current behavior:
 - one global Telegram bot token
@@ -74,10 +74,10 @@ Bot commands:
 | `/repos` | List connectable repos |
 | `/connect <repo>` | Bind current chat to a repo |
 | `/help` | Show onboarding and command help |
-| `/status` | Show repo name/workdir/busy/verbose |
+| `/status` | Show repo name/workdir/busy/verbose/queue |
 | `/version` | Show opencode output plus hermux version |
 | `/interrupt` | Stop current running task |
-| `/restart` | Restart daemon process (keep settings/sessions) |
+| `/restart` | Restart daemon process anytime (active run is interrupted first) |
 | `/verbose on` | Show intermediate step/tool events |
 | `/verbose off` | Final output only |
 | `/whereami` | Show current chat ID and mapped repo |

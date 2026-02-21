@@ -122,6 +122,7 @@ test('buildLiveStatusPanelHtml shows emoji-rich compact panel', () => {
     toolCount: 1,
     queueLength: 2,
     sessionId: 'sess-abcdef',
+    waitInfo: null,
     lastTool: 'bash: ls',
     lastRaw: '',
     lastStepReason: 'continue',
@@ -133,6 +134,26 @@ test('buildLiveStatusPanelHtml shows emoji-rich compact panel', () => {
   assert.match(html, /🧰 1/);
   assert.match(html, /📥 queue: 2/);
   assert.match(html, /🔧/);
+});
+
+test('buildLiveStatusPanelHtml renders waiting quota state', () => {
+  const html = _internal.buildLiveStatusPanelHtml({
+    repoName: 'demo-repo',
+    verbose: false,
+    phase: 'waiting',
+    stepCount: 1,
+    toolCount: 0,
+    queueLength: 0,
+    sessionId: 'sess-abcdef',
+    waitInfo: { status: 'retry', retryAfterSeconds: 42 },
+    lastTool: '',
+    lastRaw: '',
+    lastStepReason: '',
+  });
+
+  assert.match(html, /⌛/);
+  assert.match(html, /waiting for model quota/);
+  assert.match(html, /42s/);
 });
 
 test('extractMermaidBlocks parses fenced mermaid blocks', () => {
