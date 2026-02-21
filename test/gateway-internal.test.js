@@ -103,25 +103,18 @@ test('buildLiveStatusPanelHtml shows emoji-rich compact panel', () => {
     stepCount: 2,
     toolCount: 1,
     queueLength: 2,
-    queuedPreview: 'next queued prompt',
     sessionId: 'sess-abcdef',
-    promptPreview: 'check current issue',
-    replyContext: 'previous prompt body',
-    streamText: 'draft response text',
     lastTool: 'bash: ls',
     lastRaw: '',
     lastStepReason: 'continue',
   });
 
   assert.match(html, /🏃/);
-  assert.match(html, /🧠 compact/);
+  assert.doesNotMatch(html, /🧠/);
   assert.match(html, /🔁 2/);
   assert.match(html, /🧰 1/);
   assert.match(html, /📥 queue: 2/);
-  assert.match(html, /⏭️/);
-  assert.match(html, /✍️/);
   assert.match(html, /🔧/);
-  assert.match(html, /\[Reply context\]/);
 });
 
 test('extractMermaidBlocks parses fenced mermaid blocks', () => {
@@ -142,6 +135,132 @@ test('extractMermaidBlocks parses fenced mermaid blocks', () => {
   assert.equal(blocks.length, 2);
   assert.match(blocks[0], /graph TD/);
   assert.match(blocks[1], /sequenceDiagram/);
+});
+
+test('withStateDispatchLock serializes concurrent tasks', async () => {
+  const state = {};
+  const seq = [];
+
+  const a = _internal.withStateDispatchLock(state, async () => {
+    seq.push('a:start');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    seq.push('a:end');
+  });
+
+  const b = _internal.withStateDispatchLock(state, async () => {
+    seq.push('b:start');
+    seq.push('b:end');
+  });
+
+  await Promise.all([a, b]);
+  assert.deepEqual(seq, ['a:start', 'a:end', 'b:start', 'b:end']);
+});
+
+test('serializePollingError extracts useful telegram fields', () => {
+  const detail = _internal.serializePollingError({
+    code: 'ETELEGRAM',
+    message: '409 conflict',
+    response: {
+      statusCode: 409,
+      body: {
+        error_code: 409,
+        description: 'Conflict: terminated by other getUpdates request',
+        parameters: { retry_after: 2 },
+      },
+    },
+  });
+
+  assert.equal(detail.code, 'ETELEGRAM');
+  assert.equal(detail.httpStatus, 409);
+  assert.equal(detail.tgErrorCode, 409);
+  assert.match(detail.description, /terminated by other getUpdates/i);
+});
+
+test('withRestartMutationLock serializes restart critical section', async () => {
+  const seq = [];
+
+  const a = _internal.withRestartMutationLock(async () => {
+    seq.push('a:start');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    seq.push('a:end');
+  });
+
+  const b = _internal.withRestartMutationLock(async () => {
+    seq.push('b:start');
+    seq.push('b:end');
+  });
+
+  await Promise.all([a, b]);
+  assert.deepEqual(seq, ['a:start', 'a:end', 'b:start', 'b:end']);
+});
+
+test('requestInterrupt sends SIGTERM then SIGKILL escalation', async () => {
+  const calls = [];
+  const proc = {
+    killed: false,
+    kill: (sig) => {
+      calls.push(sig);
+    },
+  };
+  const state = {
+    running: true,
+    currentProc: proc,
+    interruptRequested: false,
+    interruptEscalationTimer: null,
+  };
+
+  const result = _internal.requestInterrupt(state, { forceAfterMs: 10 });
+  assert.equal(result.ok, true);
+  assert.equal(state.interruptRequested, true);
+  assert.equal(typeof state.interruptTrace.requestedAt, 'number');
+  assert.equal(typeof state.interruptTrace.termSentAt, 'number');
+  assert.equal(state.interruptTrace.forceAfterMs, 10);
+  assert.deepEqual(calls, ['SIGTERM']);
+
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(calls, ['SIGTERM', 'SIGKILL']);
+});
+
+test('requestInterrupt escalates to SIGKILL even when proc.killed is true', async () => {
+  const calls = [];
+  const proc = {
+    killed: false,
+    kill: (sig) => {
+      calls.push(sig);
+      if (sig === 'SIGTERM') proc.killed = true;
+    },
+  };
+  const state = {
+    running: true,
+    currentProc: proc,
+    interruptRequested: false,
+    interruptEscalationTimer: null,
+  };
+
+  _internal.requestInterrupt(state, { forceAfterMs: 10 });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(calls, ['SIGTERM', 'SIGKILL']);
+  assert.equal(state.interruptTrace.status, 'kill_sent');
+});
+
+test('requestInterrupt uses injected signal sender for TERM and KILL', async () => {
+  const calls = [];
+  const proc = { pid: 12345, killed: false, kill: () => {} };
+  const state = {
+    running: true,
+    currentProc: proc,
+    interruptRequested: false,
+    interruptEscalationTimer: null,
+  };
+
+  const sendSignal = (p, sig) => {
+    calls.push(`${p.pid}:${sig}`);
+  };
+
+  const result = _internal.requestInterrupt(state, { forceAfterMs: 10, sendSignal });
+  assert.equal(result.ok, true);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(calls, ['12345:SIGTERM', '12345:SIGKILL']);
 });
 
 test('getReplyContext extracts replied text', () => {

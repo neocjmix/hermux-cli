@@ -26,6 +26,12 @@ else
   echo "- ok: git ($(git --version))"
 fi
 
+if ! command -v mmdc >/dev/null 2>&1; then
+  echo "- note: mmdc not found (Mermaid diagrams will be text-only; onboard/start can auto-bootstrap)"
+else
+  echo "- ok: mmdc ($(mmdc --version 2>/dev/null || echo version-unknown))"
+fi
+
 if [ ! -f "./config/instances.json" ]; then
   echo "- note: config/instances.json not found (run: npm run onboard)"
 else

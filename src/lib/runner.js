@@ -29,6 +29,7 @@ function runOpencode(instance, prompt, { onEvent, onDone, onError, sessionId }) 
   const proc = spawn(cmd, cmdArgs, {
     cwd: instance.workdir,
     env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' },
+    detached: process.platform !== 'win32',
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
@@ -96,7 +97,15 @@ function runOpencode(instance, prompt, { onEvent, onDone, onError, sessionId }) 
     if (!proc.killed) {
       killed = true;
       proc.kill('SIGTERM');
-      setTimeout(() => { if (!proc.killed) proc.kill('SIGKILL'); }, 5000);
+      setTimeout(() => {
+        if (!proc.killed) {
+          proc.kill('SIGKILL');
+          try {
+            if (proc.stdout && !proc.stdout.destroyed) proc.stdout.destroy();
+            if (proc.stderr && !proc.stderr.destroyed) proc.stderr.destroy();
+          } catch (_err) {}
+        }
+      }, 5000);
     }
   }, MAX_PROCESS_SEC * 1000);
 

@@ -18,15 +18,118 @@ const IMAGE_UPLOAD_DIR = '.opencode_mobile_gateway/uploads';
 const RUNTIME_DIR = path.join(__dirname, '..', 'runtime');
 const PID_PATH = path.join(RUNTIME_DIR, 'gateway.pid');
 const LOG_PATH = path.join(RUNTIME_DIR, 'gateway.log');
+const RESTART_NOTICE_PATH = path.join(RUNTIME_DIR, 'restart-notice.json');
 const MERMAID_RENDER_DIR = '.opencode_mobile_gateway/mermaid';
 const STREAM_EDIT_MIN_INTERVAL_COMPACT_MS = 1200;
 const STREAM_EDIT_MIN_INTERVAL_VERBOSE_MS = 350;
 let connectMutationQueue = Promise.resolve();
+let restartMutationQueue = Promise.resolve();
+let restartInProgress = false;
 
 function withConnectMutationLock(task) {
   const run = connectMutationQueue.then(task, task);
   connectMutationQueue = run.catch(() => {});
   return run;
+}
+
+function withRestartMutationLock(task) {
+  const run = restartMutationQueue.then(task, task);
+  restartMutationQueue = run.catch(() => {});
+  return run;
+}
+
+function withStateDispatchLock(state, task) {
+  if (!state.dispatchQueue) state.dispatchQueue = Promise.resolve();
+  const run = state.dispatchQueue.then(task, task);
+  state.dispatchQueue = run.catch(() => {});
+  return run;
+}
+
+function clearInterruptEscalationTimer(state) {
+  if (!state || !state.interruptEscalationTimer) return;
+  clearTimeout(state.interruptEscalationTimer);
+  state.interruptEscalationTimer = null;
+}
+
+function sendInterruptSignal(proc, signal) {
+  if (!proc) return;
+  const pid = Number(proc.pid || 0);
+  if (process.platform !== 'win32' && pid > 0) {
+    try {
+      process.kill(-pid, signal);
+      return;
+    } catch (_err) {
+    }
+  }
+  proc.kill(signal);
+}
+
+function requestInterrupt(state, { forceAfterMs = 5000, sendSignal = sendInterruptSignal } = {}) {
+  if (!state || !state.running || !state.currentProc) {
+    return { ok: false, reason: 'no_running_task' };
+  }
+
+  if (state.interruptRequested) {
+    return { ok: true, alreadyRequested: true };
+  }
+
+  state.interruptRequested = true;
+  clearInterruptEscalationTimer(state);
+  state.interruptTrace = {
+    requestedAt: Date.now(),
+    termSentAt: null,
+    killSentAt: null,
+    forceAfterMs,
+    status: 'requested',
+  };
+
+  try {
+    sendSignal(state.currentProc, 'SIGTERM');
+    state.interruptTrace.termSentAt = Date.now();
+    state.interruptTrace.status = 'term_sent';
+  } catch (err) {
+    state.interruptRequested = false;
+    if (state.interruptTrace) state.interruptTrace.status = 'term_failed';
+    return { ok: false, reason: 'term_failed', error: err };
+  }
+
+  state.interruptEscalationTimer = setTimeout(() => {
+    const proc = state.currentProc;
+    if (!state.running || !proc) return;
+    try {
+      sendSignal(proc, 'SIGKILL');
+      if (state.interruptTrace) {
+        state.interruptTrace.killSentAt = Date.now();
+        state.interruptTrace.status = 'kill_sent';
+      }
+    } catch (_err) {
+    }
+    // Force-destroy stdio streams so the child 'close' event fires
+    // immediately instead of waiting for grandchild processes to exit.
+    try {
+      if (proc.stdout && !proc.stdout.destroyed) proc.stdout.destroy();
+      if (proc.stderr && !proc.stderr.destroyed) proc.stderr.destroy();
+    } catch (_err) {
+    }
+  }, forceAfterMs);
+
+  return { ok: true, alreadyRequested: false };
+}
+
+function serializePollingError(err) {
+  const response = err && err.response ? err.response : {};
+  const body = response && response.body ? response.body : {};
+  const result = body && body.result ? body.result : {};
+  return {
+    code: String((err && err.code) || ''),
+    message: String((err && err.message) || ''),
+    httpStatus: Number(response.statusCode || 0) || null,
+    tgErrorCode: Number(body.error_code || 0) || null,
+    description: String(body.description || ''),
+    parameters: body.parameters || null,
+    migrateToChatId: result && result.migrate_to_chat_id ? String(result.migrate_to_chat_id) : '',
+    retryAfter: result && result.retry_after ? Number(result.retry_after) : null,
+  };
 }
 
 function getHelpText() {
@@ -426,12 +529,12 @@ async function safeSend(bot, chatId, text, opts) {
   try {
     return await bot.sendMessage(chatId, text, opts);
   } catch (err) {
-    console.error('send failed:', err.message);
+    console.error('send failed:', err.code || err.message, '| chat:', chatId, '| parse_mode:', opts && opts.parse_mode ? opts.parse_mode : 'none');
     if (opts && opts.parse_mode) {
       try {
         return await bot.sendMessage(chatId, text);
       } catch (e) {
-        console.error('plain send also failed:', e.message);
+        console.error('plain send also failed:', e.code || e.message, '| chat:', chatId);
       }
     }
   }
@@ -453,11 +556,11 @@ async function editHtml(bot, chatId, messageId, html) {
     await bot.editMessageText(truncated, { chat_id: chatId, message_id: messageId, parse_mode: 'HTML' });
   } catch (err) {
     if (!err.message.includes('message is not modified')) {
-      console.error('edit failed:', err.message);
+      console.error('edit failed:', err.code || err.message, '| chat:', chatId, '| message_id:', messageId);
       try {
         await bot.editMessageText(truncated, { chat_id: chatId, message_id: messageId });
       } catch (e) {
-        console.error('plain edit also failed:', e.message);
+        console.error('plain edit also failed:', e.code || e.message, '| chat:', chatId, '| message_id:', messageId);
       }
     }
   }
@@ -469,6 +572,16 @@ async function safeSendPhoto(bot, chatId, filePath, caption) {
     return await bot.sendPhoto(chatId, stream, caption ? { caption } : undefined);
   } catch (err) {
     console.error('send photo failed:', err.message);
+    return null;
+  }
+}
+
+async function safeSendDocument(bot, chatId, filePath, caption) {
+  try {
+    const stream = fs.createReadStream(filePath);
+    return await bot.sendDocument(chatId, stream, caption ? { caption } : undefined);
+  } catch (err) {
+    console.error('send document failed:', err.message);
     return null;
   }
 }
@@ -494,9 +607,9 @@ function hasMermaidRenderer() {
   }
 }
 
-function renderMermaidToPng(instance, chatId, blocks) {
+function renderMermaidArtifacts(instance, chatId, blocks) {
   const capped = blocks.slice(0, 3);
-  const outPaths = [];
+  const artifacts = [];
   const dir = path.resolve(instance.workdir, MERMAID_RENDER_DIR);
   fs.mkdirSync(dir, { recursive: true });
 
@@ -504,25 +617,39 @@ function renderMermaidToPng(instance, chatId, blocks) {
     const now = new Date().toISOString().replace(/[.:]/g, '-');
     const base = `tg_${String(chatId).replace(/[^0-9-]/g, '_')}_${now}_${i + 1}`;
     const inPath = path.join(dir, `${base}.mmd`);
-    const outPath = path.join(dir, `${base}.png`);
+    const outSvgPath = path.join(dir, `${base}.svg`);
+    const outPngPath = path.join(dir, `${base}.png`);
     fs.writeFileSync(inPath, capped[i] + '\n', 'utf8');
 
-    const rendered = spawnSync('mmdc', ['-i', inPath, '-o', outPath, '-b', 'transparent'], {
+    const renderedSvg = spawnSync('mmdc', ['-i', inPath, '-o', outSvgPath, '-b', 'transparent'], {
       cwd: instance.workdir,
       env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' },
       stdio: 'pipe',
       encoding: 'utf8',
     });
 
-    if (rendered.status === 0 && fs.existsSync(outPath)) {
-      outPaths.push(outPath);
+    if (renderedSvg.status === 0 && fs.existsSync(outSvgPath)) {
+      artifacts.push({ kind: 'svg', path: outSvgPath });
+      continue;
+    }
+
+    const renderedPng = spawnSync('mmdc', ['-i', inPath, '-o', outPngPath, '-b', 'transparent'], {
+      cwd: instance.workdir,
+      env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' },
+      stdio: 'pipe',
+      encoding: 'utf8',
+    });
+
+    if (renderedPng.status === 0 && fs.existsSync(outPngPath)) {
+      artifacts.push({ kind: 'png', path: outPngPath });
     } else {
-      const stderr = String(rendered.stderr || '').trim();
-      console.error(`[mermaid] render failed (${i + 1}): ${stderr || 'unknown error'}`);
+      const stderrSvg = String(renderedSvg.stderr || '').trim();
+      const stderrPng = String(renderedPng.stderr || '').trim();
+      console.error(`[mermaid] render failed (${i + 1}) svg=${stderrSvg || 'n/a'} png=${stderrPng || 'n/a'}`);
     }
   }
 
-  return outPaths;
+  return artifacts;
 }
 
 function formatToolBrief(evt) {
@@ -594,11 +721,7 @@ function buildLiveStatusPanelHtml({
   stepCount,
   toolCount,
   queueLength,
-  queuedPreview,
   sessionId,
-  promptPreview,
-  replyContext,
-  streamText,
   lastTool,
   lastRaw,
   lastStepReason,
@@ -615,14 +738,12 @@ function buildLiveStatusPanelHtml({
 
   const lines = [];
   lines.push(`<b>${phaseIcon} ${escapeHtml(repoName)} · ${escapeHtml(phase)}</b>`);
-  lines.push(`<code>🧠 ${verbose ? 'verbose' : 'compact'}</code>`);
+  if (verbose) {
+    lines.push('<code>🧠 verbose</code>');
+  }
   lines.push(`<code>🔁 ${stepCount} · 🧰 ${toolCount}</code>`);
-  lines.push(`<code>📥 queue: ${queueLength || 0}</code>`);
-
-  if (queuedPreview) {
-    const qv = String(queuedPreview).replace(/\s+/g, ' ').trim();
-    const qvTail = qv.length > 80 ? qv.slice(0, 80) + '...' : qv;
-    lines.push(`⏭️ ${escapeHtml(qvTail)}`);
+  if ((queueLength || 0) > 0) {
+    lines.push(`<code>📥 queue: ${queueLength}</code>`);
   }
 
   const shortSession = String(sessionId || '').trim();
@@ -630,29 +751,6 @@ function buildLiveStatusPanelHtml({
     lines.push(`<code>🪪 ${escapeHtml(shortSession.slice(0, 20))}</code>`);
   }
 
-  if (promptPreview) {
-    const pv = String(promptPreview).replace(/\s+/g, ' ').trim();
-    const pvTail = pv.length > 120 ? pv.slice(0, 120) + '...' : pv;
-    lines.push(`📝 ${escapeHtml(pvTail)}`);
-  }
-
-  if (replyContext) {
-    const rc = String(replyContext).replace(/\s+/g, ' ').trim();
-    const rcTail = rc.length > 120 ? rc.slice(0, 120) + '...' : rc;
-    lines.push(`[Reply context] ${escapeHtml(rcTail)}`);
-  }
-
-  const streamRaw = String(streamText || '');
-  if (streamRaw) {
-    if (verbose) {
-      const tailVerbose = streamRaw.length > 900 ? '...' + streamRaw.slice(-900) : streamRaw;
-      lines.push(`<pre>${escapeHtml(tailVerbose)}</pre>`);
-    } else {
-      const compact = streamRaw.replace(/\s+/g, ' ').trim();
-      const tailCompact = compact.length > 160 ? '...' + compact.slice(-160) : compact;
-      lines.push(`✍️ ${escapeHtml(tailCompact || '(waiting)')}`);
-    }
-  }
 
   if (lastTool) {
     const t = String(lastTool).trim();
@@ -826,8 +924,11 @@ function refreshRuntimeRouting(chatRouter, states) {
         verbose: false,
         currentProc: null,
         interruptRequested: false,
+        interruptEscalationTimer: null,
+        interruptTrace: null,
         queue: [],
         panelRefresh: null,
+        dispatchQueue: Promise.resolve(),
       });
     }
   }
@@ -1041,6 +1142,35 @@ function writePidAtomic(pid) {
   fs.renameSync(tmp, PID_PATH);
 }
 
+function writeRestartNotice(payload) {
+  fs.mkdirSync(RUNTIME_DIR, { recursive: true });
+  const tmp = RESTART_NOTICE_PATH + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(payload, null, 2) + '\n', 'utf8');
+  fs.renameSync(tmp, RESTART_NOTICE_PATH);
+}
+
+function readAndClearRestartNotice() {
+  try {
+    if (!fs.existsSync(RESTART_NOTICE_PATH)) return null;
+    const raw = fs.readFileSync(RESTART_NOTICE_PATH, 'utf8');
+    fs.unlinkSync(RESTART_NOTICE_PATH);
+    const parsed = JSON.parse(raw);
+    const chatId = String((parsed && parsed.chatId) || '').trim();
+    if (!chatId) return null;
+    return {
+      chatId,
+      repoName: String((parsed && parsed.repoName) || '').trim(),
+      requestedAt: String((parsed && parsed.requestedAt) || '').trim(),
+    };
+  } catch (_err) {
+    try {
+      if (fs.existsSync(RESTART_NOTICE_PATH)) fs.unlinkSync(RESTART_NOTICE_PATH);
+    } catch (_e) {
+    }
+    return null;
+  }
+}
+
 function spawnReplacementDaemon() {
   fs.mkdirSync(RUNTIME_DIR, { recursive: true });
   const outFd = fs.openSync(LOG_PATH, 'a');
@@ -1056,38 +1186,56 @@ function spawnReplacementDaemon() {
 }
 
 async function handleRestartCommand(bot, chatId, repo, state) {
-  if (state.running) {
-    await safeSend(bot, chatId, 'Cannot restart while running. Wait for current task to finish.');
-    return;
-  }
+  return withRestartMutationLock(async () => {
+    if (restartInProgress) {
+      await safeSend(bot, chatId, 'Restart already in progress. Please wait a moment.');
+      return;
+    }
 
-  if (process.env.OMG_DAEMON_CHILD !== '1') {
-    await safeSend(
-      bot,
-      chatId,
-      [
-        'Restart is available only in daemon mode.',
-        'If you run foreground manually, stop and start again: hermux start --foreground',
-      ].join('\n')
-    );
-    return;
-  }
+    if (state.running) {
+      await safeSend(bot, chatId, 'Cannot restart while running. Wait for current task to finish.');
+      return;
+    }
 
-  await safeSend(bot, chatId, `Restarting daemon for repo ${repo.name}...`);
+    if (process.env.OMG_DAEMON_CHILD !== '1') {
+      await safeSend(
+        bot,
+        chatId,
+        [
+          'Restart is available only in daemon mode.',
+          'If you run foreground manually, stop and start again: hermux start --foreground',
+        ].join('\n')
+      );
+      return;
+    }
 
-  try {
-    await bot.stopPolling();
-  } catch (_err) {
-  }
+    restartInProgress = true;
+    await safeSend(bot, chatId, `Restarting daemon for repo ${repo.name}...`);
 
-  try {
-    const nextPid = spawnReplacementDaemon();
-    console.log(`[restart] spawned replacement daemon pid: ${nextPid}`);
-  } catch (err) {
-    console.error('[restart] failed to spawn replacement daemon:', err.message);
-  }
+    try {
+      writeRestartNotice({
+        chatId,
+        repoName: repo.name,
+        requestedAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.error('[restart] failed to write restart notice:', err.message);
+    }
 
-  setTimeout(() => process.exit(0), 50);
+    try {
+      await bot.stopPolling();
+    } catch (_err) {
+    }
+
+    try {
+      const nextPid = spawnReplacementDaemon();
+      console.log(`[restart] spawned replacement daemon pid: ${nextPid}`);
+    } catch (err) {
+      console.error('[restart] failed to spawn replacement daemon:', err.message);
+    }
+
+    setTimeout(() => process.exit(0), 50);
+  });
 }
 
 async function startPromptRun(bot, repo, state, runItem) {
@@ -1095,10 +1243,11 @@ async function startPromptRun(bot, repo, state, runItem) {
   const promptText = runItem.promptText;
   const promptPreview = runItem.promptPreview;
   const isVersionPrompt = !!runItem.isVersionPrompt;
-  const replyContextPreview = runItem.replyContextPreview || '';
 
   state.running = true;
   state.interruptRequested = false;
+  state.interruptTrace = null;
+  clearInterruptEscalationTimer(state);
   state.currentProc = null;
 
   console.log(`[${repo.name}] run: ${promptPreview.slice(0, 80)}`);
@@ -1124,11 +1273,7 @@ async function startPromptRun(bot, repo, state, runItem) {
     stepCount,
     toolCount,
     queueLength: Array.isArray(state.queue) ? state.queue.length : 0,
-    queuedPreview: Array.isArray(state.queue) && state.queue.length > 0 ? state.queue[0].promptPreview : '',
     sessionId: activeSessionId,
-    promptPreview,
-    replyContext: replyContextPreview,
-    streamText: finalText,
     lastTool: lastToolBrief,
     lastRaw: lastRawBrief,
     lastStepReason,
@@ -1208,8 +1353,11 @@ async function startPromptRun(bot, repo, state, runItem) {
 
     onDone: async (exitCode, timeoutMsg, meta) => {
       state.running = false;
+      clearInterruptEscalationTimer(state);
+      const interruptTrace = state.interruptTrace ? { ...state.interruptTrace } : null;
       const interrupted = !!state.interruptRequested;
       state.interruptRequested = false;
+      state.interruptTrace = null;
       state.currentProc = null;
       state.panelRefresh = null;
       if (meta && meta.sessionId) activeSessionId = meta.sessionId;
@@ -1227,6 +1375,10 @@ async function startPromptRun(bot, repo, state, runItem) {
       } else if (timeoutMsg) {
         await safeSend(bot, chatId, `Timed out: ${timeoutMsg}`);
       } else if (finalText.trim()) {
+        const outgoingText = isVersionPrompt ? appendHermuxVersion(finalText, hermuxVersion) : finalText;
+        const html = md2html(outgoingText);
+        await sendHtml(bot, chatId, html);
+
         const mermaidBlocks = extractMermaidBlocks(finalText);
         if (mermaidBlocks.length > 0) {
           if (!hasMermaidRenderer()) {
@@ -1236,17 +1388,18 @@ async function startPromptRun(bot, repo, state, runItem) {
               'Mermaid blocks detected, but renderer is unavailable. Install mermaid-cli (`mmdc`) to receive rendered diagrams.'
             );
           } else {
-            const renderedPaths = renderMermaidToPng(repo, chatId, mermaidBlocks);
-            for (let i = 0; i < renderedPaths.length; i++) {
-              const caption = renderedPaths.length > 1 ? `Mermaid diagram ${i + 1}/${renderedPaths.length}` : 'Mermaid diagram';
-              await safeSendPhoto(bot, chatId, renderedPaths[i], caption);
+            const artifacts = renderMermaidArtifacts(repo, chatId, mermaidBlocks);
+            for (let i = 0; i < artifacts.length; i++) {
+              const a = artifacts[i];
+              const caption = artifacts.length > 1 ? `Mermaid diagram ${i + 1}/${artifacts.length}` : 'Mermaid diagram';
+              if (a.kind === 'svg') {
+                await safeSendDocument(bot, chatId, a.path, caption);
+              } else {
+                await safeSendPhoto(bot, chatId, a.path, caption);
+              }
             }
           }
         }
-
-        const outgoingText = isVersionPrompt ? appendHermuxVersion(finalText, hermuxVersion) : finalText;
-        const html = md2html(outgoingText);
-        await sendHtml(bot, chatId, html);
       } else {
         const fallbackBase = buildNoOutputMessage({
           exitCode,
@@ -1263,6 +1416,20 @@ async function startPromptRun(bot, repo, state, runItem) {
 
       const summary = `[${status}] ${stepCount} step(s), ${toolCount} tool(s)`;
       console.log(`[${repo.name}] ${summary}`);
+      if (interruptTrace) {
+        const completedAt = Date.now();
+        const termLatencyMs = interruptTrace.termSentAt ? completedAt - interruptTrace.termSentAt : null;
+        const reqLatencyMs = interruptTrace.requestedAt ? completedAt - interruptTrace.requestedAt : null;
+        console.log(`[${repo.name}] interrupt trace: ${JSON.stringify({
+          ...interruptTrace,
+          completedAt,
+          reqLatencyMs,
+          termLatencyMs,
+          exitCode,
+          timeout: !!timeoutMsg,
+          status,
+        })}`);
+      }
 
       if (statusMsgId) {
         await refreshPanel(status, true);
@@ -1276,10 +1443,25 @@ async function startPromptRun(bot, repo, state, runItem) {
 
     onError: async (err) => {
       state.running = false;
+      clearInterruptEscalationTimer(state);
+      const interruptTrace = state.interruptTrace ? { ...state.interruptTrace } : null;
       state.interruptRequested = false;
+      state.interruptTrace = null;
       state.currentProc = null;
       state.panelRefresh = null;
       console.error(`[${repo.name}] error:`, err.message);
+      if (interruptTrace) {
+        const completedAt = Date.now();
+        const termLatencyMs = interruptTrace.termSentAt ? completedAt - interruptTrace.termSentAt : null;
+        const reqLatencyMs = interruptTrace.requestedAt ? completedAt - interruptTrace.requestedAt : null;
+        console.error(`[${repo.name}] interrupt trace on error: ${JSON.stringify({
+          ...interruptTrace,
+          completedAt,
+          reqLatencyMs,
+          termLatencyMs,
+          error: err.message,
+        })}`);
+      }
       await safeSend(
         bot,
         chatId,
@@ -1401,14 +1583,14 @@ async function handleRepoMessage(bot, repo, state, msg) {
       await safeSend(bot, chatId, 'No running task to interrupt.');
       return;
     }
-    state.interruptRequested = true;
-    try {
-      state.currentProc.kill('SIGTERM');
-      await safeSend(bot, chatId, 'Interrupt requested. Stopping current task...');
-    } catch (err) {
-      state.interruptRequested = false;
-      await safeSend(bot, chatId, `Failed to interrupt current task: ${err.message}`);
+    const req = requestInterrupt(state, { forceAfterMs: 5000 });
+    if (!req.ok) {
+      const msg = req.error ? req.error.message : req.reason;
+      await safeSend(bot, chatId, `Failed to interrupt current task: ${msg}`);
+      return;
     }
+    console.log(`[${repo.name}] interrupt requested | chat=${chatId} | alreadyRequested=${req.alreadyRequested ? 'yes' : 'no'}`);
+    await safeSend(bot, chatId, req.alreadyRequested ? 'Interrupt already requested. Waiting for task shutdown...' : 'Interrupt requested. Stopping current task...');
     return;
   }
 
@@ -1428,13 +1610,11 @@ async function handleRepoMessage(bot, repo, state, msg) {
   const promptText = preparedPrompt.prompt;
   const promptPreviewRaw = preparedPrompt.preview || '';
   const promptPreview = promptPreviewRaw.length > 200 ? promptPreviewRaw.slice(0, 200) + '...' : promptPreviewRaw;
-  const replyContextPreview = getReplyContext(msg);
   const queuedItem = {
     chatId,
     promptText,
     promptPreview,
     isVersionPrompt,
-    replyContextPreview,
   };
 
   if (state.running) {
@@ -1474,12 +1654,16 @@ function main() {
     verbose: false,
     currentProc: null,
     interruptRequested: false,
+    interruptEscalationTimer: null,
+    interruptTrace: null,
     queue: [],
     panelRefresh: null,
+    dispatchQueue: Promise.resolve(),
   }]));
   const onboardingSessions = new Map();
   const initSessions = new Map();
   const bot = new TelegramBot(botToken, { polling: true });
+  const restartNotice = readAndClearRestartNotice();
 
   console.log(`polling with 1 bot for ${repos.length} repo(s), ${chatRouter.size} chat id(s)`);
 
@@ -1501,6 +1685,17 @@ function main() {
   ]).catch((err) => {
     console.error('[bot] setMyCommands failed:', err.message);
   });
+
+  if (restartNotice && restartNotice.chatId) {
+    setTimeout(async () => {
+      const repoHint = restartNotice.repoName ? ` for ${restartNotice.repoName}` : '';
+      await safeSend(
+        bot,
+        restartNotice.chatId,
+        `✅ Restart complete${repoHint}. Runtime is back online.`
+      );
+    }, 1200);
+  }
 
   bot.on('message', async (msg) => {
     const chatId = String(msg.chat.id);
@@ -1579,7 +1774,9 @@ function main() {
     }
 
     const state = states.get(repo.name);
-    await handleRepoMessage(bot, repo, state, msg);
+    await withStateDispatchLock(state, async () => {
+      await handleRepoMessage(bot, repo, state, msg);
+    });
   });
 
   bot.on('callback_query', async (query) => {
@@ -1632,7 +1829,8 @@ function main() {
   });
 
   bot.on('polling_error', (err) => {
-    console.error(`[bot] polling error:`, err.code || err.message);
+    const detail = serializePollingError(err);
+    console.error('[bot] polling error detail:', JSON.stringify(detail));
   });
 
   const shutdown = () => {
@@ -1659,6 +1857,12 @@ module.exports = {
     buildStreamingStatusHtml,
     buildLiveStatusPanelHtml,
     extractMermaidBlocks,
+    withRestartMutationLock,
+    withStateDispatchLock,
+    sendInterruptSignal,
+    requestInterrupt,
+    clearInterruptEscalationTimer,
+    serializePollingError,
     buildConnectKeyboard,
     buildVerboseKeyboard,
     getReplyContext,

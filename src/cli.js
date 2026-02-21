@@ -3,11 +3,35 @@
 
 const fs = require('fs');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 
 const RUNTIME_DIR = path.join(__dirname, '..', 'runtime');
 const PID_PATH = path.join(RUNTIME_DIR, 'gateway.pid');
 const LOG_PATH = path.join(RUNTIME_DIR, 'gateway.log');
+
+function hasCommand(cmd) {
+  const probe = spawnSync('sh', ['-lc', `command -v ${cmd}`], { stdio: 'ignore' });
+  return probe.status === 0;
+}
+
+function ensureRuntimeDependencies() {
+  if (process.env.OMG_SKIP_DEP_BOOTSTRAP === '1') return;
+
+  if (hasCommand('mmdc')) return;
+  if (!hasCommand('npm')) {
+    console.log('[warn] npm not found; cannot auto-install Mermaid renderer (mmdc).');
+    return;
+  }
+
+  console.log('[deps] mmdc not found. Installing @mermaid-js/mermaid-cli...');
+  const install = spawnSync('npm', ['install', '-g', '@mermaid-js/mermaid-cli'], { stdio: 'inherit' });
+  if (install.status === 0 && hasCommand('mmdc')) {
+    console.log('[deps] mmdc installed successfully.');
+    return;
+  }
+
+  console.log('[warn] Mermaid renderer install failed. Mermaid output will stay text-only.');
+}
 
 function ensureRuntimeDir() {
   fs.mkdirSync(RUNTIME_DIR, { recursive: true });
@@ -82,6 +106,7 @@ async function main() {
       startAsDaemon();
       return;
     }
+    ensureRuntimeDependencies();
     const { main: startGateway } = require('./gateway');
     startGateway();
     return;
