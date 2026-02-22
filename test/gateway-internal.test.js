@@ -148,6 +148,8 @@ test('buildRuntimeStatusHtml renders readable status card', () => {
   assert.match(html, /busy: yes/);
   assert.match(html, /waiting: yes/);
   assert.match(html, /queue: 2/);
+  assert.match(html, /serve: /);
+  assert.match(html, /port: /);
 });
 
 test('buildStreamingStatusHtml wraps and escapes text tail', () => {

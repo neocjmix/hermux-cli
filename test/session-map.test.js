@@ -41,3 +41,33 @@ test('session map set/get/clear lifecycle', () => {
     restoreFile(sessions.SESSION_MAP_PATH, snapshot);
   }
 });
+
+test('session map clearSessionId is idempotent for missing key', () => {
+  const snapshot = backupFile(sessions.SESSION_MAP_PATH);
+  try {
+    sessions.saveSessionMap({ sessions: {} });
+
+    assert.equal(sessions.clearSessionId('repo-missing', '404'), false);
+    assert.equal(sessions.getSessionId('repo-missing', '404'), '');
+  } finally {
+    restoreFile(sessions.SESSION_MAP_PATH, snapshot);
+  }
+});
+
+test('session map clearAllSessions returns count and keeps empty map stable', () => {
+  const snapshot = backupFile(sessions.SESSION_MAP_PATH);
+  try {
+    sessions.saveSessionMap({ sessions: {} });
+    assert.equal(sessions.clearAllSessions(), 0);
+
+    sessions.setSessionId('repo-a', '100', 'sess-1');
+    sessions.setSessionId('repo-b', '200', 'sess-2');
+    assert.equal(sessions.clearAllSessions(), 2);
+    assert.equal(sessions.getSessionId('repo-a', '100'), '');
+    assert.equal(sessions.getSessionId('repo-b', '200'), '');
+
+    assert.equal(sessions.clearAllSessions(), 0);
+  } finally {
+    restoreFile(sessions.SESSION_MAP_PATH, snapshot);
+  }
+});
