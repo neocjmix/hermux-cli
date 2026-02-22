@@ -1,83 +1,66 @@
 # Developer Guide
 
-This document contains developer-focused operational details that are intentionally excluded from the user-facing README.
+This guide describes development workflow and verification commands.
+For behavior contracts, use spec documents.
 
-## Local npx Test (without publishing)
-
-```bash
-npm pack
-npx --yes ./hermux-cli-0.1.0.tgz --help
-```
-
-Or run directly from this local package folder:
-
-```bash
-npm run npx:local
-```
-
-## Agent-First Onboarding (Openclaw / ClaudeCode)
-
-Use this sequence as-is:
+## Local Setup
 
 ```bash
 npm install
 npm run check
-npx hermux onboard
 ```
 
-Required interaction contract for agents:
-
-1. Start from `npx hermux onboard` as the only onboarding entrypoint.
-2. Ask the user for onboarding values explicitly (token, repo name, workdir, chat IDs if needed).
-3. Let onboard start runtime, then guide Telegram verification.
-4. In each target Telegram group:
-   - call `/repos`
-   - call `/connect <repo>`
-   - call `/whereami` to verify mapping
-5. On failure, retry `/connect <repo>` once before escalating.
-
-Operational guarantees useful to agents:
-
-- `/connect <repo>` is idempotent for the same chat+repo pair.
-- Mapping conflicts are explicit and non-destructive.
-- Config writes are atomic (temp file + rename).
-
-## Scripts
-
-| command | description |
-|--------|-------------|
-| `npm run onboard` | same as CLI onboarding |
-| `npm start` | same as CLI start |
-| `npm run check` | prerequisite check (`node`, `git`, `opencode`) |
-
-CLI reset options:
+## Core Commands
 
 ```bash
-npx hermux init --yes
-# safe reset: clear repos/chat mappings/sessions, keep global bot token
+# onboarding
+npm run onboard
 
-npx hermux init --yes --full
-# full reset: also clear global bot token
+# runtime start
+npm start
+
+# tests
+npm test
 ```
 
-## Environment Variable
+Direct CLI equivalents:
 
-| name | default | description |
-|------|---------|-------------|
-| `OMG_MAX_PROCESS_SECONDS` | `3600` | opencode process timeout in seconds |
+```bash
+node src/cli.js onboard
+node src/cli.js start
+node src/cli.js init --yes
+node src/cli.js init --yes --full
+```
 
-## Config Shape
+## Test and Validation Policy
+
+- Run `npm test` after behavior-changing work.
+- Prefer interface-level tests over internal implementation assertions.
+- Do not remove failing tests to pass CI.
+
+## Documentation-First Loop
+
+For non-trivial changes, follow:
+
+1. update/check specs,
+2. add/update tests,
+3. implement,
+4. reconcile docs.
+
+Reference rule: `docs/rules/DOCUMENTATION_RULES.md`.
+
+## Configuration Contract (Developer View)
+
+`config/instances.json` canonical structure:
 
 ```json
 {
-  "global": {
-    "telegramBotToken": "123456789:token"
-  },
+  "global": { "telegramBotToken": "123456789:token" },
   "repos": [
     {
       "name": "my-repo",
       "enabled": true,
-      "workdir": "/absolute/path/to/repo",
+      "workdir": "/absolute/path",
       "chatIds": ["-1001111111111"],
       "opencodeCommand": "opencode serve",
       "logFile": "./logs/my-repo.log"
@@ -86,4 +69,23 @@ npx hermux init --yes --full
 }
 ```
 
-Legacy `instances[]` configs are automatically normalized in memory.
+Legacy `instances[]` configs are normalized during load.
+
+## Runtime Tuning Environment Variables
+
+- `OMG_MAX_PROCESS_SECONDS`
+- `OMG_SERVE_READY_TIMEOUT_MS`
+- `OMG_SERVE_PORT_RANGE_MIN`
+- `OMG_SERVE_PORT_RANGE_MAX`
+- `OMG_SERVE_PORT_PICK_ATTEMPTS`
+- `OMG_SERVE_LOCK_WAIT_TIMEOUT_MS`
+- `OMG_SERVE_LOCK_STALE_MS`
+- `OMG_SERVE_LOCK_LEASE_RENEW_MS`
+- `OMG_SERVE_LOCK_RETRY_MIN_MS`
+- `OMG_SERVE_LOCK_RETRY_MAX_MS`
+
+## Packaging Notes
+
+- package name: `@hermux/cli`
+- binary: `hermux` (also `opencode-mobile-gateway` alias)
+- publish configuration: public npm package
