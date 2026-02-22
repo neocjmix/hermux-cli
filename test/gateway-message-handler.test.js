@@ -9,6 +9,11 @@ function makeHarness(overrides = {}) {
     repoDispatch: 0,
     withStateDispatchLock: 0,
     onboard: 0,
+    init: 0,
+    onboardingInput: 0,
+    testShowcase: 0,
+    repos: 0,
+    connect: 0,
   };
 
   const bot = {};
@@ -32,15 +37,25 @@ function makeHarness(overrides = {}) {
     handleOnboardCommand: async () => {
       calls.onboard += 1;
     },
-    handleInitCommand: async () => {},
-    handleOnboardingInput: async () => {},
+    handleInitCommand: async () => {
+      calls.init += 1;
+    },
+    handleOnboardingInput: async () => {
+      calls.onboardingInput += 1;
+    },
     safeSend: async (_bot, chatId, text) => {
       calls.safeSend.push({ chatId, text });
     },
     getHelpText: () => 'help',
-    sendTelegramFormattingShowcase: async () => {},
-    sendRepoList: async () => {},
-    handleConnectCommand: async () => {},
+    sendTelegramFormattingShowcase: async () => {
+      calls.testShowcase += 1;
+    },
+    sendRepoList: async () => {
+      calls.repos += 1;
+    },
+    handleConnectCommand: async () => {
+      calls.connect += 1;
+    },
     withStateDispatchLock: async (_state, task) => {
       calls.withStateDispatchLock += 1;
       await task();
@@ -159,4 +174,71 @@ test('message handler serializes concurrent mapped messages through lock', async
   ]);
 
   assert.deepEqual(sequence, ['start:a', 'end:a', 'start:b', 'end:b']);
+});
+
+test('message handler delegates /init to init command flow', async () => {
+  const { calls, deps } = makeHarness();
+  const handler = createMessageHandler(deps);
+
+  await handler({ chat: { id: '100' }, text: '/init' });
+
+  assert.equal(calls.init, 1);
+});
+
+test('message handler routes onboarding free text to onboarding input handler', async () => {
+  const { calls, deps, onboardingSessions } = makeHarness();
+  onboardingSessions.set('100', { step: 'repo_name' });
+  const handler = createMessageHandler(deps);
+
+  await handler({ chat: { id: '100' }, text: 'my-repo' });
+
+  assert.equal(calls.onboardingInput, 1);
+  assert.equal(calls.safeSend.length, 0);
+});
+
+test('message handler routes /help to help text sender', async () => {
+  const { calls, deps } = makeHarness({ getHelpText: () => 'help-text' });
+  const handler = createMessageHandler(deps);
+
+  await handler({ chat: { id: '100' }, text: '/help' });
+
+  assert.equal(calls.safeSend.length, 1);
+  assert.equal(calls.safeSend[0].text, 'help-text');
+});
+
+test('message handler routes /test to telegram formatting showcase', async () => {
+  const { calls, deps } = makeHarness();
+  const handler = createMessageHandler(deps);
+
+  await handler({ chat: { id: '100' }, text: '/test' });
+
+  assert.equal(calls.testShowcase, 1);
+});
+
+test('message handler routes /repos to repo listing handler', async () => {
+  const { calls, deps } = makeHarness();
+  const handler = createMessageHandler(deps);
+
+  await handler({ chat: { id: '100' }, text: '/repos' });
+
+  assert.equal(calls.repos, 1);
+});
+
+test('message handler routes /connect to connect handler', async () => {
+  const { calls, deps } = makeHarness();
+  const handler = createMessageHandler(deps);
+
+  await handler({ chat: { id: '100' }, text: '/connect demo' });
+
+  assert.equal(calls.connect, 1);
+});
+
+test('message handler returns setup guidance for unmapped plain text input', async () => {
+  const { calls, deps } = makeHarness();
+  const handler = createMessageHandler(deps);
+
+  await handler({ chat: { id: '100' }, text: 'hello there' });
+
+  assert.equal(calls.safeSend.length, 1);
+  assert.match(calls.safeSend[0].text, /This chat is not mapped yet/);
 });
