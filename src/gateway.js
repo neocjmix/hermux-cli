@@ -1201,29 +1201,6 @@ function stripSystemReminderBlocks(text) {
   return src.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, '').trim();
 }
 
-function stripInternalInitiatorMarkers(text) {
-  const src = String(text || '');
-  if (!src) return '';
-  return src.replace(/<!--\s*OMO_INTERNAL_INITIATOR\s*-->/gi, '').trim();
-}
-
-function stripAnalyzeModeBoilerplatePrefix(text) {
-  const src = String(text || '');
-  if (!src) return '';
-  return src
-    .replace(/^\s*\[?analyze-mode\]?\s*[\s\S]*?\n---\s*\n?/i, '')
-    .replace(/^\s*ANALYSIS MODE\.[\s\S]*?\n---\s*\n?/i, '')
-    .trimStart();
-}
-
-function stripUltraworkModeBoilerplatePrefix(text) {
-  const src = String(text || '');
-  if (!src) return '';
-  return src
-    .replace(/^\s*<ultrawork-mode>\s*[\s\S]*?<\/ultrawork-mode>\s*---\s*\n?/i, '')
-    .trimStart();
-}
-
 function stripPromptEchoPrefix(text, promptText) {
   let out = String(text || '');
   const prompt = String(promptText || '').trim();
@@ -1240,9 +1217,6 @@ function stripPromptEchoPrefix(text, promptText) {
 
 function sanitizeCanonicalOutputText(text, promptText) {
   let out = stripSystemReminderBlocks(text || '');
-  out = stripInternalInitiatorMarkers(out);
-  out = stripUltraworkModeBoilerplatePrefix(out);
-  out = stripAnalyzeModeBoilerplatePrefix(out);
   out = stripPromptEchoPrefix(out, promptText);
   return String(out || '').trim();
 }
@@ -1559,11 +1533,6 @@ function buildVerboseKeyboard() {
   };
 }
 
-function buildModelsKeyboard(agentNames) {
-  void agentNames;
-  return buildModelsRootKeyboard();
-}
-
 function buildStatusKeyboard() {
   return {
     inline_keyboard: [[
@@ -1853,8 +1822,7 @@ async function handleRestartCommand(bot, chatId, repo, state) {
     }
 
     try {
-      const nextPid = spawnReplacementDaemon();
-      console.log(`[restart] spawned replacement daemon pid: ${nextPid}`);
+      spawnReplacementDaemon();
     } catch (err) {
       console.error('[restart] failed to spawn replacement daemon:', err.message);
     }
@@ -1866,7 +1834,6 @@ async function handleRestartCommand(bot, chatId, repo, state) {
 async function startPromptRun(bot, repo, state, runItem) {
   const chatId = runItem.chatId;
   const promptText = runItem.promptText;
-  const promptPreview = runItem.promptPreview;
   const isVersionPrompt = !!runItem.isVersionPrompt;
 
   state.running = true;
@@ -1875,8 +1842,6 @@ async function startPromptRun(bot, repo, state, runItem) {
   state.waitingInfo = null;
   clearInterruptEscalationTimer(state);
   state.currentProc = null;
-
-  console.log(`[${repo.name}] run: ${promptPreview.slice(0, 80)}`);
 
   let finalText = '';
   let streamText = '';
@@ -2149,23 +2114,6 @@ async function startPromptRun(bot, repo, state, runItem) {
         await safeSend(bot, chatId, fallback);
       }
 
-      const summary = `[${status}] ${stepCount} step(s), ${toolCount} tool(s)`;
-      console.log(`[${repo.name}] ${summary}`);
-      if (interruptTrace) {
-        const completedAt = Date.now();
-        const termLatencyMs = interruptTrace.termSentAt ? completedAt - interruptTrace.termSentAt : null;
-        const reqLatencyMs = interruptTrace.requestedAt ? completedAt - interruptTrace.requestedAt : null;
-        console.log(`[${repo.name}] interrupt trace: ${JSON.stringify({
-          ...interruptTrace,
-          completedAt,
-          reqLatencyMs,
-          termLatencyMs,
-          exitCode,
-          timeout: !!timeoutMsg,
-          status,
-        })}`);
-      }
-
       if (statusMsgId) {
         await refreshPanel(status, true);
       }
@@ -2237,7 +2185,7 @@ async function handleRepoMessage(bot, repo, state, msg) {
   const text = (msg.text || '').trim();
   const parsed = parseCommand(text);
   const command = parsed ? parsed.command : '';
-  const isVersionPrompt = command === '/version' || text.toLowerCase() === '\\version';
+  const isVersionPrompt = command === '/version';
 
   if (command === '/start') {
     await safeSend(
@@ -2354,10 +2302,9 @@ async function handleRepoMessage(bot, repo, state, msg) {
       await safeSend(bot, chatId, `Failed to interrupt current task: ${msg}`);
       return;
     }
-    console.log(`[${repo.name}] interrupt requested | chat=${chatId} | alreadyRequested=${req.alreadyRequested ? 'yes' : 'no'}`);
-    await safeSend(bot, chatId, req.alreadyRequested ? 'Interrupt already requested. Waiting for task shutdown...' : 'Interrupt requested. Stopping current task...');
-    return;
-  }
+        await safeSend(bot, chatId, req.alreadyRequested ? 'Interrupt already requested. Waiting for task shutdown...' : 'Interrupt requested. Stopping current task...');
+        return;
+      }
 
   let preparedPrompt;
   try {
@@ -2373,12 +2320,9 @@ async function handleRepoMessage(bot, repo, state, msg) {
   if (!Array.isArray(state.queue)) state.queue = [];
 
   const promptText = preparedPrompt.prompt;
-  const promptPreviewRaw = preparedPrompt.preview || '';
-  const promptPreview = promptPreviewRaw.length > 200 ? promptPreviewRaw.slice(0, 200) + '...' : promptPreviewRaw;
   const queuedItem = {
     chatId,
     promptText,
-    promptPreview,
     isVersionPrompt,
   };
 
@@ -2594,26 +2538,6 @@ function main() {
         return;
       }
 
-      if (data === 'status:show') {
-        const repo = chatRouter.get(chatId);
-        if (!repo) {
-          await safeSend(bot, chatId, 'This chat is not mapped to a repo. Run /repos then /connect <repo>.');
-          if (query.id) {
-            await bot.answerCallbackQuery(query.id, { text: 'not mapped' }).catch(() => {});
-          }
-          return;
-        }
-        const state = states.get(repo.name);
-        await safeSend(bot, chatId, buildRuntimeStatusHtml({ repo, state, chatId }), {
-          parse_mode: 'HTML',
-          reply_markup: buildStatusKeyboard(),
-        });
-        if (query.id) {
-          await bot.answerCallbackQuery(query.id, { text: 'status' }).catch(() => {});
-        }
-        return;
-      }
-
       if (data === 'interrupt:now') {
         const repo = chatRouter.get(chatId);
         if (!repo) {
@@ -2644,7 +2568,7 @@ function main() {
         return;
       }
 
-      if (data === 'm:r' || data === 'models:show') {
+      if (data === 'm:r') {
         const repo = chatRouter.get(chatId);
         if (!repo) {
           await safeSend(bot, chatId, 'This chat is not mapped to a repo. Run /repos then /connect <repo>.');
@@ -2885,7 +2809,6 @@ module.exports = {
     buildAgentPickerKeyboard,
     buildProviderPickerKeyboard,
     buildModelPickerKeyboard,
-    buildModelsKeyboard,
     buildStatusKeyboard,
     buildRuntimeStatusHtml,
     buildModelsSummaryHtml,

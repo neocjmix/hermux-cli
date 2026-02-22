@@ -99,8 +99,8 @@ test('buildVerboseKeyboard returns on/off callback buttons', () => {
   });
 });
 
-test('buildModelsKeyboard includes refresh and agent shortcuts', () => {
-  const keyboard = _internal.buildModelsKeyboard(['sisyphus', 'oracle']);
+test('buildModelsRootKeyboard includes refresh and agent shortcuts', () => {
+  const keyboard = _internal.buildModelsRootKeyboard();
   assert.equal(Array.isArray(keyboard.inline_keyboard), true);
   assert.equal(keyboard.inline_keyboard[0][0].callback_data, 'm:l:op');
   assert.equal(keyboard.inline_keyboard[1][0].callback_data, 'm:l:omo');
@@ -415,14 +415,10 @@ test('buildModelApplyMessage includes restart and session semantics', () => {
   assert.match(text, /scheduled_after_current_run/);
 });
 
-test('sanitizeFinalOutputText removes internal boilerplate markers and prompt echo', () => {
+test('sanitizeFinalOutputText removes system reminder blocks and prompt echo', () => {
   const prompt = 'Analyze this system';
   const raw = [
     '<system-reminder>ignore me</system-reminder>',
-    '<!-- OMO_INTERNAL_INITIATOR -->',
-    '[analyze-mode]',
-    'you are internal',
-    '---',
     prompt,
     '',
     'Final **answer** block',
@@ -432,7 +428,7 @@ test('sanitizeFinalOutputText removes internal boilerplate markers and prompt ec
   assert.equal(cleaned, 'Final **answer** block');
 });
 
-test('sanitizeFinalOutputText removes ultrawork wrapper preamble', () => {
+test('sanitizeFinalOutputText keeps legacy wrapper text if present', () => {
   const prompt = 'diagnose this';
   const raw = [
     '<ultrawork-mode>',
@@ -445,7 +441,8 @@ test('sanitizeFinalOutputText removes ultrawork wrapper preamble', () => {
   ].join('\n');
 
   const cleaned = _internal.sanitizeFinalOutputText(raw, prompt);
-  assert.equal(cleaned, 'Canonical final answer body');
+  assert.match(cleaned, /<ultrawork-mode>/);
+  assert.match(cleaned, /Canonical final answer body/);
 });
 
 test('selectFinalOutputText prefers authoritative full text when stream is trailing fragment', () => {
