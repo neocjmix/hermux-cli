@@ -162,6 +162,18 @@ test('buildStreamingStatusHtml keeps markdown formatting during stream', () => {
   assert.match(html, /<code>code<\/code>/);
 });
 
+test('buildTelegramFormattingShowcase includes markdown and html formatting samples', () => {
+  const sample = _internal.buildTelegramFormattingShowcase();
+  assert.equal(typeof sample.markdown, 'string');
+  assert.equal(typeof sample.html, 'string');
+  assert.match(sample.markdown, /`alpha`/);
+  assert.match(sample.markdown, /```text/);
+  assert.match(sample.markdown, /\*\*bold\*\*/);
+  assert.match(sample.html, /<tg-spoiler>/);
+  assert.match(sample.html, /<blockquote>/);
+  assert.match(sample.html, /<a href=/);
+});
+
 test('buildLiveStatusPanelHtml shows emoji-rich compact panel', () => {
   const html = _internal.buildLiveStatusPanelHtml({
     repoName: 'demo-repo',

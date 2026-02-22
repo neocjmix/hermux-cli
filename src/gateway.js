@@ -149,6 +149,7 @@ function getHelpText() {
     '/models - show/update opencode vs oh-my-opencode model layers',
     '/session - show current opencode session id',
     '/version - show opencode output + hermux version',
+    '/test - send Telegram formatting showcase (no opencode run)',
     '/interrupt - stop current running task',
     '/restart - restart daemon process',
     '/reset - reset current chat session',
@@ -170,6 +171,42 @@ function getHelpText() {
     '',
     'Note: if group messages are not visible, check Telegram bot privacy mode.',
   ].join('\n');
+}
+
+function buildTelegramFormattingShowcase() {
+  const markdown = [
+    '<b>Telegram Formatting Showcase</b>',
+    '',
+    'Inline code: `alpha` `x < y & z` `npm run test`',
+    '',
+    'Fenced code:',
+    '```text',
+    'hello from fenced code block',
+    'special chars: <tag> & value',
+    '```',
+    '',
+    'Bold + italic: **bold** _italic_',
+    '',
+    'Nested style sample: **bold and `inline_code` together**',
+  ].join('\n');
+
+  const html = [
+    '<b>Extended HTML Formatting</b>',
+    '',
+    '<i>italic</i> · <u>underline</u> · <s>strikethrough</s> · <tg-spoiler>spoiler</tg-spoiler>',
+    '',
+    '<blockquote>Blockquote sample: this line should render as a quote.</blockquote>',
+    '',
+    '<a href="https://core.telegram.org/bots/api#formatting-options">Telegram formatting reference</a>',
+  ].join('\n');
+
+  return { markdown, html };
+}
+
+async function sendTelegramFormattingShowcase(bot, chatId) {
+  const sample = buildTelegramFormattingShowcase();
+  await sendMarkdownAsHtml(bot, chatId, sample.markdown);
+  await safeSend(bot, chatId, sample.html, { parse_mode: 'HTML' });
 }
 
 function parseYesNo(input) {
@@ -929,7 +966,6 @@ function splitByLimit(text, maxLen) {
   return out;
 }
 
-
 async function safeSend(bot, chatId, text, opts) {
   try {
     return await bot.sendMessage(chatId, text, opts);
@@ -973,6 +1009,17 @@ async function editHtml(bot, chatId, messageId, html) {
         console.error('plain edit also failed:', e.code || e.message, '| chat:', chatId, '| message_id:', messageId);
       }
     }
+  }
+}
+
+async function safeDeleteMessage(bot, chatId, messageId) {
+  try {
+    await bot.deleteMessage(chatId, messageId);
+    return true;
+  } catch (err) {
+    const msg = String(err && err.message ? err.message : err || '').trim();
+    console.error(`delete failed: ${msg}`);
+    return false;
   }
 }
 
@@ -2111,12 +2158,19 @@ async function startPromptRun(bot, repo, state, runItem) {
         await refreshPanel(status, true);
       }
       if (streamMsgId) {
-        const endText = interrupted
-          ? 'interrupted.'
-          : timeoutMsg
-            ? 'timed out.'
-            : finalResolution.streamCompletionText;
-        await editHtml(bot, chatId, streamMsgId, buildStreamingStatusHtml(endText, state.verbose));
+        if (!interrupted && !timeoutMsg && finalResolution.shouldSendFinal) {
+          const deleted = await safeDeleteMessage(bot, chatId, streamMsgId);
+          if (!deleted) {
+            await editHtml(bot, chatId, streamMsgId, buildStreamingStatusHtml(finalResolution.streamCompletionText, state.verbose));
+          }
+        } else {
+          const endText = interrupted
+            ? 'interrupted.'
+            : timeoutMsg
+              ? 'timed out.'
+              : finalResolution.streamCompletionText;
+          await editHtml(bot, chatId, streamMsgId, buildStreamingStatusHtml(endText, state.verbose));
+        }
       }
 
       if (Array.isArray(state.queue) && state.queue.length > 0) {
@@ -2182,7 +2236,7 @@ async function handleRepoMessage(bot, repo, state, msg) {
         `workdir: ${repo.workdir}`,
         '',
         `mode: ${state.verbose ? 'verbose (stream events)' : 'compact (final output only)'}`,
-        'commands: /repos, /status, /models, /session, /version, /interrupt, /restart, /reset, /init, /verbose on, /verbose off, /whereami',
+        'commands: /repos, /status, /models, /session, /version, /test, /interrupt, /restart, /reset, /init, /verbose on, /verbose off, /whereami',
         '',
         'Send any prompt to run opencode.',
       ].join('\n')
@@ -2240,6 +2294,11 @@ async function handleRepoMessage(bot, repo, state, msg) {
 
   if (command === '/help') {
     await safeSend(bot, chatId, getHelpText());
+    return;
+  }
+
+  if (command === '/test') {
+    await sendTelegramFormattingShowcase(bot, chatId);
     return;
   }
 
@@ -2373,6 +2432,7 @@ function main() {
     { command: 'models', description: 'Manage opencode/omo model layers' },
     { command: 'session', description: 'Show current opencode session' },
     { command: 'version', description: 'Show opencode and hermux version' },
+    { command: 'test', description: 'Send Telegram formatting showcase' },
     { command: 'interrupt', description: 'Stop current running task' },
     { command: 'restart', description: 'Restart daemon process' },
     { command: 'reset', description: 'Reset current chat session' },
@@ -2421,6 +2481,11 @@ function main() {
 
     if (command === '/help') {
       await safeSend(bot, chatId, getHelpText());
+      return;
+    }
+
+    if (command === '/test') {
+      await sendTelegramFormattingShowcase(bot, chatId);
       return;
     }
 
@@ -2789,6 +2854,7 @@ module.exports = {
     serializePollingError,
     isValidModelRef,
     buildModelApplyMessage,
+    buildTelegramFormattingShowcase,
     buildConnectKeyboard,
     buildVerboseKeyboard,
     buildModelsRootKeyboard,
