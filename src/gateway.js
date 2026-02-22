@@ -1169,6 +1169,14 @@ function stripAnalyzeModeBoilerplatePrefix(text) {
     .trimStart();
 }
 
+function stripUltraworkModeBoilerplatePrefix(text) {
+  const src = String(text || '');
+  if (!src) return '';
+  return src
+    .replace(/^\s*<ultrawork-mode>\s*[\s\S]*?<\/ultrawork-mode>\s*---\s*\n?/i, '')
+    .trimStart();
+}
+
 function stripPromptEchoPrefix(text, promptText) {
   let out = String(text || '');
   const prompt = String(promptText || '').trim();
@@ -1183,23 +1191,28 @@ function stripPromptEchoPrefix(text, promptText) {
   return out;
 }
 
-function sanitizeFinalOutputText(text, promptText) {
+function sanitizeCanonicalOutputText(text, promptText) {
   let out = stripSystemReminderBlocks(text || '');
   out = stripInternalInitiatorMarkers(out);
+  out = stripUltraworkModeBoilerplatePrefix(out);
   out = stripAnalyzeModeBoilerplatePrefix(out);
   out = stripPromptEchoPrefix(out, promptText);
   return String(out || '').trim();
 }
 
+function sanitizeDisplayOutputText(text) {
+  return String(text || '').trim();
+}
+
+function sanitizeFinalOutputText(text, promptText) {
+  return sanitizeCanonicalOutputText(text, promptText);
+}
+
 function selectFinalOutputText(metaFinalText, streamFinalText) {
   const metaText = String(metaFinalText || '').trim();
   const streamText = String(streamFinalText || '').trim();
-  if (!metaText) return streamText;
-  if (!streamText) return metaText;
-  if (metaText === streamText) return metaText;
-  if (metaText.includes(streamText)) return metaText;
-  if (streamText.includes(metaText)) return streamText;
-  return metaText.length >= streamText.length ? metaText : streamText;
+  if (metaText) return metaText;
+  return streamText;
 }
 
 function resolveFinalizationOutput({
@@ -1209,16 +1222,17 @@ function resolveFinalizationOutput({
   isVersionPrompt,
   hermuxVersion,
 }) {
-  const cleanMeta = sanitizeFinalOutputText(metaFinalText, promptText);
-  const cleanStream = sanitizeFinalOutputText(streamFinalText, promptText);
-  const mergedFinal = selectFinalOutputText(cleanMeta, cleanStream);
-  const outgoingText = isVersionPrompt ? appendHermuxVersion(mergedFinal, hermuxVersion) : mergedFinal;
+  const cleanMeta = sanitizeCanonicalOutputText(metaFinalText, promptText);
+  const cleanStream = sanitizeCanonicalOutputText(streamFinalText, promptText);
+  const canonicalText = selectFinalOutputText(cleanMeta, cleanStream);
+  const displayText = sanitizeDisplayOutputText(canonicalText);
+  const outgoingText = isVersionPrompt ? appendHermuxVersion(displayText, hermuxVersion) : displayText;
   const shouldSendFinal = !!String(outgoingText || '').trim();
   const streamCompletionText = shouldSendFinal
     ? 'completed. final answer sent below.'
     : 'completed (no final answer produced).';
   return {
-    mergedFinal,
+    mergedFinal: canonicalText,
     outgoingText,
     shouldSendFinal,
     streamCompletionText,

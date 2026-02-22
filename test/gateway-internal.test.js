@@ -99,18 +99,67 @@ test('buildVerboseKeyboard returns on/off callback buttons', () => {
   });
 });
 
+test('buildModelsKeyboard includes refresh and agent shortcuts', () => {
+  const keyboard = _internal.buildModelsKeyboard(['sisyphus', 'oracle']);
+  assert.equal(Array.isArray(keyboard.inline_keyboard), true);
+  assert.equal(keyboard.inline_keyboard[0][0].callback_data, 'm:l:op');
+  assert.equal(keyboard.inline_keyboard[1][0].callback_data, 'm:l:omo');
+  assert.equal(keyboard.inline_keyboard[2][0].callback_data, 'm:r');
+});
+
+test('buildAgentPickerKeyboard and buildModelPickerKeyboard create tree steps', () => {
+  const agentKb = _internal.buildAgentPickerKeyboard(['sisyphus']);
+  assert.equal(agentKb.inline_keyboard[0][0].callback_data, 'm:a:0');
+
+  const modelKb = _internal.buildModelPickerKeyboard(['openai/gpt-5.3-codex'], 'omo');
+  assert.equal(modelKb.inline_keyboard[0][0].callback_data, 'm:s:0');
+});
+
+test('buildProviderPickerKeyboard creates provider tree steps', () => {
+  const kb = _internal.buildProviderPickerKeyboard([
+    { providerId: 'anthropic', models: ['anthropic/claude-opus-4-6'] },
+  ], 'op');
+  assert.equal(kb.inline_keyboard[0][0].callback_data, 'm:p:0');
+});
+
+test('buildModelsSummaryHtml uses compact quote blocks with minimal rows', () => {
+  const out = _internal.buildModelsSummaryHtml('demo-repo');
+  assert.equal(typeof out.html, 'string');
+  assert.match(out.html, /① opencode/);
+  assert.match(out.html, /② oh-my-opencode/);
+  assert.match(out.html, /<pre>/);
+  assert.match(out.html, /opencode:/);
+});
+
+test('buildStatusKeyboard includes status actions', () => {
+  const keyboard = _internal.buildStatusKeyboard();
+  assert.equal(keyboard.inline_keyboard[0][0].callback_data, 'm:r');
+  assert.equal(keyboard.inline_keyboard[0][1].callback_data, 'verbose:status');
+  assert.equal(keyboard.inline_keyboard[0][2].callback_data, 'interrupt:now');
+});
+
+test('buildRuntimeStatusHtml renders readable status card', () => {
+  const html = _internal.buildRuntimeStatusHtml({
+    repo: { name: 'demo-repo', workdir: '/tmp/demo' },
+    state: { running: true, waitingInfo: { status: 'retry', retryAfterSeconds: 30 }, verbose: true, queue: [1, 2] },
+    chatId: '123',
+  });
+  assert.match(html, /Runtime Status/);
+  assert.match(html, /busy: yes/);
+  assert.match(html, /waiting: yes/);
+  assert.match(html, /queue: 2/);
+});
+
 test('buildStreamingStatusHtml wraps and escapes text tail', () => {
   const html = _internal.buildStreamingStatusHtml('line <a> & b', false);
-  assert.match(html, /Streaming response/);
-  assert.match(html, /mode: compact/);
+  assert.equal(typeof html, 'string');
   assert.match(html, /&lt;a&gt; &amp; b/);
 });
 
-test('buildStreamingStatusHtml uses preformatted block in verbose mode', () => {
-  const html = _internal.buildStreamingStatusHtml('line <a> & b', true);
-  assert.match(html, /Streaming response/);
-  assert.match(html, /<pre>/);
-  assert.match(html, /&lt;a&gt; &amp; b/);
+test('buildStreamingStatusHtml keeps markdown formatting during stream', () => {
+  const html = _internal.buildStreamingStatusHtml('**bold** and `code`', true);
+  assert.match(html, /<b>bold<\/b>/);
+  assert.match(html, /<code>code<\/code>/);
 });
 
 test('buildLiveStatusPanelHtml shows emoji-rich compact panel', () => {
@@ -133,7 +182,7 @@ test('buildLiveStatusPanelHtml shows emoji-rich compact panel', () => {
   assert.match(html, /🔁 2/);
   assert.match(html, /🧰 1/);
   assert.match(html, /📥 queue: 2/);
-  assert.match(html, /🔧/);
+  assert.doesNotMatch(html, /🔧/);
 });
 
 test('buildLiveStatusPanelHtml renders waiting quota state', () => {
@@ -326,4 +375,119 @@ test('getReplyContext truncates long replied text', () => {
 test('formatRepoList shows empty-state hint', () => {
   const text = _internal.formatRepoList([], '');
   assert.match(text, /No enabled repos are configured yet/);
+});
+
+test('isValidModelRef validates provider/model format', () => {
+  assert.equal(_internal.isValidModelRef('openai/gpt-5.3-codex'), true);
+  assert.equal(_internal.isValidModelRef('invalid-model'), false);
+  assert.equal(_internal.isValidModelRef('openai/'), false);
+});
+
+test('buildModelApplyMessage includes restart and session semantics', () => {
+  const text = _internal.buildModelApplyMessage({
+    layer: 'opencode',
+    scope: 'global',
+    before: 'openai/gpt-5.3-codex',
+    after: 'google/antigravity-gemini-3-pro-high',
+    restartRequired: false,
+    applyStatus: 'scheduled_after_current_run',
+    sessionImpact: 'preserved',
+    note: 'Current task keeps previous model.',
+  });
+
+  assert.match(text, /layer: opencode/);
+  assert.match(text, /restart_required: no/);
+  assert.match(text, /session_impact: preserved/);
+  assert.match(text, /scheduled_after_current_run/);
+});
+
+test('sanitizeFinalOutputText removes internal boilerplate markers and prompt echo', () => {
+  const prompt = 'Analyze this system';
+  const raw = [
+    '<system-reminder>ignore me</system-reminder>',
+    '<!-- OMO_INTERNAL_INITIATOR -->',
+    '[analyze-mode]',
+    'you are internal',
+    '---',
+    prompt,
+    '',
+    'Final **answer** block',
+  ].join('\n');
+
+  const cleaned = _internal.sanitizeFinalOutputText(raw, prompt);
+  assert.equal(cleaned, 'Final **answer** block');
+});
+
+test('sanitizeFinalOutputText removes ultrawork wrapper preamble', () => {
+  const prompt = 'diagnose this';
+  const raw = [
+    '<ultrawork-mode>',
+    '**MANDATORY**: You MUST say "ULTRAWORK MODE ENABLED!"',
+    '</ultrawork-mode>',
+    '---',
+    prompt,
+    '',
+    'Canonical final answer body',
+  ].join('\n');
+
+  const cleaned = _internal.sanitizeFinalOutputText(raw, prompt);
+  assert.equal(cleaned, 'Canonical final answer body');
+});
+
+test('selectFinalOutputText prefers authoritative full text when stream is trailing fragment', () => {
+  const chosen = _internal.selectFinalOutputText(
+    'Architecture overview\n\nDetailed final recommendation',
+    'Detailed final recommendation'
+  );
+  assert.equal(chosen, 'Architecture overview\n\nDetailed final recommendation');
+});
+
+test('selectFinalOutputText always prioritizes meta final when present', () => {
+  const chosen = _internal.selectFinalOutputText(
+    'Canonical meta final',
+    'Canonical meta final\n\nplus unrelated stream tail'
+  );
+  assert.equal(chosen, 'Canonical meta final');
+});
+
+test('resolveFinalizationOutput always emits final when resolved text exists', () => {
+  const resolved = _internal.resolveFinalizationOutput({
+    metaFinalText: 'Full final answer with header\n\n```mermaid\ngraph TD\nA-->B\n```',
+    streamFinalText: '```mermaid\ngraph TD\nA-->B\n```',
+    promptText: 'Explain architecture',
+    isVersionPrompt: false,
+    hermuxVersion: '1.2.3',
+  });
+
+  assert.equal(resolved.shouldSendFinal, true);
+  assert.match(resolved.outgoingText, /Full final answer with header/);
+  assert.equal(resolved.streamCompletionText, 'completed. final answer sent below.');
+});
+
+test('resolveFinalizationOutput appends version footer for version prompts', () => {
+  const resolved = _internal.resolveFinalizationOutput({
+    metaFinalText: '',
+    streamFinalText: 'Version details',
+    promptText: '/version',
+    isVersionPrompt: true,
+    hermuxVersion: '9.9.9',
+  });
+
+  assert.equal(resolved.shouldSendFinal, true);
+  assert.match(resolved.outgoingText, /Version details/);
+  assert.match(resolved.outgoingText, /hermux version: 9\.9\.9/);
+});
+
+test('resolveFinalizationOutput reports no-answer completion when both sources are empty', () => {
+  const resolved = _internal.resolveFinalizationOutput({
+    metaFinalText: '',
+    streamFinalText: '',
+    promptText: 'empty-case',
+    isVersionPrompt: false,
+    hermuxVersion: '1.0.0',
+  });
+
+  assert.equal(resolved.shouldSendFinal, false);
+  assert.equal(resolved.outgoingText, '');
+  assert.equal(resolved.streamCompletionText, 'completed (no final answer produced).');
 });

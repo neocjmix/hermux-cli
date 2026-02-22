@@ -97,3 +97,73 @@ test('runOpencode captures rate limit from stderr metadata', async () => {
   assert.equal(Array.isArray(done.meta.stderrSamples), true);
   assert.equal(done.meta.stderrSamples.length > 0, true);
 });
+
+test('runOpencode command mode returns deterministic finalText in meta', async () => {
+  const { runOpencode } = loadRunnerWithEnv(10);
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runner-multitext-'));
+
+  const done = await new Promise((resolve, reject) => {
+    runOpencode(
+      {
+        opencodeCommand: 'node test/fixtures/fake-opencode-multitext.js',
+        workdir: process.cwd(),
+        logFile: path.join(tmpDir, 'runner-multitext.log'),
+      },
+      'multitext-case',
+      {
+        onEvent: () => {},
+        onDone: (exitCode, timeoutMsg, meta) => resolve({ exitCode, timeoutMsg, meta }),
+        onError: reject,
+        sessionId: '',
+      }
+    );
+  });
+
+  assert.equal(done.exitCode, 0);
+  assert.equal(done.timeoutMsg, null);
+  assert.equal(done.meta.sessionId, 'sess-multi');
+  assert.equal(done.meta.finalText, 'canonical-final-from-command');
+});
+
+
+test('runOpencode via serve mode orders out-of-order part text deterministically', async () => {
+  const { runOpencode } = loadRunnerWithEnv(10);
+  const tmpDir = os.tmpdir();
+  const logDir = fs.mkdtempSync(path.join(tmpDir, 'hermux-runner-serve-'));
+  const previousTransport = process.env.OMG_EXECUTION_TRANSPORT;
+  process.env.OMG_EXECUTION_TRANSPORT = 'serve';
+
+  try {
+    const events = [];
+    const done = await new Promise((resolve, reject) => {
+      runOpencode(
+        {
+          opencodeCommand: 'test/fixtures/fake-opencode-serve.js',
+          workdir: process.cwd(),
+          logFile: require('node:path').join(logDir, 'runner-serve.log'),
+        },
+        'serve-order',
+        {
+          onEvent: (evt) => events.push(evt),
+          onDone: (exitCode, timeoutMsg, meta) => resolve({ exitCode, timeoutMsg, meta }),
+          onError: reject,
+          sessionId: '',
+        }
+      );
+    });
+
+    assert.equal(done.exitCode, 0);
+    assert.equal(done.timeoutMsg, null);
+    assert.equal(done.meta.sessionId, 'serve-session');
+    const finalTextEvents = events.filter((evt) => evt.type === 'text' && evt.textKind === 'final');
+    assert.equal(finalTextEvents.length > 0, true);
+    assert.equal(finalTextEvents.at(-1).content, 'first segment\n\nsecond segment');
+    assert.equal(done.meta.finalText, 'first segment\n\nsecond segment');
+  } finally {
+    if (previousTransport === undefined) {
+      delete process.env.OMG_EXECUTION_TRANSPORT;
+    } else {
+      process.env.OMG_EXECUTION_TRANSPORT = previousTransport;
+    }
+  }
+});

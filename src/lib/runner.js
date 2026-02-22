@@ -75,6 +75,7 @@ function runViaCommand(instance, prompt, { onEvent, onDone, onError, sessionId }
   let stderrBuf = '';
   let killed = false;
   let latestSessionId = sessionId || '';
+  let latestFinalText = '';
   const stderrSamples = [];
   const state = { rateLimit: null };
 
@@ -112,7 +113,9 @@ function runViaCommand(instance, prompt, { onEvent, onDone, onError, sessionId }
       }
 
       if (evt.type === 'text') {
-        onEvent({ type: 'text', content: part.text || '', textKind: 'final', sessionId: latestSessionId });
+        const text = String(part.text || '');
+        if (text.trim()) latestFinalText = text;
+        onEvent({ type: 'text', content: text, textKind: 'final', sessionId: latestSessionId });
         return;
       }
 
@@ -181,6 +184,7 @@ function runViaCommand(instance, prompt, { onEvent, onDone, onError, sessionId }
       sessionId: latestSessionId,
       rateLimit: state.rateLimit,
       stderrSamples: stderrSamples.slice(),
+      finalText: latestFinalText,
     };
     if (killed) {
       onDone(null, `Process timed out after ${MAX_PROCESS_SEC}s`, meta);
@@ -299,15 +303,127 @@ function runViaServe(instance, prompt, { onEvent, onDone, onError, sessionId }) 
     sessionId: sessionId || '',
     rateLimit: null,
     stderrSamples: [],
-    partText: new Map(),
-    partPreview: new Map(),
-    partType: new Map(),
+    partState: new Map(),
+    partOrderSeq: 0,
+    partDeltas: new Map(),
     waiting: null,
   };
 
+  function partIndexValue(raw) {
+    const n = Number(raw);
+    if (Number.isFinite(n) && Number.isInteger(n)) return n;
+    return null;
+  }
+
+  function getPartState(partId, props = {}) {
+    const id = String(partId || '').trim();
+    if (!id) return null;
+
+    let entry = state.partState.get(id);
+    if (!entry) {
+      entry = {
+        id,
+        type: '',
+        text: '',
+        preview: '',
+        index: partIndexValue(props.index),
+        seq: state.partOrderSeq++,
+      };
+      state.partState.set(id, entry);
+    }
+
+    const nextIndex = partIndexValue(props.index);
+    if (nextIndex !== null) {
+      if (entry.index === null || nextIndex < entry.index) {
+        entry.index = nextIndex;
+      }
+    }
+
+    if (props.type && !entry.type) entry.type = props.type;
+    return entry;
+  }
+
+  function getPendingDeltas(partId) {
+    return state.partDeltas.get(String(partId || '')) || { text: '', reasoning: '' };
+  }
+
+  function setPendingDeltas(partId, next) {
+    if (!partId) return;
+    const id = String(partId);
+    if (!next.text && !next.reasoning) {
+      state.partDeltas.delete(id);
+      return;
+    }
+    state.partDeltas.set(id, next);
+  }
+
+  function mergePendingText(partId, targetType, baseText, existingText = '') {
+    const pending = getPendingDeltas(partId);
+    if (targetType !== 'text' && targetType !== 'reasoning') {
+      return String(baseText || '');
+    }
+
+    const pendingText = targetType === 'reasoning' ? pending.reasoning : pending.text;
+    const base = String(baseText || '');
+    const existing = String(existingText || '');
+
+    let merged = base;
+
+    if (!merged) {
+      merged = existing || '';
+    } else if (!merged.includes(existing) && !existing.includes(merged)) {
+      const needsJoin = existing.endsWith('\n') || merged.startsWith('\n');
+      merged = existing + (needsJoin ? '' : '\n') + merged;
+    } else if (existing) {
+      merged = merged.includes(existing) ? merged : existing;
+    }
+
+    if (!pendingText) {
+      if (targetType === 'reasoning') {
+        pending.reasoning = '';
+      } else {
+        pending.text = '';
+      }
+      return merged;
+    }
+
+    if (merged.includes(pendingText)) {
+      if (targetType === 'reasoning') {
+        pending.reasoning = '';
+      } else {
+        pending.text = '';
+      }
+      return merged;
+    }
+
+    const needsJoin = merged.endsWith('\n') || pendingText.startsWith('\n');
+    merged = merged + (needsJoin ? '' : '\n') + pendingText;
+
+    if (targetType === 'reasoning') {
+      pending.reasoning = '';
+    } else {
+      pending.text = '';
+    }
+    setPendingDeltas(partId, pending);
+    return merged;
+  }
+
   function getCombinedText() {
-    const vals = Array.from(state.partText.values()).filter((v) => String(v || '').length > 0);
-    return vals.join('\n\n');
+    const entries = Array.from(state.partState.entries()).map(([, entry]) => entry);
+    entries.sort((a, b) => {
+      const aHasIndex = a.index !== null;
+      const bHasIndex = b.index !== null;
+      if (aHasIndex && bHasIndex && a.index !== b.index) return a.index - b.index;
+      if (aHasIndex !== bHasIndex) return aHasIndex ? -1 : 1;
+      if (a.seq !== b.seq) return a.seq - b.seq;
+      return String(a.id).localeCompare(String(b.id));
+    });
+
+    return entries
+      .map((entry) => entry.text)
+      .map((value) => String(value || '').trim())
+      .filter((value) => value.length > 0)
+      .join('\n\n');
   }
 
   let serveProc = null;
@@ -501,18 +617,27 @@ function runViaServe(instance, prompt, { onEvent, onDone, onError, sessionId }) 
             const field = String(props.field || '');
             if (field !== 'text') return;
             if (!partId) return;
-            const knownType = state.partType.get(partId);
-            if (knownType !== 'text' && knownType !== 'reasoning') return;
             const delta = String(props.delta || '');
-            if (knownType === 'text') {
-              const next = (state.partText.get(partId) || '') + delta;
-              state.partText.set(partId, next);
+            if (!delta) return;
+
+            const partState = getPartState(partId, { index: props.partIndex, type: props.type });
+            if (partState.type === 'text') {
+              partState.text = String(partState.text || '') + delta;
               onEvent({ type: 'text', content: getCombinedText(), textKind: 'final', sessionId: state.sessionId });
               return;
             }
-            const nextPreview = (state.partPreview.get(partId) || '') + delta;
-            state.partPreview.set(partId, nextPreview);
-            onEvent({ type: 'text', content: nextPreview, textKind: 'reasoning', sessionId: state.sessionId });
+
+            if (partState.type === 'reasoning') {
+              partState.preview = String(partState.preview || '') + delta;
+              onEvent({ type: 'text', content: partState.preview, textKind: 'reasoning', sessionId: state.sessionId });
+              return;
+            }
+
+            const pending = getPendingDeltas(partId);
+            if (field === 'text') {
+              pending.text += delta;
+              setPendingDeltas(partId, pending);
+            }
             return;
           }
 
@@ -521,6 +646,9 @@ function runViaServe(instance, prompt, { onEvent, onDone, onError, sessionId }) 
             const sid = String(part.sessionID || '');
             if (sid !== state.sessionId) return;
             const ptype = String(part.type || '');
+            const partId = String(part.id || '');
+            const partState = partId ? getPartState(partId, { index: part.index, type: ptype }) : null;
+
             if (ptype === 'step-start') {
               onEvent({ type: 'step_start', sessionId: state.sessionId });
               return;
@@ -529,21 +657,39 @@ function runViaServe(instance, prompt, { onEvent, onDone, onError, sessionId }) 
               onEvent({ type: 'step_finish', reason: part.reason || null, sessionId: state.sessionId });
               return;
             }
-            if (part.id) state.partType.set(String(part.id), ptype);
+
+            if (partState) {
+              partState.type = ptype;
+            }
+
             if (ptype === 'text') {
-              const partId = String(part.id || '');
-              const text = String(part.text || '');
-              if (partId) state.partText.set(partId, text);
-              onEvent({ type: 'text', content: getCombinedText(), textKind: 'final', sessionId: state.sessionId });
+              const baseText = String(part.text || '');
+              const mergedText = partId
+                ? mergePendingText(partId, 'text', baseText, partState ? partState.text : '')
+                : baseText;
+              if (partState && partId) {
+                partState.text = mergedText;
+                onEvent({ type: 'text', content: getCombinedText(), textKind: 'final', sessionId: state.sessionId });
+              } else {
+                onEvent({ type: 'text', content: mergedText, textKind: 'final', sessionId: state.sessionId });
+              }
               return;
             }
+
             if (ptype === 'reasoning') {
-              const partId = String(part.id || '');
-              const text = String(part.text || '');
-              if (partId) state.partPreview.set(partId, text);
-              if (text) onEvent({ type: 'text', content: text, textKind: 'reasoning', sessionId: state.sessionId });
+              const baseText = String(part.text || '');
+              const mergedText = partId
+                ? mergePendingText(partId, 'reasoning', baseText, partState ? partState.preview : '')
+                : baseText;
+              if (partState && partId) {
+                partState.preview = mergedText;
+              }
+              if (mergedText) {
+                onEvent({ type: 'text', content: mergedText, textKind: 'reasoning', sessionId: state.sessionId });
+              }
               return;
             }
+
             if (ptype === 'tool') {
               const toolState = part.state || {};
               onEvent({
@@ -554,6 +700,10 @@ function runViaServe(instance, prompt, { onEvent, onDone, onError, sessionId }) 
                 sessionId: state.sessionId,
               });
               return;
+            }
+
+            if (partState && partId) {
+              partState.type = ptype;
             }
             onEvent({ type: 'raw', content: packet, sessionId: state.sessionId });
           }
