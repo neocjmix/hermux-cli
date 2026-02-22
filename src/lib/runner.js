@@ -2,11 +2,29 @@
 
 const { spawn } = require('child_process');
 const fs = require('fs');
+const fsp = require('fs/promises');
 const net = require('net');
+const os = require('os');
 const path = require('path');
+const { createHash, randomUUID } = require('crypto');
 
 const MAX_PROCESS_SEC = parseInt(process.env.OMG_MAX_PROCESS_SECONDS || '3600', 10);
 const SERVE_READY_TIMEOUT_MS = parseInt(process.env.OMG_SERVE_READY_TIMEOUT_MS || '15000', 10);
+const SERVE_PORT_RANGE_MIN = parseInt(process.env.OMG_SERVE_PORT_RANGE_MIN || '43100', 10);
+const SERVE_PORT_RANGE_MAX = parseInt(process.env.OMG_SERVE_PORT_RANGE_MAX || '43999', 10);
+const SERVE_PORT_PICK_ATTEMPTS = parseInt(process.env.OMG_SERVE_PORT_PICK_ATTEMPTS || '60', 10);
+const SERVE_LOCK_WAIT_TIMEOUT_MS = parseInt(process.env.OMG_SERVE_LOCK_WAIT_TIMEOUT_MS || '12000', 10);
+const SERVE_LOCK_STALE_MS = parseInt(process.env.OMG_SERVE_LOCK_STALE_MS || '30000', 10);
+const SERVE_LOCK_LEASE_RENEW_MS = parseInt(process.env.OMG_SERVE_LOCK_LEASE_RENEW_MS || '2500', 10);
+const SERVE_LOCK_RETRY_MIN_MS = parseInt(process.env.OMG_SERVE_LOCK_RETRY_MIN_MS || '80', 10);
+const SERVE_LOCK_RETRY_MAX_MS = parseInt(process.env.OMG_SERVE_LOCK_RETRY_MAX_MS || '220', 10);
+
+const RUNTIME_DIR = path.join(__dirname, '..', '..', 'runtime');
+const SERVE_LOCK_DIR = path.join(RUNTIME_DIR, 'serve-locks');
+
+const serveDaemons = new Map();
+const daemonOps = new Map();
+let stopAllInProgress = false;
 
 function parseRetryAfterSeconds(text) {
   const src = String(text || '');
@@ -52,6 +70,261 @@ function setupLogStream(instance, prompt) {
   const logStream = fs.createWriteStream(logPath, { flags: 'a' });
   logStream.write(`\n--- ${new Date().toISOString()} | prompt: ${prompt} ---\n`);
   return { logStream, logPath };
+}
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function isPidAlive(pid) {
+  const n = Number(pid);
+  if (!Number.isInteger(n) || n <= 0) return false;
+  try {
+    process.kill(n, 0);
+    return true;
+  } catch (err) {
+    if (err && err.code === 'EPERM') return true;
+    return false;
+  }
+}
+
+function scopeSlugFromKey(key) {
+  const hash = createHash('sha1').update(String(key || '')).digest('hex').slice(0, 16);
+  const label = String(key || '')
+    .replace(/[^a-zA-Z0-9._-]+/g, '_')
+    .slice(0, 48)
+    .replace(/^_+|_+$/g, '') || 'scope';
+  return `${label}__${hash}`;
+}
+
+function getServeScopePathsFromKey(key) {
+  const slug = scopeSlugFromKey(key);
+  const scopeDir = path.join(SERVE_LOCK_DIR, slug);
+  const lockDir = path.join(scopeDir, 'lock');
+  return {
+    slug,
+    scopeDir,
+    lockDir,
+    ownerPath: path.join(lockDir, 'owner.json'),
+    daemonPath: path.join(scopeDir, 'daemon.json'),
+  };
+}
+
+function getServeScopePathsForInstance(instance) {
+  return getServeScopePathsFromKey(getServeScopeKey(instance));
+}
+
+async function ensureServeScopeDir(paths) {
+  await fsp.mkdir(paths.scopeDir, { recursive: true });
+}
+
+async function writeJsonAtomic(filePath, data) {
+  await fsp.mkdir(path.dirname(filePath), { recursive: true });
+  const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  await fsp.writeFile(tmp, JSON.stringify(data, null, 2) + '\n', 'utf8');
+  await fsp.rename(tmp, filePath);
+}
+
+async function readJsonSafe(filePath) {
+  try {
+    const raw = await fsp.readFile(filePath, 'utf8');
+    return JSON.parse(raw);
+  } catch (_err) {
+    return null;
+  }
+}
+
+async function removeDirSafe(dirPath) {
+  try {
+    await fsp.rm(dirPath, { recursive: true, force: true });
+  } catch (_err) {
+  }
+}
+
+async function removeFileSafe(filePath) {
+  try {
+    await fsp.unlink(filePath);
+  } catch (_err) {
+  }
+}
+
+function waitMs(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function jitterMs(min, max) {
+  const lo = Number.isFinite(min) ? min : 80;
+  const hi = Number.isFinite(max) ? max : 220;
+  const safeHi = hi < lo ? lo : hi;
+  return randomInt(lo, safeHi);
+}
+
+function makeOwnerRecord(key, reason, ownerId, leaseUntil) {
+  return {
+    key,
+    ownerId,
+    pid: process.pid,
+    hostname: os.hostname(),
+    acquiredAt: nowIso(),
+    leaseUntil,
+    reason: String(reason || 'unknown'),
+  };
+}
+
+function parseTsMs(v) {
+  const t = Date.parse(String(v || ''));
+  return Number.isFinite(t) ? t : 0;
+}
+
+async function acquireScopeLock(key, reason) {
+  const paths = getServeScopePathsFromKey(key);
+  await ensureServeScopeDir(paths);
+  const ownerId = randomUUID();
+  const deadline = Date.now() + Math.max(1000, SERVE_LOCK_WAIT_TIMEOUT_MS);
+  let renewTimer = null;
+  let released = false;
+  let acquired = false;
+
+  const writeOwner = async () => {
+    const leaseUntil = new Date(Date.now() + Math.max(1500, SERVE_LOCK_STALE_MS)).toISOString();
+    const owner = makeOwnerRecord(key, reason, ownerId, leaseUntil);
+    await writeJsonAtomic(paths.ownerPath, owner);
+  };
+
+  while (Date.now() < deadline) {
+    try {
+      await fsp.mkdir(paths.lockDir);
+      await writeOwner();
+      renewTimer = setInterval(() => {
+        writeOwner().catch(() => {});
+      }, Math.max(500, SERVE_LOCK_LEASE_RENEW_MS));
+      acquired = true;
+      break;
+    } catch (err) {
+      if (!err || err.code !== 'EEXIST') throw err;
+      const owner = await readJsonSafe(paths.ownerPath);
+      const leaseUntilMs = owner ? parseTsMs(owner.leaseUntil) : 0;
+      const stale = !leaseUntilMs || Date.now() > leaseUntilMs;
+      const ownerPidAlive = owner && isPidAlive(owner.pid);
+
+      if (stale && !ownerPidAlive) {
+        const ownerCheck = await readJsonSafe(paths.ownerPath);
+        const sameOwner = (!owner && !ownerCheck)
+          || (owner && ownerCheck && String(owner.ownerId || '') === String(ownerCheck.ownerId || ''));
+        if (sameOwner) {
+          await removeDirSafe(paths.lockDir);
+          continue;
+        }
+      }
+
+      await waitMs(jitterMs(SERVE_LOCK_RETRY_MIN_MS, SERVE_LOCK_RETRY_MAX_MS));
+    }
+  }
+
+  if (!acquired) {
+    throw new Error(`timeout waiting for lock ${key}`);
+  }
+
+  const release = async () => {
+    if (released) return;
+    released = true;
+    if (renewTimer) clearInterval(renewTimer);
+    const owner = await readJsonSafe(paths.ownerPath);
+    if (!owner || String(owner.ownerId || '') !== ownerId) {
+      return;
+    }
+    await removeFileSafe(paths.ownerPath);
+    try {
+      await fsp.rmdir(paths.lockDir);
+    } catch (_err) {
+      await removeDirSafe(paths.lockDir);
+    }
+  };
+
+  return {
+    key,
+    ownerId,
+    paths,
+    release,
+  };
+}
+
+function runDaemonOpExclusive(key, task) {
+  const prev = daemonOps.get(key) || Promise.resolve();
+  const run = prev.then(task, task);
+  const marker = run.catch(() => {});
+  daemonOps.set(key, marker);
+  return run.finally(() => {
+    if (daemonOps.get(key) === marker) {
+      daemonOps.delete(key);
+    }
+  });
+}
+
+async function checkDaemonHealth(baseUrl, timeoutMs = 1000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${baseUrl}/doc`, { signal: controller.signal });
+    return !!res.ok;
+  } catch (_err) {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function readDaemonRecordByKey(key) {
+  const paths = getServeScopePathsFromKey(key);
+  return readJsonSafe(paths.daemonPath);
+}
+
+async function writeDaemonRecordByKey(key, record) {
+  const paths = getServeScopePathsFromKey(key);
+  await ensureServeScopeDir(paths);
+  await writeJsonAtomic(paths.daemonPath, record);
+}
+
+async function clearDaemonRecordByKey(key) {
+  const paths = getServeScopePathsFromKey(key);
+  await removeFileSafe(paths.daemonPath);
+}
+
+async function killPidHard(pid) {
+  if (!isPidAlive(pid)) return;
+  try {
+    process.kill(pid, 'SIGTERM');
+  } catch (_err) {
+  }
+  await waitMs(400);
+  if (!isPidAlive(pid)) return;
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch (_err) {
+  }
+}
+
+async function isRecordHealthy(record) {
+  if (!record || !Number.isInteger(Number(record.pid)) || !record.baseUrl) return false;
+  if (!isPidAlive(Number(record.pid))) return false;
+  return checkDaemonHealth(String(record.baseUrl), 900);
+}
+
+async function adoptDaemonRecord(key, record) {
+  const entry = {
+    key,
+    proc: null,
+    port: Number(record.port),
+    pid: Number(record.pid),
+    baseUrl: String(record.baseUrl),
+    readyPromise: null,
+    ready: true,
+    stderrTail: [],
+    external: true,
+  };
+  entry.readyPromise = Promise.resolve(entry);
+  serveDaemons.set(key, entry);
+  return entry;
 }
 
 function runViaCommand(instance, prompt, { onEvent, onDone, onError, sessionId }) {
@@ -202,20 +475,303 @@ function runViaCommand(instance, prompt, { onEvent, onDone, onError, sessionId }
   return proc;
 }
 
-function getFreePort() {
-  return new Promise((resolve, reject) => {
+function toValidPortRange() {
+  const min = Number.isInteger(SERVE_PORT_RANGE_MIN) ? SERVE_PORT_RANGE_MIN : 43100;
+  const max = Number.isInteger(SERVE_PORT_RANGE_MAX) ? SERVE_PORT_RANGE_MAX : 43999;
+  if (min > 0 && max > 0 && min <= max && max <= 65535) {
+    return { min, max };
+  }
+  return { min: 43100, max: 43999 };
+}
+
+function randomInt(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function isPortAvailable(port) {
+  return new Promise((resolve) => {
     const srv = net.createServer();
     srv.unref();
-    srv.on('error', reject);
-    srv.listen(0, '127.0.0.1', () => {
-      const addr = srv.address();
-      const port = addr && typeof addr === 'object' ? addr.port : 0;
-      srv.close((err) => {
-        if (err) reject(err);
-        else resolve(port);
-      });
+    srv.once('error', () => {
+      resolve(false);
+    });
+    srv.listen(port, '127.0.0.1', () => {
+      srv.close(() => resolve(true));
     });
   });
+}
+
+async function pickRandomAvailablePortInRange() {
+  const range = toValidPortRange();
+  const attempts = Number.isInteger(SERVE_PORT_PICK_ATTEMPTS) && SERVE_PORT_PICK_ATTEMPTS > 0
+    ? SERVE_PORT_PICK_ATTEMPTS
+    : 60;
+
+  for (let i = 0; i < attempts; i++) {
+    const candidate = randomInt(range.min, range.max);
+    // eslint-disable-next-line no-await-in-loop
+    if (await isPortAvailable(candidate)) {
+      return candidate;
+    }
+  }
+
+  throw new Error(`failed to find available port in ${range.min}-${range.max} after ${attempts} attempts`);
+}
+
+function getServeScopeKey(instance) {
+  const repoName = String(instance && instance.name ? instance.name : '').trim();
+  const workdir = path.resolve(String(instance && instance.workdir ? instance.workdir : '.'));
+  if (repoName) return `${repoName}::${workdir}`;
+  return `workdir::${workdir}`;
+}
+
+function killServeProcess(entry) {
+  if (!entry || !entry.proc || entry.proc.killed) return;
+  try {
+    entry.proc.kill('SIGTERM');
+  } catch (_err) {
+  }
+  setTimeout(() => {
+    if (!entry.proc || entry.proc.killed) return;
+    try {
+      entry.proc.kill('SIGKILL');
+    } catch (_err) {
+    }
+  }, 1500);
+}
+
+async function stopEntryProcess(entry) {
+  if (!entry || !entry.proc) return;
+  await new Promise((resolve) => {
+    let finished = false;
+    const done = () => {
+      if (finished) return;
+      finished = true;
+      resolve();
+    };
+
+    entry.proc.once('exit', done);
+    try {
+      entry.proc.kill('SIGTERM');
+    } catch (_err) {
+      done();
+      return;
+    }
+
+    setTimeout(() => {
+      if (finished) return;
+      try {
+        entry.proc.kill('SIGKILL');
+      } catch (_err) {
+      }
+      done();
+    }, 1200);
+  });
+}
+
+async function spawnServeDaemon(instance, key) {
+  const cmdParts = String(instance.opencodeCommand || '').trim().split(/\s+/).filter(Boolean);
+  const bin = cmdParts[0] || 'opencode';
+  let lastError = null;
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const port = await pickRandomAvailablePortInRange();
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const proc = spawn(bin, ['serve', '--hostname', '127.0.0.1', '--port', String(port)], {
+      cwd: instance.workdir,
+      env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    const entry = {
+      key,
+      proc,
+      port,
+      pid: Number(proc.pid || 0),
+      baseUrl,
+      readyPromise: null,
+      ready: false,
+      stderrTail: [],
+      external: false,
+    };
+
+    proc.stderr.on('data', (chunk) => {
+      const lines = chunk.toString().split('\n').map((v) => v.trim()).filter(Boolean);
+      for (const line of lines) {
+        entry.stderrTail.push(line);
+        if (entry.stderrTail.length > 8) entry.stderrTail.shift();
+      }
+    });
+
+    const failedBeforeReady = new Promise((_, reject) => {
+      proc.once('error', (err) => reject(err));
+      proc.once('exit', (code, signal) => reject(new Error(`serve exited before ready (code=${code}, signal=${signal || 'none'})`)));
+    });
+
+    try {
+      await Promise.race([waitForServeReady(baseUrl), failedBeforeReady]);
+      entry.ready = true;
+      proc.on('exit', () => {
+        const current = serveDaemons.get(key);
+        if (current && current.proc === proc) {
+          serveDaemons.delete(key);
+        }
+      });
+      return entry;
+    } catch (err) {
+      lastError = err;
+      killServeProcess(entry);
+      if (attempt < 2) {
+        continue;
+      }
+      const tail = entry.stderrTail.join(' | ');
+      const detail = tail ? ` | stderr: ${tail}` : '';
+      throw new Error(`failed to start serve daemon for ${key}: ${err.message}${detail}`);
+    }
+  }
+
+  throw lastError || new Error(`failed to start serve daemon for ${key}`);
+}
+
+async function ensureServeDaemon(instance) {
+  const key = getServeScopeKey(instance);
+  if (stopAllInProgress) {
+    throw new Error('serve lifecycle is stopping; retry after restart completes');
+  }
+
+  return runDaemonOpExclusive(key, async () => {
+    const existing = serveDaemons.get(key);
+    if (existing && existing.readyPromise) {
+      const resolved = await existing.readyPromise;
+      if (resolved && resolved.baseUrl && await checkDaemonHealth(resolved.baseUrl, 900)) {
+        return resolved;
+      }
+      serveDaemons.delete(key);
+    }
+
+    const lock = await acquireScopeLock(key, 'ensure');
+    try {
+      const record = await readDaemonRecordByKey(key);
+      if (record && await isRecordHealthy(record)) {
+        return adoptDaemonRecord(key, record);
+      }
+
+      if (record && isPidAlive(Number(record.pid))) {
+        await killPidHard(Number(record.pid));
+      }
+      await clearDaemonRecordByKey(key);
+
+      const existingAfterLock = serveDaemons.get(key);
+      if (existingAfterLock) {
+        await stopEntryProcess(existingAfterLock);
+        serveDaemons.delete(key);
+      }
+
+      const entry = await spawnServeDaemon(instance, key);
+      entry.readyPromise = Promise.resolve(entry);
+      serveDaemons.set(key, entry);
+      await writeDaemonRecordByKey(key, {
+        key,
+        pid: entry.pid,
+        port: entry.port,
+        baseUrl: entry.baseUrl,
+        startedAt: nowIso(),
+        ownerPid: process.pid,
+        ownerHostname: os.hostname(),
+        status: 'ready',
+      });
+      return entry;
+    } finally {
+      await lock.release();
+    }
+  });
+}
+
+async function stopServeDaemonByKey(key) {
+  await runDaemonOpExclusive(key, async () => {
+    const lock = await acquireScopeLock(key, 'stop');
+    try {
+      const entry = serveDaemons.get(key);
+      serveDaemons.delete(key);
+      if (entry) {
+        await stopEntryProcess(entry);
+      }
+
+      const record = await readDaemonRecordByKey(key);
+      if (record && isPidAlive(Number(record.pid))) {
+        await killPidHard(Number(record.pid));
+      }
+      await clearDaemonRecordByKey(key);
+    } finally {
+      await lock.release();
+    }
+  });
+}
+
+async function stopServeDaemonForInstance(instance) {
+  const key = getServeScopeKey(instance);
+  await stopServeDaemonByKey(key);
+}
+
+async function stopAllServeDaemons() {
+  stopAllInProgress = true;
+  try {
+    const keys = new Set(Array.from(serveDaemons.keys()));
+    try {
+      await fsp.mkdir(SERVE_LOCK_DIR, { recursive: true });
+      const dirs = await fsp.readdir(SERVE_LOCK_DIR, { withFileTypes: true });
+      for (const dir of dirs) {
+        if (!dir.isDirectory()) continue;
+        const daemonPath = path.join(SERVE_LOCK_DIR, dir.name, 'daemon.json');
+        const record = await readJsonSafe(daemonPath);
+        if (record && record.key) keys.add(String(record.key));
+      }
+    } catch (_err) {
+    }
+
+    for (const key of keys) {
+      // eslint-disable-next-line no-await-in-loop
+      await stopServeDaemonByKey(key);
+    }
+  } finally {
+    stopAllInProgress = false;
+  }
+}
+
+function getServeDaemonStatusForInstance(instance) {
+  const key = getServeScopeKey(instance);
+  const entry = serveDaemons.get(key);
+  if (entry) {
+    return {
+      active: true,
+      key,
+      ready: !!entry.ready,
+      port: Number.isFinite(entry.port) ? entry.port : null,
+      source: entry.external ? 'state-file' : 'memory',
+    };
+  }
+
+  const paths = getServeScopePathsFromKey(key);
+  let record = null;
+  try {
+    if (fs.existsSync(paths.daemonPath)) {
+      record = JSON.parse(fs.readFileSync(paths.daemonPath, 'utf8'));
+    }
+  } catch (_err) {
+  }
+
+  if (!record || !isPidAlive(Number(record.pid))) {
+    return { active: false, key, ready: false, port: null, source: 'none' };
+  }
+
+  return {
+    active: true,
+    key,
+    ready: true,
+    port: Number.isFinite(Number(record.port)) ? Number(record.port) : null,
+    source: 'state-file',
+  };
 }
 
 async function waitForServeReady(baseUrl) {
@@ -295,8 +851,6 @@ function openSSE(baseUrl, onPacket, onError) {
 
 function runViaServe(instance, prompt, { onEvent, onDone, onError, sessionId }) {
   const { logStream } = setupLogStream(instance, prompt);
-  const cmdParts = String(instance.opencodeCommand || '').trim().split(/\s+/).filter(Boolean);
-  const bin = cmdParts[0] || 'opencode';
   const state = {
     done: false,
     killed: false,
@@ -427,19 +981,21 @@ function runViaServe(instance, prompt, { onEvent, onDone, onError, sessionId }) 
   }
 
   let serveProc = null;
+  let serveBaseUrl = '';
   let sse = null;
-  let port = 0;
+  let stdoutListener = null;
+  let stderrListener = null;
 
   function finish(exitCode, timeoutMsg) {
     if (state.done) return;
     state.done = true;
     clearTimeout(timeout);
     if (sse) sse.close();
-    if (serveProc && !serveProc.killed) {
-      try {
-        serveProc.kill('SIGKILL');
-      } catch (_err) {
-      }
+    if (serveProc && stdoutListener && serveProc.stdout) {
+      serveProc.stdout.off('data', stdoutListener);
+    }
+    if (serveProc && stderrListener && serveProc.stderr) {
+      serveProc.stderr.off('data', stderrListener);
     }
     logStream.end();
     onDone(exitCode, timeoutMsg, {
@@ -455,21 +1011,20 @@ function runViaServe(instance, prompt, { onEvent, onDone, onError, sessionId }) 
     state.done = true;
     clearTimeout(timeout);
     if (sse) sse.close();
-    if (serveProc && !serveProc.killed) {
-      try {
-        serveProc.kill('SIGKILL');
-      } catch (_err) {
-      }
+    if (serveProc && stdoutListener && serveProc.stdout) {
+      serveProc.stdout.off('data', stdoutListener);
+    }
+    if (serveProc && stderrListener && serveProc.stderr) {
+      serveProc.stderr.off('data', stderrListener);
     }
     logStream.end();
     onError(err);
   }
 
   async function abortSession() {
-    if (!port || !state.sessionId) return;
-    const baseUrl = `http://127.0.0.1:${port}`;
+    if (!serveBaseUrl || !state.sessionId) return;
     try {
-      await jsonRequest(baseUrl, `/session/${state.sessionId}/abort`, { method: 'POST' });
+      await jsonRequest(serveBaseUrl, `/session/${state.sessionId}/abort`, { method: 'POST' });
     } catch (err) {
       const msg = String(err && err.message ? err.message : err);
       maybeCaptureRateLimit(state, msg);
@@ -487,11 +1042,12 @@ function runViaServe(instance, prompt, { onEvent, onDone, onError, sessionId }) 
       state.killed = true;
       const sig = String(signal || 'SIGTERM').toUpperCase();
       abortSession().catch(() => {});
-      if (sig === 'SIGKILL' && serveProc && !serveProc.killed) {
-        try {
-          serveProc.kill('SIGKILL');
-        } catch (_err) {
-        }
+      if (sig === 'SIGKILL') {
+        setTimeout(() => {
+          if (!state.done) {
+            finish(143, null);
+          }
+        }, 120);
       }
       return true;
     },
@@ -509,22 +1065,17 @@ function runViaServe(instance, prompt, { onEvent, onDone, onError, sessionId }) 
 
   (async () => {
     try {
-      port = await getFreePort();
-      const baseUrl = `http://127.0.0.1:${port}`;
+      const daemon = await ensureServeDaemon(instance);
+      serveProc = daemon.proc;
+      serveBaseUrl = daemon.baseUrl;
 
-      serveProc = spawn(bin, ['serve', '--hostname', '127.0.0.1', '--port', String(port)], {
-        cwd: instance.workdir,
-        env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' },
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
+      procHandle.stdout = serveProc ? serveProc.stdout : null;
+      procHandle.stderr = serveProc ? serveProc.stderr : null;
 
-      procHandle.stdout = serveProc.stdout;
-      procHandle.stderr = serveProc.stderr;
-
-      serveProc.stdout.on('data', (chunk) => {
+      stdoutListener = (chunk) => {
         logStream.write(chunk.toString());
-      });
-      serveProc.stderr.on('data', (chunk) => {
+      };
+      stderrListener = (chunk) => {
         const text = chunk.toString();
         logStream.write(text);
         const lines = text.split('\n').map((v) => v.trim()).filter(Boolean);
@@ -533,21 +1084,18 @@ function runViaServe(instance, prompt, { onEvent, onDone, onError, sessionId }) 
           if (state.stderrSamples.length > 5) state.stderrSamples.shift();
           maybeCaptureRateLimit(state, line);
         }
-      });
-
-      serveProc.on('error', (err) => {
-        clearTimeout(timeout);
-        fail(err);
-      });
-
-      await waitForServeReady(baseUrl);
+      };
+      if (serveProc && serveProc.stdout && serveProc.stderr) {
+        serveProc.stdout.on('data', stdoutListener);
+        serveProc.stderr.on('data', stderrListener);
+      }
 
       if (state.sessionId) {
         try {
-          await jsonRequest(baseUrl, `/session/${state.sessionId}`, { method: 'GET' });
+          await jsonRequest(serveBaseUrl, `/session/${state.sessionId}`, { method: 'GET' });
         } catch (_err) {
           try {
-            const resumed = await jsonRequest(baseUrl, '/session', {
+            const resumed = await jsonRequest(serveBaseUrl, '/session', {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
               body: JSON.stringify({
@@ -563,7 +1111,7 @@ function runViaServe(instance, prompt, { onEvent, onDone, onError, sessionId }) 
       }
 
       if (!state.sessionId) {
-        const session = await jsonRequest(baseUrl, '/session', {
+        const session = await jsonRequest(serveBaseUrl, '/session', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ title: `hermux ${new Date().toISOString()}` }),
@@ -576,7 +1124,7 @@ function runViaServe(instance, prompt, { onEvent, onDone, onError, sessionId }) 
       }
 
       sse = openSSE(
-        baseUrl,
+        serveBaseUrl,
         (packet) => {
           if (state.done) return;
           logStream.write(packet + '\n');
@@ -716,7 +1264,7 @@ function runViaServe(instance, prompt, { onEvent, onDone, onError, sessionId }) 
         }
       );
 
-      await jsonRequest(baseUrl, `/session/${state.sessionId}/prompt_async`, {
+      await jsonRequest(serveBaseUrl, `/session/${state.sessionId}/prompt_async`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
@@ -739,4 +1287,15 @@ function runOpencode(instance, prompt, handlers) {
   return runViaCommand(instance, prompt, handlers);
 }
 
-module.exports = { runOpencode };
+module.exports = {
+  runOpencode,
+  stopAllServeDaemons,
+  getServeDaemonStatusForInstance,
+  _internal: {
+    toValidPortRange,
+    pickRandomAvailablePortInRange,
+    getServeScopeKey,
+    getServeScopePathsForInstance,
+    stopServeDaemonForInstance,
+  },
+};

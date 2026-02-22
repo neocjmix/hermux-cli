@@ -2,6 +2,7 @@
 'use strict';
 
 const http = require('http');
+const fs = require('fs');
 
 const args = process.argv.slice(2);
 let port = 0;
@@ -18,6 +19,14 @@ if (!Number.isFinite(port) || port <= 0) process.exit(1);
 
 const sessionId = 'serve-session';
 const sseClients = [];
+
+const countFile = String(process.env.FAKE_SERVE_START_COUNT_FILE || '').trim();
+if (countFile) {
+  try {
+    fs.appendFileSync(countFile, '1\n', 'utf8');
+  } catch (_err) {
+  }
+}
 
 function sendSse(payload) {
   const packet = `data: ${JSON.stringify(payload)}\n\n`;

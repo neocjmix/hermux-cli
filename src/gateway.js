@@ -8,7 +8,7 @@ const { pipeline } = require('stream/promises');
 const { spawn, spawnSync } = require('child_process');
 const TelegramBot = require('node-telegram-bot-api');
 const { load, getEnabledRepos, addChatIdToRepo, addOrUpdateRepo, setGlobalBotToken, resetConfig, CONFIG_PATH } = require('./lib/config');
-const { runOpencode } = require('./lib/runner');
+const { runOpencode, stopAllServeDaemons, getServeDaemonStatusForInstance } = require('./lib/runner');
 const { md2html, escapeHtml } = require('./lib/md2html');
 const { getSessionId, setSessionId, clearSessionId, getSessionInfo, clearAllSessions, SESSION_MAP_PATH } = require('./lib/session-map');
 const { version: HERMUX_VERSION } = require('../package.json');
@@ -1584,12 +1584,18 @@ function buildRuntimeStatusHtml({ repo, state, chatId }) {
   const waitDetail = state.waitingInfo && state.waitingInfo.status === 'retry'
     ? `retry${state.waitingInfo.retryAfterSeconds ? ` (${state.waitingInfo.retryAfterSeconds}s)` : ''}`
     : '-';
+  const serveStatus = getServeDaemonStatusForInstance(repo);
+  const servePort = serveStatus.port ? String(serveStatus.port) : '-';
+  const serveState = serveStatus.active
+    ? (serveStatus.ready ? 'active' : 'starting')
+    : 'inactive';
   return [
     `<b>📊 Runtime Status · ${escapeHtml(repo.name)}</b>`,
     `<code>chat: ${escapeHtml(chatId)}</code>`,
     `<code>workdir: ${escapeHtml(repo.workdir)}</code>`,
     '',
     `<code>state: ${lifecycle} | busy: ${state.running ? 'yes' : 'no'} | waiting: ${waiting} | queue: ${queueLen}</code>`,
+    `<code>serve: ${serveState} | port: ${servePort}</code>`,
     `<code>verbose: ${state.verbose ? 'on' : 'off'}</code>`,
     `<code>session: ${escapeHtml(shortSid)}</code>`,
     `<code>wait detail: ${escapeHtml(waitDetail)}</code>`,
@@ -1838,6 +1844,12 @@ async function handleRestartCommand(bot, chatId, repo, state) {
     try {
       await bot.stopPolling();
     } catch (_err) {
+    }
+
+    try {
+      await stopAllServeDaemons();
+    } catch (err) {
+      console.error('[restart] failed to stop serve daemons:', err.message);
     }
 
     try {
@@ -2819,14 +2831,26 @@ function main() {
     console.error('[bot] polling error detail:', JSON.stringify(detail));
   });
 
-  const shutdown = () => {
+  const shutdown = async () => {
     console.log('\nshutting down...');
-    bot.stopPolling();
+    try {
+      await bot.stopPolling();
+    } catch (_err) {
+    }
+    try {
+      await stopAllServeDaemons();
+    } catch (err) {
+      console.error('[shutdown] failed to stop serve daemons:', err.message);
+    }
     process.exit(0);
   };
 
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', () => {
+    shutdown();
+  });
+  process.on('SIGTERM', () => {
+    shutdown();
+  });
 }
 
 if (require.main === module) {

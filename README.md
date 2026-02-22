@@ -8,6 +8,12 @@
 
 Telegram gateway that runs a local `opencode serve` backend and streams session events from inbound Telegram messages.
 
+Serve runtime hardening:
+- repo-scope persistent serve daemon (not per-prompt spawn)
+- filesystem lock + lease heartbeat for race/stale-lock recovery
+- daemon health check (`/doc`) + pid liveness validation for auto-recovery
+- randomized safe-range port selection with bounded retries
+
 Current behavior:
 - one global Telegram bot token
 - multiple repo-scoped runtime instances
@@ -87,6 +93,25 @@ Routing rules:
 - Repo mapping is by chat ID
 - Duplicate chat IDs across enabled repos fail fast at startup
 - Execution lock is per repo (`running` state is isolated)
+
+Serve daemon lifecycle:
+- Serve daemon scope key: `repoName::workdir`
+- Runtime lock dir: `runtime/serve-locks/<scope>/lock`
+- Daemon state file: `runtime/serve-locks/<scope>/daemon.json`
+- `/status` includes serve state and active port
+
+Locking and recovery design details: `docs/SERVE_DAEMON_LOCKING.md`
+
+Runtime tuning (`.env`):
+- `OMG_SERVE_READY_TIMEOUT_MS`
+- `OMG_SERVE_PORT_RANGE_MIN`
+- `OMG_SERVE_PORT_RANGE_MAX`
+- `OMG_SERVE_PORT_PICK_ATTEMPTS`
+- `OMG_SERVE_LOCK_WAIT_TIMEOUT_MS`
+- `OMG_SERVE_LOCK_STALE_MS`
+- `OMG_SERVE_LOCK_LEASE_RENEW_MS`
+- `OMG_SERVE_LOCK_RETRY_MIN_MS`
+- `OMG_SERVE_LOCK_RETRY_MAX_MS`
 
 ## Resume / Failure Recovery
 

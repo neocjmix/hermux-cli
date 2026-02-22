@@ -127,21 +127,22 @@ test('runOpencode command mode returns deterministic finalText in meta', async (
 
 
 test('runOpencode via serve mode orders out-of-order part text deterministically', async () => {
-  const { runOpencode } = loadRunnerWithEnv(10);
+  const { runOpencode, _internal } = loadRunnerWithEnv(10);
   const tmpDir = os.tmpdir();
   const logDir = fs.mkdtempSync(path.join(tmpDir, 'hermux-runner-serve-'));
   const previousTransport = process.env.OMG_EXECUTION_TRANSPORT;
   process.env.OMG_EXECUTION_TRANSPORT = 'serve';
+  const instance = {
+    opencodeCommand: 'test/fixtures/fake-opencode-serve.js',
+    workdir: process.cwd(),
+    logFile: require('node:path').join(logDir, 'runner-serve.log'),
+  };
 
   try {
     const events = [];
     const done = await new Promise((resolve, reject) => {
       runOpencode(
-        {
-          opencodeCommand: 'test/fixtures/fake-opencode-serve.js',
-          workdir: process.cwd(),
-          logFile: require('node:path').join(logDir, 'runner-serve.log'),
-        },
+        instance,
         'serve-order',
         {
           onEvent: (evt) => events.push(evt),
@@ -160,10 +161,188 @@ test('runOpencode via serve mode orders out-of-order part text deterministically
     assert.equal(finalTextEvents.at(-1).content, 'first segment\n\nsecond segment');
     assert.equal(done.meta.finalText, 'first segment\n\nsecond segment');
   } finally {
+    await _internal.stopServeDaemonForInstance(instance);
     if (previousTransport === undefined) {
       delete process.env.OMG_EXECUTION_TRANSPORT;
     } else {
       process.env.OMG_EXECUTION_TRANSPORT = previousTransport;
+    }
+  }
+});
+
+test('runOpencode serve mode reuses daemon across sequential prompts', async () => {
+  const { runOpencode, _internal } = loadRunnerWithEnv(10);
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runner-serve-reuse-'));
+  const previousTransport = process.env.OMG_EXECUTION_TRANSPORT;
+  const previousStartFile = process.env.FAKE_SERVE_START_COUNT_FILE;
+  process.env.OMG_EXECUTION_TRANSPORT = 'serve';
+  const startCountFile = path.join(tmpDir, 'starts.log');
+  process.env.FAKE_SERVE_START_COUNT_FILE = startCountFile;
+
+  const instance = {
+    opencodeCommand: 'test/fixtures/fake-opencode-serve.js',
+    workdir: process.cwd(),
+    logFile: path.join(tmpDir, 'runner-serve-reuse.log'),
+  };
+
+  try {
+    const first = await new Promise((resolve, reject) => {
+      runOpencode(instance, 'serve-reuse-1', {
+        onEvent: () => {},
+        onDone: (exitCode, timeoutMsg, meta) => resolve({ exitCode, timeoutMsg, meta }),
+        onError: reject,
+        sessionId: '',
+      });
+    });
+
+    assert.equal(first.exitCode, 0);
+    assert.equal(first.timeoutMsg, null);
+    assert.equal(first.meta.sessionId, 'serve-session');
+
+    const second = await new Promise((resolve, reject) => {
+      runOpencode(instance, 'serve-reuse-2', {
+        onEvent: () => {},
+        onDone: (exitCode, timeoutMsg, meta) => resolve({ exitCode, timeoutMsg, meta }),
+        onError: reject,
+        sessionId: first.meta.sessionId,
+      });
+    });
+
+    assert.equal(second.exitCode, 0);
+    assert.equal(second.timeoutMsg, null);
+    assert.equal(second.meta.sessionId, 'serve-session');
+
+    const lines = fs.existsSync(startCountFile)
+      ? fs.readFileSync(startCountFile, 'utf8').trim().split('\n').filter(Boolean)
+      : [];
+    assert.equal(lines.length, 1);
+  } finally {
+    await _internal.stopServeDaemonForInstance(instance);
+    if (previousTransport === undefined) {
+      delete process.env.OMG_EXECUTION_TRANSPORT;
+    } else {
+      process.env.OMG_EXECUTION_TRANSPORT = previousTransport;
+    }
+    if (previousStartFile === undefined) {
+      delete process.env.FAKE_SERVE_START_COUNT_FILE;
+    } else {
+      process.env.FAKE_SERVE_START_COUNT_FILE = previousStartFile;
+    }
+  }
+});
+
+test('runOpencode serve mode deduplicates concurrent starts for same repo scope', async () => {
+  const { runOpencode, _internal } = loadRunnerWithEnv(10);
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runner-serve-concurrent-'));
+  const previousTransport = process.env.OMG_EXECUTION_TRANSPORT;
+  const previousStartFile = process.env.FAKE_SERVE_START_COUNT_FILE;
+  process.env.OMG_EXECUTION_TRANSPORT = 'serve';
+  const startCountFile = path.join(tmpDir, 'starts.log');
+  process.env.FAKE_SERVE_START_COUNT_FILE = startCountFile;
+
+  const instance = {
+    name: 'repo-concurrent',
+    opencodeCommand: 'test/fixtures/fake-opencode-serve.js',
+    workdir: process.cwd(),
+    logFile: path.join(tmpDir, 'runner-serve-concurrent.log'),
+  };
+
+  try {
+    const [a, b] = await Promise.all([
+      new Promise((resolve, reject) => {
+        runOpencode(instance, 'serve-concurrent-a', {
+          onEvent: () => {},
+          onDone: (exitCode, timeoutMsg, meta) => resolve({ exitCode, timeoutMsg, meta }),
+          onError: reject,
+          sessionId: '',
+        });
+      }),
+      new Promise((resolve, reject) => {
+        runOpencode(instance, 'serve-concurrent-b', {
+          onEvent: () => {},
+          onDone: (exitCode, timeoutMsg, meta) => resolve({ exitCode, timeoutMsg, meta }),
+          onError: reject,
+          sessionId: '',
+        });
+      }),
+    ]);
+
+    assert.equal(a.exitCode, 0);
+    assert.equal(b.exitCode, 0);
+
+    const lines = fs.existsSync(startCountFile)
+      ? fs.readFileSync(startCountFile, 'utf8').trim().split('\n').filter(Boolean)
+      : [];
+    assert.equal(lines.length, 1);
+  } finally {
+    await _internal.stopServeDaemonForInstance(instance);
+    if (previousTransport === undefined) {
+      delete process.env.OMG_EXECUTION_TRANSPORT;
+    } else {
+      process.env.OMG_EXECUTION_TRANSPORT = previousTransport;
+    }
+    if (previousStartFile === undefined) {
+      delete process.env.FAKE_SERVE_START_COUNT_FILE;
+    } else {
+      process.env.FAKE_SERVE_START_COUNT_FILE = previousStartFile;
+    }
+  }
+});
+
+test('runOpencode serve mode recovers from stale lock directory', async () => {
+  const { runOpencode, _internal } = loadRunnerWithEnv(10);
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runner-serve-stale-lock-'));
+  const previousTransport = process.env.OMG_EXECUTION_TRANSPORT;
+  const previousStartFile = process.env.FAKE_SERVE_START_COUNT_FILE;
+  process.env.OMG_EXECUTION_TRANSPORT = 'serve';
+  const startCountFile = path.join(tmpDir, 'starts.log');
+  process.env.FAKE_SERVE_START_COUNT_FILE = startCountFile;
+
+  const instance = {
+    name: 'repo-stale-lock',
+    opencodeCommand: 'test/fixtures/fake-opencode-serve.js',
+    workdir: process.cwd(),
+    logFile: path.join(tmpDir, 'runner-serve-stale-lock.log'),
+  };
+
+  try {
+    const paths = _internal.getServeScopePathsForInstance(instance);
+    fs.mkdirSync(paths.lockDir, { recursive: true });
+    fs.writeFileSync(paths.ownerPath, JSON.stringify({
+      key: _internal.getServeScopeKey(instance),
+      ownerId: 'stale-owner',
+      pid: 999999,
+      leaseUntil: new Date(Date.now() - 60000).toISOString(),
+    }) + '\n', 'utf8');
+
+    const done = await new Promise((resolve, reject) => {
+      runOpencode(instance, 'serve-stale-lock', {
+        onEvent: () => {},
+        onDone: (exitCode, timeoutMsg, meta) => resolve({ exitCode, timeoutMsg, meta }),
+        onError: reject,
+        sessionId: '',
+      });
+    });
+
+    assert.equal(done.exitCode, 0);
+    assert.equal(done.timeoutMsg, null);
+
+    const lines = fs.existsSync(startCountFile)
+      ? fs.readFileSync(startCountFile, 'utf8').trim().split('\n').filter(Boolean)
+      : [];
+    assert.equal(lines.length, 1);
+    assert.equal(fs.existsSync(paths.lockDir), false);
+  } finally {
+    await _internal.stopServeDaemonForInstance(instance);
+    if (previousTransport === undefined) {
+      delete process.env.OMG_EXECUTION_TRANSPORT;
+    } else {
+      process.env.OMG_EXECUTION_TRANSPORT = previousTransport;
+    }
+    if (previousStartFile === undefined) {
+      delete process.env.FAKE_SERVE_START_COUNT_FILE;
+    } else {
+      process.env.FAKE_SERVE_START_COUNT_FILE = previousStartFile;
     }
   }
 });
