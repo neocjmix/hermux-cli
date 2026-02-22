@@ -20,8 +20,11 @@ const PID_PATH = path.join(RUNTIME_DIR, 'gateway.pid');
 const LOG_PATH = path.join(RUNTIME_DIR, 'gateway.log');
 const RESTART_NOTICE_PATH = path.join(RUNTIME_DIR, 'restart-notice.json');
 const MERMAID_RENDER_DIR = '.opencode_mobile_gateway/mermaid';
-const STREAM_EDIT_MIN_INTERVAL_COMPACT_MS = 1200;
-const STREAM_EDIT_MIN_INTERVAL_VERBOSE_MS = 350;
+const STREAM_EDIT_MIN_INTERVAL_COMPACT_MS = 500;
+const STREAM_EDIT_MIN_INTERVAL_VERBOSE_MS = 280;
+const STREAM_HEARTBEAT_MS = 1500;
+const OPENCODE_CONFIG_PATH = process.env.OMG_OPENCODE_CONFIG_PATH || path.join(process.env.HOME || '', '.config', 'opencode', 'opencode.json');
+const OMO_CONFIG_PATH = process.env.OMG_OMO_CONFIG_PATH || path.join(process.env.HOME || '', '.config', 'opencode', 'oh-my-opencode.json');
 let connectMutationQueue = Promise.resolve();
 let restartMutationQueue = Promise.resolve();
 let restartInProgress = false;
@@ -143,6 +146,7 @@ function getHelpText() {
     '/repos - list connectable repos',
     '/connect <repo> - bind this chat to a repo',
     '/status - show runtime state',
+    '/models - show/update opencode vs oh-my-opencode model layers',
     '/session - show current opencode session id',
     '/version - show opencode output + hermux version',
     '/interrupt - stop current running task',
@@ -174,6 +178,425 @@ function parseYesNo(input) {
   if (v === 'y' || v === 'yes') return true;
   if (v === 'n' || v === 'no') return false;
   return null;
+}
+
+function isValidModelRef(input) {
+  const v = String(input || '').trim();
+  return /^[^/\s]+\/[^/\s]+$/.test(v);
+}
+
+function readJsonOrDefault(filePath, fallback) {
+  try {
+    if (!fs.existsSync(filePath)) return fallback;
+    const raw = fs.readFileSync(filePath, 'utf8');
+    return JSON.parse(raw);
+  } catch (_err) {
+    return fallback;
+  }
+}
+
+function writeJsonAtomic(filePath, data) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const tempPath = `${filePath}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(data, null, 2) + '\n', 'utf8');
+  fs.renameSync(tempPath, filePath);
+}
+
+function getOmoAgentEntry(config, agent) {
+  if (!config.agents || typeof config.agents !== 'object') config.agents = {};
+  if (!config.agents[agent] || typeof config.agents[agent] !== 'object') config.agents[agent] = {};
+  return config.agents[agent];
+}
+
+function getAvailableModelRefs() {
+  const cfg = readJsonOrDefault(OPENCODE_CONFIG_PATH, {});
+  const providers = cfg.provider && typeof cfg.provider === 'object' ? cfg.provider : {};
+  const refs = [];
+  for (const providerId of Object.keys(providers)) {
+    const models = providers[providerId] && providers[providerId].models && typeof providers[providerId].models === 'object'
+      ? providers[providerId].models
+      : {};
+    for (const modelId of Object.keys(models)) {
+      refs.push(`${providerId}/${modelId}`);
+    }
+  }
+  refs.sort();
+  return refs;
+}
+
+function getProviderModelChoices() {
+  const cfg = readJsonOrDefault(OPENCODE_CONFIG_PATH, {});
+  const providers = cfg.provider && typeof cfg.provider === 'object' ? cfg.provider : {};
+  const ids = Object.keys(providers).filter((id) => {
+    const models = providers[id] && providers[id].models && typeof providers[id].models === 'object' ? providers[id].models : null;
+    return models && Object.keys(models).length > 0;
+  });
+
+  ids.sort((a, b) => {
+    if (a === 'anthropic' && b !== 'anthropic') return -1;
+    if (b === 'anthropic' && a !== 'anthropic') return 1;
+    return a.localeCompare(b);
+  });
+
+  return ids.map((providerId) => {
+    const models = Object.keys(providers[providerId].models || {})
+      .sort()
+      .map((modelId) => `${providerId}/${modelId}`);
+    return { providerId, models };
+  });
+}
+
+function buildModelApplyMessage({
+  layer,
+  scope,
+  before,
+  after,
+  restartRequired,
+  applyStatus,
+  sessionImpact,
+  note,
+}) {
+  const lines = [
+    `layer: ${layer}`,
+    `scope: ${scope}`,
+    `change: ${before} -> ${after}`,
+    `restart_required: ${restartRequired ? 'yes' : 'no'}`,
+    `apply_status: ${applyStatus}`,
+    `session_impact: ${sessionImpact}`,
+  ];
+  if (note) lines.push(`note: ${note}`);
+  return lines.join('\n');
+}
+
+function getModelsSnapshot() {
+  const opencodeCfg = readJsonOrDefault(OPENCODE_CONFIG_PATH, {});
+  const omoCfg = readJsonOrDefault(OMO_CONFIG_PATH, {});
+  const opencodeModel = String(opencodeCfg.model || '').trim() || '(unset: provider default)';
+  const agents = omoCfg.agents && typeof omoCfg.agents === 'object' ? omoCfg.agents : {};
+  const agentNames = Object.keys(agents).sort();
+  const preview = agentNames.slice(0, 6).map((name) => {
+    const entry = agents[name] || {};
+    const model = String(entry.model || '').trim() || '(unset)';
+    const fallback = Array.isArray(entry.fallback_models)
+      ? entry.fallback_models.join(', ')
+      : String(entry.fallback_models || '').trim() || 'off';
+    return `- ${name}: model=${model}, fallback=${fallback}`;
+  });
+  return { opencodeModel, agentNames, preview };
+}
+
+function buildModelsSummaryHtml(repoName) {
+  const snap = getModelsSnapshot();
+  const preferred = [];
+  if (snap.agentNames.includes('sisyphus')) preferred.push('sisyphus');
+  for (const name of snap.agentNames) {
+    if (preferred.includes(name)) continue;
+    preferred.push(name);
+    if (preferred.length >= 8) break;
+  }
+  const layer2Rows = preferred.map((name) => {
+    const omoCfg = readJsonOrDefault(OMO_CONFIG_PATH, {});
+    const entry = (omoCfg.agents && omoCfg.agents[name]) || {};
+    const model = String(entry.model || '').trim() || '(unset)';
+    return `${escapeHtml(name)}:${escapeHtml(model)}`;
+  });
+  const lines = [
+    `<b>🧩 Model Layers · ${escapeHtml(repoName)}</b>`,
+    '',
+    '<pre>① opencode',
+    `opencode:${escapeHtml(snap.opencodeModel)}`,
+    '</pre>',
+    '',
+    '<pre>② oh-my-opencode',
+    ...(layer2Rows.length > 0 ? layer2Rows : ['(no agent overrides configured)']),
+    '</pre>',
+  ];
+  return { html: lines.join('\n'), agentNames: snap.agentNames };
+}
+
+function buildModelsRootKeyboard() {
+  return {
+    inline_keyboard: [
+      [
+        { text: 'OpenCode 모델 변경', callback_data: 'm:l:op' },
+      ],
+      [
+        { text: 'Agent 모델 변경', callback_data: 'm:l:omo' },
+      ],
+      [
+        { text: '새로고침', callback_data: 'm:r' },
+      ],
+    ],
+  };
+}
+
+function buildAgentPickerKeyboard(agentNames) {
+  const rows = agentNames.slice(0, 10).map((agent, idx) => ([
+    { text: agent, callback_data: `m:a:${idx}` },
+  ]));
+  rows.push([{ text: '뒤로', callback_data: 'm:r' }]);
+  return { inline_keyboard: rows };
+}
+
+function buildProviderPickerKeyboard(providerChoices, mode) {
+  const rows = providerChoices.slice(0, 10).map((item, idx) => ([
+    { text: item.providerId, callback_data: `m:p:${idx}` },
+  ]));
+  rows.push([{ text: '뒤로', callback_data: mode === 'op' ? 'm:r' : 'm:l:omo' }]);
+  return { inline_keyboard: rows };
+}
+
+function buildModelPickerKeyboard(models, mode, page = 0) {
+  const pageSize = 10;
+  const start = Math.max(0, page) * pageSize;
+  const end = Math.min(models.length, start + pageSize);
+  const prefix = mode === 'op' ? 'm:o:' : 'm:s:';
+  const rows = models.slice(start, end).map((model, idx) => ([
+    { text: model.length > 38 ? model.slice(0, 38) + '...' : model, callback_data: `${prefix}${start + idx}` },
+  ]));
+
+  const nav = [];
+  if (start > 0) nav.push({ text: '이전', callback_data: 'm:mp:prev' });
+  if (end < models.length) nav.push({ text: '다음', callback_data: 'm:mp:next' });
+  if (nav.length > 0) rows.push(nav);
+
+  rows.push([{ text: '뒤로', callback_data: 'm:bp' }]);
+  return { inline_keyboard: rows };
+}
+
+async function handleModelsCommand(bot, chatId, repo, state, parsed) {
+  const args = parsed && Array.isArray(parsed.args) ? parsed.args : [];
+  const summary = buildModelsSummaryHtml(repo.name);
+  const summaryOpts = { parse_mode: 'HTML', reply_markup: buildModelsRootKeyboard() };
+  if (args.length === 0) {
+    await safeSend(bot, chatId, summary.html, summaryOpts);
+    return;
+  }
+
+  const applyStatus = state.running ? 'scheduled_after_current_run' : 'applied_now';
+  const note = state.running
+    ? 'Current running task keeps previous model settings. New settings apply to next prompt automatically.'
+    : 'Applied immediately for next prompt.';
+
+  if (args[0] === 'opencode') {
+    const action = String(args[1] || '').trim().toLowerCase();
+    const cfg = readJsonOrDefault(OPENCODE_CONFIG_PATH, {});
+    const before = String(cfg.model || '').trim() || '(unset)';
+
+    if (action === 'get' || !action) {
+      await safeSend(
+        bot,
+        chatId,
+        [
+          '<pre><b>① opencode</b>',
+          `<b>opencode</b> ${escapeHtml(before)}`,
+          '</pre>',
+        ].join('\n'),
+        { parse_mode: 'HTML', reply_markup: buildModelsRootKeyboard() }
+      );
+      return;
+    }
+
+    if (action === 'set') {
+      const next = String(args[2] || '').trim();
+      if (!isValidModelRef(next)) {
+        await safeSend(bot, chatId, 'Invalid model format. Use provider/model (example: openai/gpt-5.3-codex).');
+        return;
+      }
+      cfg.model = next;
+      writeJsonAtomic(OPENCODE_CONFIG_PATH, cfg);
+      await safeSend(
+        bot,
+        chatId,
+        buildModelApplyMessage({
+          layer: 'opencode',
+          scope: 'global',
+          before,
+          after: next,
+          restartRequired: false,
+          applyStatus,
+          sessionImpact: 'preserved',
+          note,
+        }),
+        { reply_markup: buildModelsRootKeyboard() }
+      );
+      return;
+    }
+
+    if (action === 'clear') {
+      delete cfg.model;
+      writeJsonAtomic(OPENCODE_CONFIG_PATH, cfg);
+      await safeSend(
+        bot,
+        chatId,
+        buildModelApplyMessage({
+          layer: 'opencode',
+          scope: 'global',
+          before,
+          after: '(unset)',
+          restartRequired: false,
+          applyStatus,
+          sessionImpact: 'preserved',
+          note,
+        }),
+        { reply_markup: buildModelsRootKeyboard() }
+      );
+      return;
+    }
+
+    await safeSend(bot, chatId, 'Unknown /models opencode action. Use: get | set | clear');
+    return;
+  }
+
+  if (args[0] === 'omo') {
+    const action = String(args[1] || '').trim().toLowerCase();
+    const cfg = readJsonOrDefault(OMO_CONFIG_PATH, { agents: {} });
+
+    if (action === 'get' || !action) {
+      const agent = String(args[2] || '').trim();
+      if (!agent) {
+        await safeSend(bot, chatId, summary.html, summaryOpts);
+        return;
+      }
+      const entry = cfg.agents && cfg.agents[agent] ? cfg.agents[agent] : {};
+      const primary = String(entry.model || '').trim() || '(unset)';
+      const fallback = Array.isArray(entry.fallback_models)
+        ? entry.fallback_models.join(', ')
+        : String(entry.fallback_models || '').trim() || 'off';
+      await safeSend(
+        bot,
+        chatId,
+        [
+          '<pre><b>② oh-my-opencode</b>',
+          `<b>${escapeHtml(agent)}</b> ${escapeHtml(primary)}`,
+          '</pre>',
+        ].join('\n'),
+        { parse_mode: 'HTML', reply_markup: buildModelsRootKeyboard() }
+      );
+      return;
+    }
+
+    if (action === 'set') {
+      const agent = String(args[2] || '').trim();
+      const field = String(args[3] || '').trim().toLowerCase();
+      const value = String(args[4] || '').trim();
+      if (!agent) {
+        await safeSend(bot, chatId, 'Missing agent. Example: /models omo set sisyphus primary openai/gpt-5.3-codex');
+        return;
+      }
+
+      const entry = getOmoAgentEntry(cfg, agent);
+      if (field === 'primary') {
+        if (!isValidModelRef(value)) {
+          await safeSend(bot, chatId, 'Invalid primary model format. Use provider/model.');
+          return;
+        }
+        const before = String(entry.model || '').trim() || '(unset)';
+        entry.model = value;
+        writeJsonAtomic(OMO_CONFIG_PATH, cfg);
+        await safeSend(
+          bot,
+          chatId,
+          buildModelApplyMessage({
+            layer: `omo/${agent}`,
+            scope: 'global',
+            before,
+            after: value,
+            restartRequired: false,
+            applyStatus,
+            sessionImpact: 'preserved',
+            note,
+          }),
+          { reply_markup: buildModelsRootKeyboard() }
+        );
+        return;
+      }
+
+      if (field === 'fallback') {
+        const before = Array.isArray(entry.fallback_models)
+          ? entry.fallback_models.join(', ')
+          : String(entry.fallback_models || '').trim() || 'off';
+        if (!value || value.toLowerCase() === 'off') {
+          delete entry.fallback_models;
+          writeJsonAtomic(OMO_CONFIG_PATH, cfg);
+          await safeSend(
+            bot,
+            chatId,
+            buildModelApplyMessage({
+              layer: `omo/${agent}`,
+              scope: 'global',
+              before,
+              after: 'off',
+              restartRequired: false,
+              applyStatus,
+              sessionImpact: 'preserved',
+              note,
+            }),
+            { reply_markup: buildModelsRootKeyboard() }
+          );
+          return;
+        }
+        if (!isValidModelRef(value)) {
+          await safeSend(bot, chatId, 'Invalid fallback model format. Use provider/model or off.');
+          return;
+        }
+        entry.fallback_models = value;
+        writeJsonAtomic(OMO_CONFIG_PATH, cfg);
+        await safeSend(
+          bot,
+          chatId,
+          buildModelApplyMessage({
+            layer: `omo/${agent}`,
+            scope: 'global',
+            before,
+            after: value,
+            restartRequired: false,
+            applyStatus,
+            sessionImpact: 'preserved',
+            note,
+          }),
+          { reply_markup: buildModelsRootKeyboard() }
+        );
+        return;
+      }
+
+      await safeSend(bot, chatId, 'Unknown field. Use: primary | fallback');
+      return;
+    }
+
+    if (action === 'clear') {
+      const agent = String(args[2] || '').trim();
+      if (!agent) {
+        await safeSend(bot, chatId, 'Missing agent. Example: /models omo clear sisyphus');
+        return;
+      }
+      if (!cfg.agents || typeof cfg.agents !== 'object') cfg.agents = {};
+      const existed = !!cfg.agents[agent];
+      delete cfg.agents[agent];
+      writeJsonAtomic(OMO_CONFIG_PATH, cfg);
+      await safeSend(
+        bot,
+        chatId,
+        buildModelApplyMessage({
+          layer: `omo/${agent}`,
+          scope: 'global',
+          before: existed ? 'configured' : '(unset)',
+          after: '(unset)',
+          restartRequired: false,
+          applyStatus,
+          sessionImpact: 'preserved',
+          note,
+        }),
+        { reply_markup: buildModelsRootKeyboard() }
+      );
+      return;
+    }
+
+    await safeSend(bot, chatId, 'Unknown /models omo action. Use: get | set | clear');
+    return;
+  }
+
+  await safeSend(bot, chatId, 'Unknown layer. Use: /models opencode ... or /models omo ...');
 }
 
 function formatOnboardingQuestion(session) {
@@ -506,6 +929,7 @@ function splitByLimit(text, maxLen) {
   return out;
 }
 
+
 async function safeSend(bot, chatId, text, opts) {
   try {
     return await bot.sendMessage(chatId, text, opts);
@@ -529,6 +953,11 @@ async function sendHtml(bot, chatId, html) {
     lastMsg = await safeSend(bot, chatId, c, { parse_mode: 'HTML' });
   }
   return lastMsg;
+}
+
+async function sendMarkdownAsHtml(bot, chatId, markdown) {
+  const html = md2html(String(markdown || ''));
+  return sendHtml(bot, chatId, html);
 }
 
 async function editHtml(bot, chatId, messageId, html) {
@@ -594,13 +1023,33 @@ function renderMermaidArtifacts(instance, chatId, blocks) {
   const dir = path.resolve(instance.workdir, MERMAID_RENDER_DIR);
   fs.mkdirSync(dir, { recursive: true });
 
+  function normalizeMermaidSource(src) {
+    const normalized = String(src || '').replace(/\r\n/g, '\n');
+    const lines = normalized.split('\n').map((line) => line.replace(/\s+$/g, ''));
+    const merged = [];
+    for (const line of lines) {
+      if (!line) {
+        merged.push('');
+        continue;
+      }
+      const semiSplit = line.split(';').map((x) => x.trim()).filter(Boolean);
+      if (semiSplit.length > 1) {
+        merged.push(...semiSplit);
+        continue;
+      }
+      const splitByInlineEdge = line.replace(/([\]\)\}])\s{2,}(?=[A-Za-z0-9_]+\s*(?:-->|==>|-.->))/g, '$1\n');
+      merged.push(...splitByInlineEdge.split('\n'));
+    }
+    return merged.join('\n').trim() + '\n';
+  }
+
   for (let i = 0; i < capped.length; i++) {
     const now = new Date().toISOString().replace(/[.:]/g, '-');
     const base = `tg_${String(chatId).replace(/[^0-9-]/g, '_')}_${now}_${i + 1}`;
     const inPath = path.join(dir, `${base}.mmd`);
     const outSvgPath = path.join(dir, `${base}.svg`);
     const outPngPath = path.join(dir, `${base}.png`);
-    fs.writeFileSync(inPath, capped[i] + '\n', 'utf8');
+    fs.writeFileSync(inPath, normalizeMermaidSource(capped[i]), 'utf8');
 
     const renderedSvg = spawnSync('mmdc', ['-i', inPath, '-o', outSvgPath, '-b', 'transparent'], {
       cwd: instance.workdir,
@@ -627,6 +1076,7 @@ function renderMermaidArtifacts(instance, chatId, blocks) {
       const stderrSvg = String(renderedSvg.stderr || '').trim();
       const stderrPng = String(renderedPng.stderr || '').trim();
       console.error(`[mermaid] render failed (${i + 1}) svg=${stderrSvg || 'n/a'} png=${stderrPng || 'n/a'}`);
+      artifacts.push({ kind: 'mmd', path: inPath, error: stderrSvg || stderrPng || 'render failed' });
     }
   }
 
@@ -698,17 +1148,89 @@ function appendHermuxVersion(text, version) {
   return `${base}\n\n${tag}`;
 }
 
+function stripSystemReminderBlocks(text) {
+  const src = String(text || '');
+  if (!src) return '';
+  return src.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, '').trim();
+}
+
+function stripInternalInitiatorMarkers(text) {
+  const src = String(text || '');
+  if (!src) return '';
+  return src.replace(/<!--\s*OMO_INTERNAL_INITIATOR\s*-->/gi, '').trim();
+}
+
+function stripAnalyzeModeBoilerplatePrefix(text) {
+  const src = String(text || '');
+  if (!src) return '';
+  return src
+    .replace(/^\s*\[?analyze-mode\]?\s*[\s\S]*?\n---\s*\n?/i, '')
+    .replace(/^\s*ANALYSIS MODE\.[\s\S]*?\n---\s*\n?/i, '')
+    .trimStart();
+}
+
+function stripPromptEchoPrefix(text, promptText) {
+  let out = String(text || '');
+  const prompt = String(promptText || '').trim();
+  if (!out || !prompt) return out;
+  const variants = [prompt, prompt.replace(/^\[/, '')];
+  for (const v of variants) {
+    if (!v) continue;
+    if (out.startsWith(v)) {
+      out = out.slice(v.length).trimStart();
+    }
+  }
+  return out;
+}
+
+function sanitizeFinalOutputText(text, promptText) {
+  let out = stripSystemReminderBlocks(text || '');
+  out = stripInternalInitiatorMarkers(out);
+  out = stripAnalyzeModeBoilerplatePrefix(out);
+  out = stripPromptEchoPrefix(out, promptText);
+  return String(out || '').trim();
+}
+
+function selectFinalOutputText(metaFinalText, streamFinalText) {
+  const metaText = String(metaFinalText || '').trim();
+  const streamText = String(streamFinalText || '').trim();
+  if (!metaText) return streamText;
+  if (!streamText) return metaText;
+  if (metaText === streamText) return metaText;
+  if (metaText.includes(streamText)) return metaText;
+  if (streamText.includes(metaText)) return streamText;
+  return metaText.length >= streamText.length ? metaText : streamText;
+}
+
+function resolveFinalizationOutput({
+  metaFinalText,
+  streamFinalText,
+  promptText,
+  isVersionPrompt,
+  hermuxVersion,
+}) {
+  const cleanMeta = sanitizeFinalOutputText(metaFinalText, promptText);
+  const cleanStream = sanitizeFinalOutputText(streamFinalText, promptText);
+  const mergedFinal = selectFinalOutputText(cleanMeta, cleanStream);
+  const outgoingText = isVersionPrompt ? appendHermuxVersion(mergedFinal, hermuxVersion) : mergedFinal;
+  const shouldSendFinal = !!String(outgoingText || '').trim();
+  const streamCompletionText = shouldSendFinal
+    ? 'completed. final answer sent below.'
+    : 'completed (no final answer produced).';
+  return {
+    mergedFinal,
+    outgoingText,
+    shouldSendFinal,
+    streamCompletionText,
+  };
+}
+
 function buildStreamingStatusHtml(text, verbose) {
   const raw = String(text || '');
-  if (verbose) {
-    const tailVerbose = raw.length > 1800 ? '...' + raw.slice(-1800) : raw;
-    return `<b>Streaming response...</b>\n\n<pre>${escapeHtml(tailVerbose)}</pre>`;
-  }
-
-  const compact = raw.replace(/\s+/g, ' ').trim();
-  const tailCompact = compact.length > 240 ? '...' + compact.slice(-240) : compact;
-  const chars = compact.length;
-  return `<b>Streaming response...</b>\n<code>mode: compact | chars: ${chars}</code>\n\n${escapeHtml(tailCompact || '(waiting for content)')}`;
+  const limit = verbose ? 2600 : 1800;
+  const tail = raw.length > limit ? '...' + raw.slice(-limit) : raw;
+  const body = tail || '(working...)';
+  return md2html(body);
 }
 
 function buildLiveStatusPanelHtml({
@@ -736,12 +1258,7 @@ function buildLiveStatusPanelHtml({
               ? '⌛'
             : '❌';
 
-  const lines = [];
-  lines.push(`<b>${phaseIcon} ${escapeHtml(repoName)} · ${escapeHtml(phase)}</b>`);
-  if (verbose) {
-    lines.push('<code>🧠 verbose</code>');
-  }
-  lines.push(`<code>🔁 ${stepCount} · 🧰 ${toolCount}</code>`);
+  const lines = [`<b>${phaseIcon} ${escapeHtml(repoName)} · ${escapeHtml(phase)}</b>`, `<code>🔁 ${stepCount} · 🧰 ${toolCount}${verbose ? ' · 🧠 v' : ''}</code>`];
   if ((queueLength || 0) > 0) {
     lines.push(`<code>📥 queue: ${queueLength}</code>`);
   }
@@ -758,24 +1275,6 @@ function buildLiveStatusPanelHtml({
     } else {
       lines.push('<code>⌛ waiting for model quota</code>');
     }
-  }
-
-
-  if (lastTool) {
-    const t = String(lastTool).trim();
-    const tt = t.length > 110 ? t.slice(0, 110) + '...' : t;
-    lines.push(`🔧 <code>${escapeHtml(tt)}</code>`);
-  }
-
-  if (lastStepReason) {
-    const r = String(lastStepReason).trim();
-    if (r) lines.push(`📍 <code>${escapeHtml(r)}</code>`);
-  }
-
-  if (lastRaw && verbose) {
-    const raw = String(lastRaw).trim();
-    const rawTail = raw.length > 160 ? raw.slice(0, 160) + '...' : raw;
-    lines.push(`🧾 <code>${escapeHtml(rawTail)}</code>`);
   }
 
   const out = lines.join('\n');
@@ -997,6 +1496,43 @@ function buildVerboseKeyboard() {
       { text: 'Verbose Off', callback_data: 'verbose:off' },
     ]],
   };
+}
+
+function buildModelsKeyboard(agentNames) {
+  void agentNames;
+  return buildModelsRootKeyboard();
+}
+
+function buildStatusKeyboard() {
+  return {
+    inline_keyboard: [[
+      { text: 'Models', callback_data: 'm:r' },
+      { text: 'Verbose', callback_data: 'verbose:status' },
+      { text: 'Interrupt', callback_data: 'interrupt:now' },
+    ]],
+  };
+}
+
+function buildRuntimeStatusHtml({ repo, state, chatId }) {
+  const info = getSessionInfo(repo.name, chatId);
+  const sid = info && info.sessionId ? String(info.sessionId) : '';
+  const shortSid = sid ? sid.slice(0, 24) : '(none)';
+  const queueLen = Array.isArray(state.queue) ? state.queue.length : 0;
+  const waiting = state.waitingInfo ? 'yes' : 'no';
+  const lifecycle = state.running ? (state.waitingInfo ? 'waiting' : 'running') : 'ready';
+  const waitDetail = state.waitingInfo && state.waitingInfo.status === 'retry'
+    ? `retry${state.waitingInfo.retryAfterSeconds ? ` (${state.waitingInfo.retryAfterSeconds}s)` : ''}`
+    : '-';
+  return [
+    `<b>📊 Runtime Status · ${escapeHtml(repo.name)}</b>`,
+    `<code>chat: ${escapeHtml(chatId)}</code>`,
+    `<code>workdir: ${escapeHtml(repo.workdir)}</code>`,
+    '',
+    `<code>state: ${lifecycle} | busy: ${state.running ? 'yes' : 'no'} | waiting: ${waiting} | queue: ${queueLen}</code>`,
+    `<code>verbose: ${state.verbose ? 'on' : 'off'}</code>`,
+    `<code>session: ${escapeHtml(shortSid)}</code>`,
+    `<code>wait detail: ${escapeHtml(waitDetail)}</code>`,
+  ].join('\n');
 }
 
 async function sendRepoList(bot, chatId, chatRouter) {
@@ -1270,6 +1806,8 @@ async function startPromptRun(bot, repo, state, runItem) {
   console.log(`[${repo.name}] run: ${promptPreview.slice(0, 80)}`);
 
   let finalText = '';
+  let streamText = '';
+  let streamFinalSeen = '';
   let toolCount = 0;
   let stepCount = 0;
   const toolNames = [];
@@ -1277,12 +1815,18 @@ async function startPromptRun(bot, repo, state, runItem) {
   let lastStepReason = null;
   let activeSessionId = getSessionId(repo.name, chatId);
   const hermuxVersion = String(HERMUX_VERSION || '').trim() || '0.0.0';
-  let lastStreamEditAt = 0;
+  let lastPanelEditAt = 0;
+  let lastPanelHeartbeatAt = 0;
+  let lastTextEditAt = 0;
   let lastStreamSnapshot = '';
+  let lastTextSnapshot = '';
   let lastToolBrief = '';
   let lastRawBrief = '';
   let lastPanelHtml = '';
   let waitInfo = null;
+  let lastEventAt = Date.now();
+  let heartbeatTimer = null;
+  let completionHandled = false;
 
   const buildPanel = (phase) => buildLiveStatusPanelHtml({
     repoName: repo.name,
@@ -1300,18 +1844,71 @@ async function startPromptRun(bot, repo, state, runItem) {
 
   const statusMsg = await safeSend(bot, chatId, buildPanel('running'), { parse_mode: 'HTML' });
   const statusMsgId = statusMsg ? statusMsg.message_id : null;
+  const streamMsg = await safeSend(bot, chatId, buildStreamingStatusHtml('(starting...)', state.verbose), { parse_mode: 'HTML' });
+  const streamMsgId = streamMsg ? streamMsg.message_id : null;
+
+  const getAdaptiveInterval = (now, kind) => {
+    const idleMs = now - lastEventAt;
+    const base = state.verbose ? STREAM_EDIT_MIN_INTERVAL_VERBOSE_MS : STREAM_EDIT_MIN_INTERVAL_COMPACT_MS;
+    if (kind === 'panel') {
+      if (idleMs > 12000) return Math.max(base, 1200);
+      if (idleMs > 4000) return Math.max(base, 800);
+      return base;
+    }
+    if (idleMs > 12000) return Math.max(base, 1400);
+    if (idleMs > 4000) return Math.max(base, 900);
+    return base;
+  };
 
   const refreshPanel = async (phase, force) => {
     if (!statusMsgId) return;
     const now = Date.now();
-    const minInterval = state.verbose ? STREAM_EDIT_MIN_INTERVAL_VERBOSE_MS : STREAM_EDIT_MIN_INTERVAL_COMPACT_MS;
-    if (!force && now - lastStreamEditAt < minInterval) return;
+    const minInterval = getAdaptiveInterval(now, 'panel');
+    if (!force && now - lastPanelEditAt < minInterval) return;
     const html = buildPanel(phase);
     if (!force && html === lastPanelHtml) return;
-    lastStreamEditAt = now;
+    lastPanelEditAt = now;
     lastPanelHtml = html;
     await editHtml(bot, chatId, statusMsgId, html);
   };
+
+  const refreshStream = async (force) => {
+    if (!streamMsgId) return;
+    const now = Date.now();
+    const minInterval = getAdaptiveInterval(now, 'stream');
+    if (!force && now - lastTextEditAt < minInterval) return;
+
+    let previewText = '';
+    if ((streamText || '').trim()) {
+      previewText = streamText;
+    } else if (waitInfo && waitInfo.status === 'retry') {
+      const retryAfter = Number(waitInfo.retryAfterSeconds || 0);
+      previewText = retryAfter > 0
+        ? `waiting for model quota (${retryAfter}s)`
+        : 'waiting for model quota';
+    } else if (lastToolBrief) {
+      previewText = `running: ${lastToolBrief}`;
+    } else if (lastRawBrief) {
+      previewText = lastRawBrief;
+    } else {
+      previewText = '(working...)';
+    }
+
+    if (!force && previewText === lastTextSnapshot) return;
+    lastTextSnapshot = previewText;
+    lastTextEditAt = now;
+    await editHtml(bot, chatId, streamMsgId, buildStreamingStatusHtml(previewText, state.verbose));
+  };
+
+  heartbeatTimer = setInterval(async () => {
+    if (!state.running) return;
+    const now = Date.now();
+    if (now - lastPanelHeartbeatAt < STREAM_HEARTBEAT_MS) return;
+    lastPanelHeartbeatAt = now;
+    await refreshPanel('running', false);
+    await refreshStream(false);
+  }, STREAM_HEARTBEAT_MS);
+
   state.panelRefresh = async (force) => refreshPanel('running', !!force);
 
   const proc = runOpencode(repo, promptText, {
@@ -1319,23 +1916,32 @@ async function startPromptRun(bot, repo, state, runItem) {
     onEvent: async (evt) => {
       const type = evt.type;
       if (evt.sessionId) activeSessionId = evt.sessionId;
+      lastEventAt = Date.now();
 
       if (type === 'step_start') {
         waitInfo = null;
         state.waitingInfo = null;
         stepCount++;
         await refreshPanel('running', false);
+        await refreshStream(false);
         return;
       }
 
       if (type === 'text') {
         waitInfo = null;
         state.waitingInfo = null;
-        if ((evt.content || '').trim()) {
-          finalText = evt.content;
-          if (statusMsgId && evt.content !== lastStreamSnapshot) {
-            lastStreamSnapshot = evt.content;
+        const cleaned = sanitizeFinalOutputText(evt.content || '', promptText);
+        if (cleaned.trim()) {
+          if (evt.textKind === 'reasoning') {
+            streamText = cleaned;
+          } else {
+            finalText = cleaned;
+            streamFinalSeen = cleaned;
+          }
+          if (statusMsgId && cleaned !== lastStreamSnapshot) {
+            lastStreamSnapshot = cleaned;
             await refreshPanel('running', false);
+            await refreshStream(false);
           }
         }
         return;
@@ -1349,6 +1955,7 @@ async function startPromptRun(bot, repo, state, runItem) {
         lastToolBrief = brief;
         toolNames.push(brief);
         await refreshPanel('running', false);
+        await refreshStream(false);
         if (state.verbose && !statusMsgId) {
           const toolMsg = `<code>${escapeHtml(brief)}</code>`;
           await safeSend(bot, chatId, toolMsg, { parse_mode: 'HTML' });
@@ -1361,6 +1968,7 @@ async function startPromptRun(bot, repo, state, runItem) {
         state.waitingInfo = null;
         lastStepReason = evt.reason || lastStepReason;
         await refreshPanel('running', false);
+        await refreshStream(false);
         return;
       }
 
@@ -1371,6 +1979,7 @@ async function startPromptRun(bot, repo, state, runItem) {
         };
         state.waitingInfo = waitInfo;
         await refreshPanel('running', false);
+        await refreshStream(false);
         return;
       }
 
@@ -1381,6 +1990,7 @@ async function startPromptRun(bot, repo, state, runItem) {
           if (rawSamples.length > 3) rawSamples.shift();
           lastRawBrief = trimmed;
           await refreshPanel('running', false);
+          await refreshStream(false);
           if (state.verbose && !statusMsgId) {
             await safeSend(bot, chatId, `<pre>${escapeHtml(trimmed)}</pre>`, { parse_mode: 'HTML' });
           }
@@ -1389,7 +1999,10 @@ async function startPromptRun(bot, repo, state, runItem) {
     },
 
     onDone: async (exitCode, timeoutMsg, meta) => {
+      if (completionHandled) return;
+      completionHandled = true;
       state.running = false;
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
       clearInterruptEscalationTimer(state);
       const interruptTrace = state.interruptTrace ? { ...state.interruptTrace } : null;
       const interrupted = !!state.interruptRequested;
@@ -1407,17 +2020,23 @@ async function startPromptRun(bot, repo, state, runItem) {
         }
       }
       const status = interrupted ? 'interrupted' : (timeoutMsg ? 'timeout' : (exitCode === 0 ? 'done' : `exit ${exitCode}`));
+      const finalResolution = resolveFinalizationOutput({
+        metaFinalText: meta && typeof meta.finalText === 'string' ? meta.finalText : '',
+        streamFinalText: streamFinalSeen || finalText,
+        promptText,
+        isVersionPrompt,
+        hermuxVersion,
+      });
+      const mergedFinal = finalResolution.mergedFinal;
 
       if (interrupted) {
         await safeSend(bot, chatId, 'Interrupted current task.');
       } else if (timeoutMsg) {
         await safeSend(bot, chatId, `Timed out: ${timeoutMsg}`);
-      } else if (finalText.trim()) {
-        const outgoingText = isVersionPrompt ? appendHermuxVersion(finalText, hermuxVersion) : finalText;
-        const html = md2html(outgoingText);
-        await sendHtml(bot, chatId, html);
+      } else if (finalResolution.shouldSendFinal) {
+        await sendMarkdownAsHtml(bot, chatId, finalResolution.outgoingText);
 
-        const mermaidBlocks = extractMermaidBlocks(finalText);
+        const mermaidBlocks = extractMermaidBlocks(mergedFinal);
         if (mermaidBlocks.length > 0) {
           if (!hasMermaidRenderer()) {
             await safeSend(
@@ -1432,8 +2051,11 @@ async function startPromptRun(bot, repo, state, runItem) {
               const caption = artifacts.length > 1 ? `Mermaid diagram ${i + 1}/${artifacts.length}` : 'Mermaid diagram';
               if (a.kind === 'svg') {
                 await safeSendDocument(bot, chatId, a.path, caption);
-              } else {
+              } else if (a.kind === 'png') {
                 await safeSendPhoto(bot, chatId, a.path, caption);
+              } else if (a.kind === 'mmd') {
+                await safeSendDocument(bot, chatId, a.path, `${caption} (source, render failed)`);
+                await safeSend(bot, chatId, `Mermaid render failed; sent source file instead.\nreason: ${String(a.error || '').slice(0, 300)}`);
               }
             }
           }
@@ -1474,6 +2096,14 @@ async function startPromptRun(bot, repo, state, runItem) {
       if (statusMsgId) {
         await refreshPanel(status, true);
       }
+      if (streamMsgId) {
+        const endText = interrupted
+          ? 'interrupted.'
+          : timeoutMsg
+            ? 'timed out.'
+            : finalResolution.streamCompletionText;
+        await editHtml(bot, chatId, streamMsgId, buildStreamingStatusHtml(endText, state.verbose));
+      }
 
       if (Array.isArray(state.queue) && state.queue.length > 0) {
         const nextItem = state.queue.shift();
@@ -1482,7 +2112,10 @@ async function startPromptRun(bot, repo, state, runItem) {
     },
 
     onError: async (err) => {
+      if (completionHandled) return;
+      completionHandled = true;
       state.running = false;
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
       clearInterruptEscalationTimer(state);
       const interruptTrace = state.interruptTrace ? { ...state.interruptTrace } : null;
       state.interruptRequested = false;
@@ -1535,7 +2168,7 @@ async function handleRepoMessage(bot, repo, state, msg) {
         `workdir: ${repo.workdir}`,
         '',
         `mode: ${state.verbose ? 'verbose (stream events)' : 'compact (final output only)'}`,
-        'commands: /repos, /status, /session, /version, /interrupt, /restart, /reset, /init, /verbose on, /verbose off, /whereami',
+        'commands: /repos, /status, /models, /session, /version, /interrupt, /restart, /reset, /init, /verbose on, /verbose off, /whereami',
         '',
         'Send any prompt to run opencode.',
       ].join('\n')
@@ -1547,9 +2180,15 @@ async function handleRepoMessage(bot, repo, state, msg) {
       await safeSend(
         bot,
         chatId,
-        `${repo.name}\nworkdir: ${repo.workdir}\nbusy: ${state.running ? 'yes' : 'no'}\nwaiting: ${state.waitingInfo ? 'yes' : 'no'}\nverbose: ${state.verbose ? 'on' : 'off'}\nqueue: ${Array.isArray(state.queue) ? state.queue.length : 0}`
+        buildRuntimeStatusHtml({ repo, state, chatId }),
+        { parse_mode: 'HTML', reply_markup: buildStatusKeyboard() }
       );
       return;
+  }
+
+  if (command === '/models') {
+    await handleModelsCommand(bot, chatId, repo, state, parsed);
+    return;
   }
 
   if (command === '/session') {
@@ -1704,6 +2343,7 @@ function main() {
   }]));
   const onboardingSessions = new Map();
   const initSessions = new Map();
+  const modelUiState = new Map();
   const bot = new TelegramBot(botToken, { polling: true });
   const restartNotice = readAndClearRestartNotice();
 
@@ -1716,6 +2356,7 @@ function main() {
     { command: 'repos', description: 'List repos and how to connect' },
     { command: 'connect', description: 'Connect this chat to a repo' },
     { command: 'status', description: 'Show current runtime status' },
+    { command: 'models', description: 'Manage opencode/omo model layers' },
     { command: 'session', description: 'Show current opencode session' },
     { command: 'version', description: 'Show opencode and hermux version' },
     { command: 'interrupt', description: 'Stop current running task' },
@@ -1861,6 +2502,230 @@ function main() {
         }
         return;
       }
+
+      if (data === 'status:show') {
+        const repo = chatRouter.get(chatId);
+        if (!repo) {
+          await safeSend(bot, chatId, 'This chat is not mapped to a repo. Run /repos then /connect <repo>.');
+          if (query.id) {
+            await bot.answerCallbackQuery(query.id, { text: 'not mapped' }).catch(() => {});
+          }
+          return;
+        }
+        const state = states.get(repo.name);
+        await safeSend(bot, chatId, buildRuntimeStatusHtml({ repo, state, chatId }), {
+          parse_mode: 'HTML',
+          reply_markup: buildStatusKeyboard(),
+        });
+        if (query.id) {
+          await bot.answerCallbackQuery(query.id, { text: 'status' }).catch(() => {});
+        }
+        return;
+      }
+
+      if (data === 'interrupt:now') {
+        const repo = chatRouter.get(chatId);
+        if (!repo) {
+          await safeSend(bot, chatId, 'This chat is not mapped to a repo. Run /repos then /connect <repo>.');
+          if (query.id) {
+            await bot.answerCallbackQuery(query.id, { text: 'not mapped' }).catch(() => {});
+          }
+          return;
+        }
+        const state = states.get(repo.name);
+        if (!state.running || !state.currentProc) {
+          await safeSend(bot, chatId, 'No running task to interrupt.');
+          if (query.id) {
+            await bot.answerCallbackQuery(query.id, { text: 'idle' }).catch(() => {});
+          }
+          return;
+        }
+        const req = requestInterrupt(state, { forceAfterMs: 5000 });
+        if (!req.ok) {
+          const msg = req.error ? req.error.message : req.reason;
+          await safeSend(bot, chatId, `Failed to interrupt current task: ${msg}`);
+        } else {
+          await safeSend(bot, chatId, req.alreadyRequested ? 'Interrupt already requested. Waiting for task shutdown...' : 'Interrupt requested. Stopping current task...');
+        }
+        if (query.id) {
+          await bot.answerCallbackQuery(query.id, { text: 'interrupt' }).catch(() => {});
+        }
+        return;
+      }
+
+      if (data === 'm:r' || data === 'models:show') {
+        const repo = chatRouter.get(chatId);
+        if (!repo) {
+          await safeSend(bot, chatId, 'This chat is not mapped to a repo. Run /repos then /connect <repo>.');
+          if (query.id) {
+            await bot.answerCallbackQuery(query.id, { text: 'not mapped' }).catch(() => {});
+          }
+          return;
+        }
+        const summary = buildModelsSummaryHtml(repo.name);
+        await safeSend(bot, chatId, summary.html, { parse_mode: 'HTML', reply_markup: buildModelsRootKeyboard() });
+        if (query.id) {
+          await bot.answerCallbackQuery(query.id, { text: 'models' }).catch(() => {});
+        }
+        return;
+      }
+
+      if (data === 'm:l:op') {
+        const providers = getProviderModelChoices();
+        if (providers.length === 0) {
+          await safeSend(bot, chatId, 'No model choices found in opencode config.');
+        } else {
+          modelUiState.set(chatId, { layer: 'op', providers, selectedProvider: -1, modelPage: 0 });
+          await safeSend(bot, chatId, '<pre>① opencode\nprovider 선택</pre>', {
+            parse_mode: 'HTML',
+            reply_markup: buildProviderPickerKeyboard(providers, 'op'),
+          });
+        }
+        if (query.id) await bot.answerCallbackQuery(query.id, { text: 'choose provider' }).catch(() => {});
+        return;
+      }
+
+      if (data === 'm:l:omo') {
+        const snap = getModelsSnapshot();
+        if (snap.agentNames.length === 0) {
+          await safeSend(bot, chatId, 'No configured agents in oh-my-opencode.');
+        } else {
+          modelUiState.set(chatId, { layer: 'omo', agentNames: snap.agentNames });
+          await safeSend(bot, chatId, '<pre>② oh-my-opencode\n에이전트 선택</pre>', {
+            parse_mode: 'HTML',
+            reply_markup: buildAgentPickerKeyboard(snap.agentNames),
+          });
+        }
+        if (query.id) await bot.answerCallbackQuery(query.id, { text: 'choose agent' }).catch(() => {});
+        return;
+      }
+
+      if (data.startsWith('m:a:')) {
+        const idx = Number(data.slice('m:a:'.length).trim());
+        const st = modelUiState.get(chatId) || {};
+        const names = Array.isArray(st.agentNames) ? st.agentNames : [];
+        const agent = Number.isInteger(idx) && idx >= 0 && idx < names.length ? names[idx] : '';
+        const providers = getProviderModelChoices();
+        if (!agent || providers.length === 0) {
+          await safeSend(bot, chatId, 'Unable to open provider choices.');
+        } else {
+          modelUiState.set(chatId, { layer: 'omo', agent, providers, selectedProvider: -1, modelPage: 0 });
+          await safeSend(bot, chatId, `<pre>② oh-my-opencode\n${escapeHtml(agent)} · provider 선택</pre>`, {
+            parse_mode: 'HTML',
+            reply_markup: buildProviderPickerKeyboard(providers, 'omo'),
+          });
+        }
+        if (query.id) await bot.answerCallbackQuery(query.id, { text: 'choose provider' }).catch(() => {});
+        return;
+      }
+
+      if (data.startsWith('m:p:')) {
+        const idx = Number(data.slice('m:p:'.length).trim());
+        const st = modelUiState.get(chatId) || {};
+        const providers = Array.isArray(st.providers) ? st.providers : [];
+        const item = Number.isInteger(idx) && idx >= 0 && idx < providers.length ? providers[idx] : null;
+        if (!item || !Array.isArray(item.models) || item.models.length === 0) {
+          await safeSend(bot, chatId, 'Invalid provider selection.');
+        } else {
+          st.selectedProvider = idx;
+          st.modelPage = 0;
+          modelUiState.set(chatId, st);
+          await safeSend(bot, chatId, `<pre>${escapeHtml(item.providerId)} · model 선택</pre>`, {
+            parse_mode: 'HTML',
+            reply_markup: buildModelPickerKeyboard(item.models, st.layer === 'op' ? 'op' : 'omo', st.modelPage || 0),
+          });
+        }
+        if (query.id) await bot.answerCallbackQuery(query.id, { text: 'choose model' }).catch(() => {});
+        return;
+      }
+
+      if (data === 'm:bp') {
+        const st = modelUiState.get(chatId) || {};
+        const providers = Array.isArray(st.providers) ? st.providers : [];
+        if (providers.length > 0) {
+          await safeSend(bot, chatId, '<pre>provider 선택</pre>', {
+            parse_mode: 'HTML',
+            reply_markup: buildProviderPickerKeyboard(providers, st.layer === 'op' ? 'op' : 'omo'),
+          });
+        }
+        if (query.id) await bot.answerCallbackQuery(query.id, { text: 'back' }).catch(() => {});
+        return;
+      }
+
+      if (data === 'm:mp:prev' || data === 'm:mp:next') {
+        const st = modelUiState.get(chatId) || {};
+        const providers = Array.isArray(st.providers) ? st.providers : [];
+        const selectedProvider = Number(st.selectedProvider);
+        const item = Number.isInteger(selectedProvider) && selectedProvider >= 0 && selectedProvider < providers.length
+          ? providers[selectedProvider]
+          : null;
+        if (!item) {
+          await safeSend(bot, chatId, 'Provider를 다시 선택해줘.');
+        } else {
+          const delta = data.endsWith('next') ? 1 : -1;
+          const pageSize = 10;
+          const maxPage = Math.max(0, Math.floor((item.models.length - 1) / pageSize));
+          const nextPage = Math.max(0, Math.min(maxPage, Number(st.modelPage || 0) + delta));
+          st.modelPage = nextPage;
+          modelUiState.set(chatId, st);
+          await safeSend(bot, chatId, `<pre>${escapeHtml(item.providerId)} · model 선택</pre>`, {
+            parse_mode: 'HTML',
+            reply_markup: buildModelPickerKeyboard(item.models, st.layer === 'op' ? 'op' : 'omo', nextPage),
+          });
+        }
+        if (query.id) await bot.answerCallbackQuery(query.id, { text: 'page' }).catch(() => {});
+        return;
+      }
+
+      if (data.startsWith('m:o:')) {
+        const idx = Number(data.slice('m:o:'.length));
+        const st = modelUiState.get(chatId) || {};
+        const providers = Array.isArray(st.providers) ? st.providers : [];
+        const selectedProvider = Number(st.selectedProvider);
+        const models = Number.isInteger(selectedProvider) && selectedProvider >= 0 && selectedProvider < providers.length
+          ? providers[selectedProvider].models
+          : [];
+        const model = Number.isInteger(idx) && idx >= 0 && idx < models.length ? models[idx] : '';
+        if (!model) {
+          await safeSend(bot, chatId, 'Invalid model selection.');
+        } else {
+          const cfg = readJsonOrDefault(OPENCODE_CONFIG_PATH, {});
+          cfg.model = model;
+          writeJsonAtomic(OPENCODE_CONFIG_PATH, cfg);
+          await safeSend(bot, chatId, `<pre>① opencode\nopencode:${escapeHtml(model)}</pre>`, {
+            parse_mode: 'HTML',
+            reply_markup: buildModelsRootKeyboard(),
+          });
+        }
+        if (query.id) await bot.answerCallbackQuery(query.id, { text: 'applied' }).catch(() => {});
+        return;
+      }
+
+      if (data.startsWith('m:s:')) {
+        const idx = Number(data.slice('m:s:'.length));
+        const st = modelUiState.get(chatId) || {};
+        const agent = String(st.agent || '').trim();
+        const providers = Array.isArray(st.providers) ? st.providers : [];
+        const selectedProvider = Number(st.selectedProvider);
+        const models = Number.isInteger(selectedProvider) && selectedProvider >= 0 && selectedProvider < providers.length
+          ? providers[selectedProvider].models
+          : [];
+        const model = Number.isInteger(idx) && idx >= 0 && idx < models.length ? models[idx] : '';
+        if (!agent || !model) {
+          await safeSend(bot, chatId, 'Invalid agent/model selection.');
+        } else {
+          const cfg = readJsonOrDefault(OMO_CONFIG_PATH, { agents: {} });
+          const entry = getOmoAgentEntry(cfg, agent);
+          entry.model = model;
+          writeJsonAtomic(OMO_CONFIG_PATH, cfg);
+          await safeSend(bot, chatId, `<pre>② oh-my-opencode\n${escapeHtml(agent)}:${escapeHtml(model)}</pre>`, {
+            parse_mode: 'HTML',
+            reply_markup: buildModelsRootKeyboard(),
+          });
+        }
+        if (query.id) await bot.answerCallbackQuery(query.id, { text: 'applied' }).catch(() => {});
+        return;
+      }
     } catch (err) {
       console.error('[callback_query] failed:', err.message);
     }
@@ -1896,6 +2761,9 @@ module.exports = {
     splitByLimit,
     buildNoOutputMessage,
     appendHermuxVersion,
+    sanitizeFinalOutputText,
+    selectFinalOutputText,
+    resolveFinalizationOutput,
     buildStreamingStatusHtml,
     buildLiveStatusPanelHtml,
     extractMermaidBlocks,
@@ -1905,8 +2773,18 @@ module.exports = {
     requestInterrupt,
     clearInterruptEscalationTimer,
     serializePollingError,
+    isValidModelRef,
+    buildModelApplyMessage,
     buildConnectKeyboard,
     buildVerboseKeyboard,
+    buildModelsRootKeyboard,
+    buildAgentPickerKeyboard,
+    buildProviderPickerKeyboard,
+    buildModelPickerKeyboard,
+    buildModelsKeyboard,
+    buildStatusKeyboard,
+    buildRuntimeStatusHtml,
+    buildModelsSummaryHtml,
     getReplyContext,
     normalizeImageExt,
     getImagePayloadFromMessage,

@@ -112,7 +112,7 @@ function runViaCommand(instance, prompt, { onEvent, onDone, onError, sessionId }
       }
 
       if (evt.type === 'text') {
-        onEvent({ type: 'text', content: part.text || '', sessionId: latestSessionId });
+        onEvent({ type: 'text', content: part.text || '', textKind: 'final', sessionId: latestSessionId });
         return;
       }
 
@@ -300,8 +300,15 @@ function runViaServe(instance, prompt, { onEvent, onDone, onError, sessionId }) 
     rateLimit: null,
     stderrSamples: [],
     partText: new Map(),
+    partPreview: new Map(),
+    partType: new Map(),
     waiting: null,
   };
+
+  function getCombinedText() {
+    const vals = Array.from(state.partText.values()).filter((v) => String(v || '').length > 0);
+    return vals.join('\n\n');
+  }
 
   let serveProc = null;
   let sse = null;
@@ -323,6 +330,7 @@ function runViaServe(instance, prompt, { onEvent, onDone, onError, sessionId }) 
       sessionId: state.sessionId,
       rateLimit: state.rateLimit,
       stderrSamples: state.stderrSamples.slice(-5),
+      finalText: getCombinedText(),
     });
   }
 
@@ -492,10 +500,19 @@ function runViaServe(instance, prompt, { onEvent, onDone, onError, sessionId }) 
             const partId = String(props.partID || '');
             const field = String(props.field || '');
             if (field !== 'text') return;
+            if (!partId) return;
+            const knownType = state.partType.get(partId);
+            if (knownType !== 'text' && knownType !== 'reasoning') return;
             const delta = String(props.delta || '');
-            const next = (state.partText.get(partId) || '') + delta;
-            state.partText.set(partId, next);
-            onEvent({ type: 'text', content: next, sessionId: state.sessionId });
+            if (knownType === 'text') {
+              const next = (state.partText.get(partId) || '') + delta;
+              state.partText.set(partId, next);
+              onEvent({ type: 'text', content: getCombinedText(), textKind: 'final', sessionId: state.sessionId });
+              return;
+            }
+            const nextPreview = (state.partPreview.get(partId) || '') + delta;
+            state.partPreview.set(partId, nextPreview);
+            onEvent({ type: 'text', content: nextPreview, textKind: 'reasoning', sessionId: state.sessionId });
             return;
           }
 
@@ -512,11 +529,19 @@ function runViaServe(instance, prompt, { onEvent, onDone, onError, sessionId }) 
               onEvent({ type: 'step_finish', reason: part.reason || null, sessionId: state.sessionId });
               return;
             }
+            if (part.id) state.partType.set(String(part.id), ptype);
             if (ptype === 'text') {
               const partId = String(part.id || '');
               const text = String(part.text || '');
               if (partId) state.partText.set(partId, text);
-              onEvent({ type: 'text', content: text, sessionId: state.sessionId });
+              onEvent({ type: 'text', content: getCombinedText(), textKind: 'final', sessionId: state.sessionId });
+              return;
+            }
+            if (ptype === 'reasoning') {
+              const partId = String(part.id || '');
+              const text = String(part.text || '');
+              if (partId) state.partPreview.set(partId, text);
+              if (text) onEvent({ type: 'text', content: text, textKind: 'reasoning', sessionId: state.sessionId });
               return;
             }
             if (ptype === 'tool') {
