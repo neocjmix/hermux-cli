@@ -18,6 +18,9 @@ src/
   cli.js
   onboard.js
   gateway.js
+  gateway-message-handler.js
+  gateway-repo-message-handler.js
+  gateway-callback-query-handler.js
   lib/
     config.js
     session-map.js

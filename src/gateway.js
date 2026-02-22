@@ -11,6 +11,9 @@ const { load, getEnabledRepos, addChatIdToRepo, addOrUpdateRepo, setGlobalBotTok
 const { runOpencode, stopAllServeDaemons, getServeDaemonStatusForInstance } = require('./lib/runner');
 const { md2html, escapeHtml } = require('./lib/md2html');
 const { getSessionId, setSessionId, clearSessionId, getSessionInfo, clearAllSessions, SESSION_MAP_PATH } = require('./lib/session-map');
+const { createRepoMessageHandler } = require('./gateway-repo-message-handler');
+const { createMessageHandler } = require('./gateway-message-handler');
+const { createCallbackQueryHandler } = require('./gateway-callback-query-handler');
 const { version: HERMUX_VERSION } = require('../package.json');
 
 const TG_MAX_LEN = 4000;
@@ -2180,162 +2183,24 @@ async function startPromptRun(bot, repo, state, runItem) {
   state.currentProc = proc;
 }
 
-async function handleRepoMessage(bot, repo, state, msg) {
-  const chatId = String(msg.chat.id);
-  const text = (msg.text || '').trim();
-  const parsed = parseCommand(text);
-  const command = parsed ? parsed.command : '';
-  const isVersionPrompt = command === '/version';
-
-  if (command === '/start') {
-    await safeSend(
-      bot,
-      chatId,
-      [
-        `opencode gateway [${repo.name}]`,
-        `workdir: ${repo.workdir}`,
-        '',
-        `mode: ${state.verbose ? 'verbose (stream events)' : 'compact (final output only)'}`,
-        'commands: /repos, /status, /models, /session, /version, /test, /interrupt, /restart, /reset, /init, /verbose on, /verbose off, /whereami',
-        '',
-        'Send any prompt to run opencode.',
-      ].join('\n')
-    );
-    return;
-  }
-
-  if (command === '/status') {
-      await safeSend(
-        bot,
-        chatId,
-        buildRuntimeStatusHtml({ repo, state, chatId }),
-        { parse_mode: 'HTML', reply_markup: buildStatusKeyboard() }
-      );
-      return;
-  }
-
-  if (command === '/models') {
-    await handleModelsCommand(bot, chatId, repo, state, parsed);
-    return;
-  }
-
-  if (command === '/session') {
-    const info = getSessionInfo(repo.name, chatId);
-    if (!info || !info.sessionId) {
-      await safeSend(bot, chatId, `No active session for this chat yet.\nrepo: ${repo.name}\nchat_id: ${chatId}`);
-      return;
-    }
-    await safeSend(
-      bot,
-      chatId,
-      `repo: ${repo.name}\nchat_id: ${chatId}\nsession_id: ${info.sessionId}\nupdated_at: ${info.updatedAt || 'unknown'}\nstate_file: ${SESSION_MAP_PATH}`
-    );
-    return;
-  }
-
-  if (command === '/reset') {
-    if (state.running) {
-      await safeSend(bot, chatId, 'Cannot reset while running. Wait for current task to finish.');
-      return;
-    }
-    const cleared = clearSessionId(repo.name, chatId);
-    if (cleared) {
-      await safeSend(bot, chatId, `Session reset complete for repo ${repo.name}.\nNext prompt will start a new opencode session.`);
-    } else {
-      await safeSend(bot, chatId, `No stored session found for repo ${repo.name}.`);
-    }
-    return;
-  }
-
-  if (command === '/restart') {
-    await handleRestartCommand(bot, chatId, repo, state);
-    return;
-  }
-
-  if (command === '/help') {
-    await safeSend(bot, chatId, getHelpText());
-    return;
-  }
-
-  if (command === '/test') {
-    await sendTelegramFormattingShowcase(bot, chatId);
-    return;
-  }
-
-  if (command === '/repos') {
-    await sendRepoList(bot, chatId, new Map([[chatId, repo]]));
-    return;
-  }
-
-  if (command === '/whereami') {
-    await safeSend(
-      bot,
-      chatId,
-      `chat_id: ${chatId}\nrepo: ${repo.name}`
-    );
-    return;
-  }
-
-  if (command === '/verbose' && (!parsed || parsed.args.length === 0 || parsed.args[0] === 'status')) {
-    await handleVerboseAction(bot, chatId, state, 'status');
-    return;
-  }
-
-  if (command === '/verbose' && parsed && parsed.args[0] === 'on') {
-    await handleVerboseAction(bot, chatId, state, 'on');
-    return;
-  }
-
-  if (command === '/verbose' && parsed && parsed.args[0] === 'off') {
-    await handleVerboseAction(bot, chatId, state, 'off');
-    return;
-  }
-
-  if (command === '/interrupt') {
-    if (!state.running || !state.currentProc) {
-      await safeSend(bot, chatId, 'No running task to interrupt.');
-      return;
-    }
-    const req = requestInterrupt(state, { forceAfterMs: 5000 });
-    if (!req.ok) {
-      const msg = req.error ? req.error.message : req.reason;
-      await safeSend(bot, chatId, `Failed to interrupt current task: ${msg}`);
-      return;
-    }
-        await safeSend(bot, chatId, req.alreadyRequested ? 'Interrupt already requested. Waiting for task shutdown...' : 'Interrupt requested. Stopping current task...');
-        return;
-      }
-
-  let preparedPrompt;
-  try {
-    preparedPrompt = await buildPromptFromMessage(bot, repo, msg);
-  } catch (err) {
-    console.error(`[${repo.name}] failed to prepare prompt:`, err.message);
-    await safeSend(bot, chatId, `Failed to read image attachment: ${err.message}`);
-    return;
-  }
-
-  if (!preparedPrompt) return;
-
-  if (!Array.isArray(state.queue)) state.queue = [];
-
-  const promptText = preparedPrompt.prompt;
-  const queuedItem = {
-    chatId,
-    promptText,
-    isVersionPrompt,
-  };
-
-  if (state.running) {
-    state.queue.push(queuedItem);
-    if (typeof state.panelRefresh === 'function') {
-      await state.panelRefresh(true);
-    }
-    return;
-  }
-
-  await startPromptRun(bot, repo, state, queuedItem);
-}
+const handleRepoMessage = createRepoMessageHandler({
+  parseCommand,
+  safeSend,
+  buildRuntimeStatusHtml,
+  buildStatusKeyboard,
+  handleModelsCommand,
+  getSessionInfo,
+  SESSION_MAP_PATH,
+  clearSessionId,
+  handleRestartCommand,
+  getHelpText,
+  sendTelegramFormattingShowcase,
+  sendRepoList,
+  handleVerboseAction,
+  requestInterrupt,
+  buildPromptFromMessage,
+  startPromptRun,
+});
 
 function main() {
   const config = load();
@@ -2375,6 +2240,47 @@ function main() {
   const modelUiState = new Map();
   const bot = new TelegramBot(botToken, { polling: true });
   const restartNotice = readAndClearRestartNotice();
+  const handleMessage = createMessageHandler({
+    bot,
+    chatRouter,
+    states,
+    onboardingSessions,
+    initSessions,
+    parseCommand,
+    handleOnboardCommand,
+    handleInitCommand,
+    handleOnboardingInput,
+    safeSend,
+    getHelpText,
+    sendTelegramFormattingShowcase,
+    sendRepoList,
+    handleConnectCommand,
+    withStateDispatchLock,
+    handleRepoMessage,
+  });
+  const handleCallbackQuery = createCallbackQueryHandler({
+    bot,
+    chatRouter,
+    states,
+    modelUiState,
+    safeSend,
+    handleConnectCommand,
+    handleVerboseAction,
+    requestInterrupt,
+    buildModelsSummaryHtml,
+    buildModelsRootKeyboard,
+    getProviderModelChoices,
+    buildProviderPickerKeyboard,
+    getModelsSnapshot,
+    buildAgentPickerKeyboard,
+    escapeHtml,
+    buildModelPickerKeyboard,
+    readJsonOrDefault,
+    writeJsonAtomic,
+    OPENCODE_CONFIG_PATH,
+    OMO_CONFIG_PATH,
+    getOmoAgentEntry,
+  });
 
   console.log(`polling with 1 bot for ${repos.length} repo(s), ${chatRouter.size} chat id(s)`);
 
@@ -2410,345 +2316,8 @@ function main() {
     }, 1200);
   }
 
-  bot.on('message', async (msg) => {
-    const chatId = String(msg.chat.id);
-    const text = (msg.text || '').trim();
-    const parsed = parseCommand(text);
-    const command = parsed ? parsed.command : '';
-
-    if (command === '/onboard') {
-      await handleOnboardCommand(bot, chatId, parsed, chatRouter, states, onboardingSessions);
-      return;
-    }
-
-    if (command === '/init') {
-      await handleInitCommand(bot, chatId, parsed, states, onboardingSessions, initSessions, chatRouter);
-      return;
-    }
-
-    if (onboardingSessions.has(chatId)) {
-      if (command && command !== '/onboard') {
-        await safeSend(bot, chatId, 'Onboarding in progress. Reply to the current question or run /onboard cancel.');
-        return;
-      }
-      await handleOnboardingInput(bot, chatId, text, chatRouter, states, onboardingSessions);
-      return;
-    }
-
-    if (command === '/help') {
-      await safeSend(bot, chatId, getHelpText());
-      return;
-    }
-
-    if (command === '/test') {
-      await sendTelegramFormattingShowcase(bot, chatId);
-      return;
-    }
-
-    if (command === '/repos') {
-      await sendRepoList(bot, chatId, chatRouter);
-      return;
-    }
-
-    if (command === '/connect') {
-      await handleConnectCommand(bot, chatId, parsed ? parsed.args : [], chatRouter, states);
-      return;
-    }
-
-    const repo = chatRouter.get(chatId);
-
-    if (!repo) {
-      if (command === '/start' || command === '/whereami' || command === '/restart' || command === '/interrupt') {
-        await safeSend(
-          bot,
-          chatId,
-          [
-            `chat_id: ${chatId}`,
-            'This chat is not mapped to any repo yet.',
-            '',
-            'To onboard this chat in-place:',
-            '1) Run /onboard (setup wizard)',
-            '2) Run /repos',
-            '3) Run /connect <repo>',
-            '4) Retry your prompt in this chat',
-            '',
-            'Tip: use /help for full command and onboarding guide.',
-          ].join('\n')
-        );
-      }
-
-      if (!command && text) {
-        await safeSend(
-          bot,
-          chatId,
-          [
-            `chat_id: ${chatId}`,
-            'This chat is not mapped yet.',
-            'Start setup with /onboard and answer the prompts.',
-          ].join('\n')
-        );
-      }
-      return;
-    }
-
-    const state = states.get(repo.name);
-    await withStateDispatchLock(state, async () => {
-      await handleRepoMessage(bot, repo, state, msg);
-    });
-  });
-
-  bot.on('callback_query', async (query) => {
-    const data = String((query && query.data) || '').trim();
-    const chat = query && query.message && query.message.chat;
-    const chatId = chat ? String(chat.id) : '';
-
-    if (!data || !chatId) {
-      if (query && query.id) {
-        await bot.answerCallbackQuery(query.id).catch(() => {});
-      }
-      return;
-    }
-
-    try {
-      if (data.startsWith('connect:')) {
-        const repoName = data.slice('connect:'.length).trim();
-        await handleConnectCommand(bot, chatId, [repoName], chatRouter, states);
-        if (query.id) {
-          await bot.answerCallbackQuery(query.id, { text: `connect: ${repoName}` }).catch(() => {});
-        }
-        return;
-      }
-
-      if (data.startsWith('verbose:')) {
-        const action = data.slice('verbose:'.length).trim();
-        const repo = chatRouter.get(chatId);
-        if (!repo) {
-          await safeSend(bot, chatId, 'This chat is not mapped to a repo. Run /repos then /connect <repo>.');
-          if (query.id) {
-            await bot.answerCallbackQuery(query.id, { text: 'not mapped' }).catch(() => {});
-          }
-          return;
-        }
-
-        const state = states.get(repo.name);
-        await handleVerboseAction(bot, chatId, state, action === 'on' || action === 'off' ? action : 'status');
-        if (query.id) {
-          await bot.answerCallbackQuery(query.id, { text: `verbose: ${action}` }).catch(() => {});
-        }
-        return;
-      }
-
-      if (data === 'interrupt:now') {
-        const repo = chatRouter.get(chatId);
-        if (!repo) {
-          await safeSend(bot, chatId, 'This chat is not mapped to a repo. Run /repos then /connect <repo>.');
-          if (query.id) {
-            await bot.answerCallbackQuery(query.id, { text: 'not mapped' }).catch(() => {});
-          }
-          return;
-        }
-        const state = states.get(repo.name);
-        if (!state.running || !state.currentProc) {
-          await safeSend(bot, chatId, 'No running task to interrupt.');
-          if (query.id) {
-            await bot.answerCallbackQuery(query.id, { text: 'idle' }).catch(() => {});
-          }
-          return;
-        }
-        const req = requestInterrupt(state, { forceAfterMs: 5000 });
-        if (!req.ok) {
-          const msg = req.error ? req.error.message : req.reason;
-          await safeSend(bot, chatId, `Failed to interrupt current task: ${msg}`);
-        } else {
-          await safeSend(bot, chatId, req.alreadyRequested ? 'Interrupt already requested. Waiting for task shutdown...' : 'Interrupt requested. Stopping current task...');
-        }
-        if (query.id) {
-          await bot.answerCallbackQuery(query.id, { text: 'interrupt' }).catch(() => {});
-        }
-        return;
-      }
-
-      if (data === 'm:r') {
-        const repo = chatRouter.get(chatId);
-        if (!repo) {
-          await safeSend(bot, chatId, 'This chat is not mapped to a repo. Run /repos then /connect <repo>.');
-          if (query.id) {
-            await bot.answerCallbackQuery(query.id, { text: 'not mapped' }).catch(() => {});
-          }
-          return;
-        }
-        const summary = buildModelsSummaryHtml(repo.name);
-        await safeSend(bot, chatId, summary.html, { parse_mode: 'HTML', reply_markup: buildModelsRootKeyboard() });
-        if (query.id) {
-          await bot.answerCallbackQuery(query.id, { text: 'models' }).catch(() => {});
-        }
-        return;
-      }
-
-      if (data === 'm:l:op') {
-        const providers = getProviderModelChoices();
-        if (providers.length === 0) {
-          await safeSend(bot, chatId, 'No model choices found in opencode config.');
-        } else {
-          modelUiState.set(chatId, { layer: 'op', providers, selectedProvider: -1, modelPage: 0 });
-          await safeSend(bot, chatId, '<pre>① opencode\nprovider 선택</pre>', {
-            parse_mode: 'HTML',
-            reply_markup: buildProviderPickerKeyboard(providers, 'op'),
-          });
-        }
-        if (query.id) await bot.answerCallbackQuery(query.id, { text: 'choose provider' }).catch(() => {});
-        return;
-      }
-
-      if (data === 'm:l:omo') {
-        const snap = getModelsSnapshot();
-        if (snap.agentNames.length === 0) {
-          await safeSend(bot, chatId, 'No configured agents in oh-my-opencode.');
-        } else {
-          modelUiState.set(chatId, { layer: 'omo', agentNames: snap.agentNames });
-          await safeSend(bot, chatId, '<pre>② oh-my-opencode\n에이전트 선택</pre>', {
-            parse_mode: 'HTML',
-            reply_markup: buildAgentPickerKeyboard(snap.agentNames),
-          });
-        }
-        if (query.id) await bot.answerCallbackQuery(query.id, { text: 'choose agent' }).catch(() => {});
-        return;
-      }
-
-      if (data.startsWith('m:a:')) {
-        const idx = Number(data.slice('m:a:'.length).trim());
-        const st = modelUiState.get(chatId) || {};
-        const names = Array.isArray(st.agentNames) ? st.agentNames : [];
-        const agent = Number.isInteger(idx) && idx >= 0 && idx < names.length ? names[idx] : '';
-        const providers = getProviderModelChoices();
-        if (!agent || providers.length === 0) {
-          await safeSend(bot, chatId, 'Unable to open provider choices.');
-        } else {
-          modelUiState.set(chatId, { layer: 'omo', agent, providers, selectedProvider: -1, modelPage: 0 });
-          await safeSend(bot, chatId, `<pre>② oh-my-opencode\n${escapeHtml(agent)} · provider 선택</pre>`, {
-            parse_mode: 'HTML',
-            reply_markup: buildProviderPickerKeyboard(providers, 'omo'),
-          });
-        }
-        if (query.id) await bot.answerCallbackQuery(query.id, { text: 'choose provider' }).catch(() => {});
-        return;
-      }
-
-      if (data.startsWith('m:p:')) {
-        const idx = Number(data.slice('m:p:'.length).trim());
-        const st = modelUiState.get(chatId) || {};
-        const providers = Array.isArray(st.providers) ? st.providers : [];
-        const item = Number.isInteger(idx) && idx >= 0 && idx < providers.length ? providers[idx] : null;
-        if (!item || !Array.isArray(item.models) || item.models.length === 0) {
-          await safeSend(bot, chatId, 'Invalid provider selection.');
-        } else {
-          st.selectedProvider = idx;
-          st.modelPage = 0;
-          modelUiState.set(chatId, st);
-          await safeSend(bot, chatId, `<pre>${escapeHtml(item.providerId)} · model 선택</pre>`, {
-            parse_mode: 'HTML',
-            reply_markup: buildModelPickerKeyboard(item.models, st.layer === 'op' ? 'op' : 'omo', st.modelPage || 0),
-          });
-        }
-        if (query.id) await bot.answerCallbackQuery(query.id, { text: 'choose model' }).catch(() => {});
-        return;
-      }
-
-      if (data === 'm:bp') {
-        const st = modelUiState.get(chatId) || {};
-        const providers = Array.isArray(st.providers) ? st.providers : [];
-        if (providers.length > 0) {
-          await safeSend(bot, chatId, '<pre>provider 선택</pre>', {
-            parse_mode: 'HTML',
-            reply_markup: buildProviderPickerKeyboard(providers, st.layer === 'op' ? 'op' : 'omo'),
-          });
-        }
-        if (query.id) await bot.answerCallbackQuery(query.id, { text: 'back' }).catch(() => {});
-        return;
-      }
-
-      if (data === 'm:mp:prev' || data === 'm:mp:next') {
-        const st = modelUiState.get(chatId) || {};
-        const providers = Array.isArray(st.providers) ? st.providers : [];
-        const selectedProvider = Number(st.selectedProvider);
-        const item = Number.isInteger(selectedProvider) && selectedProvider >= 0 && selectedProvider < providers.length
-          ? providers[selectedProvider]
-          : null;
-        if (!item) {
-          await safeSend(bot, chatId, 'Provider를 다시 선택해줘.');
-        } else {
-          const delta = data.endsWith('next') ? 1 : -1;
-          const pageSize = 10;
-          const maxPage = Math.max(0, Math.floor((item.models.length - 1) / pageSize));
-          const nextPage = Math.max(0, Math.min(maxPage, Number(st.modelPage || 0) + delta));
-          st.modelPage = nextPage;
-          modelUiState.set(chatId, st);
-          await safeSend(bot, chatId, `<pre>${escapeHtml(item.providerId)} · model 선택</pre>`, {
-            parse_mode: 'HTML',
-            reply_markup: buildModelPickerKeyboard(item.models, st.layer === 'op' ? 'op' : 'omo', nextPage),
-          });
-        }
-        if (query.id) await bot.answerCallbackQuery(query.id, { text: 'page' }).catch(() => {});
-        return;
-      }
-
-      if (data.startsWith('m:o:')) {
-        const idx = Number(data.slice('m:o:'.length));
-        const st = modelUiState.get(chatId) || {};
-        const providers = Array.isArray(st.providers) ? st.providers : [];
-        const selectedProvider = Number(st.selectedProvider);
-        const models = Number.isInteger(selectedProvider) && selectedProvider >= 0 && selectedProvider < providers.length
-          ? providers[selectedProvider].models
-          : [];
-        const model = Number.isInteger(idx) && idx >= 0 && idx < models.length ? models[idx] : '';
-        if (!model) {
-          await safeSend(bot, chatId, 'Invalid model selection.');
-        } else {
-          const cfg = readJsonOrDefault(OPENCODE_CONFIG_PATH, {});
-          cfg.model = model;
-          writeJsonAtomic(OPENCODE_CONFIG_PATH, cfg);
-          await safeSend(bot, chatId, `<pre>① opencode\nopencode:${escapeHtml(model)}</pre>`, {
-            parse_mode: 'HTML',
-            reply_markup: buildModelsRootKeyboard(),
-          });
-        }
-        if (query.id) await bot.answerCallbackQuery(query.id, { text: 'applied' }).catch(() => {});
-        return;
-      }
-
-      if (data.startsWith('m:s:')) {
-        const idx = Number(data.slice('m:s:'.length));
-        const st = modelUiState.get(chatId) || {};
-        const agent = String(st.agent || '').trim();
-        const providers = Array.isArray(st.providers) ? st.providers : [];
-        const selectedProvider = Number(st.selectedProvider);
-        const models = Number.isInteger(selectedProvider) && selectedProvider >= 0 && selectedProvider < providers.length
-          ? providers[selectedProvider].models
-          : [];
-        const model = Number.isInteger(idx) && idx >= 0 && idx < models.length ? models[idx] : '';
-        if (!agent || !model) {
-          await safeSend(bot, chatId, 'Invalid agent/model selection.');
-        } else {
-          const cfg = readJsonOrDefault(OMO_CONFIG_PATH, { agents: {} });
-          const entry = getOmoAgentEntry(cfg, agent);
-          entry.model = model;
-          writeJsonAtomic(OMO_CONFIG_PATH, cfg);
-          await safeSend(bot, chatId, `<pre>② oh-my-opencode\n${escapeHtml(agent)}:${escapeHtml(model)}</pre>`, {
-            parse_mode: 'HTML',
-            reply_markup: buildModelsRootKeyboard(),
-          });
-        }
-        if (query.id) await bot.answerCallbackQuery(query.id, { text: 'applied' }).catch(() => {});
-        return;
-      }
-    } catch (err) {
-      console.error('[callback_query] failed:', err.message);
-    }
-
-    if (query.id) {
-      await bot.answerCallbackQuery(query.id).catch(() => {});
-    }
-  });
+  bot.on('message', handleMessage);
+  bot.on('callback_query', handleCallbackQuery);
 
   bot.on('polling_error', (err) => {
     const detail = serializePollingError(err);
