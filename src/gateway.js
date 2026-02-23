@@ -2238,7 +2238,14 @@ function main() {
   const onboardingSessions = new Map();
   const initSessions = new Map();
   const modelUiState = new Map();
-  const bot = new TelegramBot(botToken, { polling: true });
+  const telegramBaseApiUrl = String(process.env.OMG_TELEGRAM_BASE_API_URL || '').trim();
+  const telegramPollingTimeout = Number(process.env.OMG_TELEGRAM_POLLING_TIMEOUT_SECONDS || 0) || 0;
+  const bot = new TelegramBot(botToken, {
+    polling: {
+      timeout: telegramPollingTimeout,
+    },
+    ...(telegramBaseApiUrl ? { baseApiUrl: telegramBaseApiUrl } : {}),
+  });
   const restartNotice = readAndClearRestartNotice();
   const handleMessage = createMessageHandler({
     bot,
