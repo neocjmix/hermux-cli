@@ -20,7 +20,7 @@ function asUniqueStringArray(values) {
 }
 
 function normalizeRepo(repo) {
-  const opencodeCommand = 'opencode serve';
+  const opencodeCommand = 'opencode sdk';
   return {
     name: String(repo.name || '').trim(),
     enabled: repo.enabled !== false,

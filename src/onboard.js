@@ -182,7 +182,7 @@ async function main() {
     enabled: true,
     workdir,
     chatIds: uniqueChatIds,
-    opencodeCommand: 'opencode serve',
+    opencodeCommand: 'opencode sdk',
     logFile: `./logs/${name}.log`,
   };
 

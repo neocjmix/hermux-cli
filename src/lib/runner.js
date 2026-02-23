@@ -2,28 +2,18 @@
 
 const { spawn } = require('child_process');
 const fs = require('fs');
-const fsp = require('fs/promises');
 const net = require('net');
-const os = require('os');
 const path = require('path');
-const { createHash, randomUUID } = require('crypto');
+const { pathToFileURL } = require('url');
 
 const MAX_PROCESS_SEC = parseInt(process.env.OMG_MAX_PROCESS_SECONDS || '3600', 10);
-const SERVE_READY_TIMEOUT_MS = parseInt(process.env.OMG_SERVE_READY_TIMEOUT_MS || '15000', 10);
-const SERVE_PORT_RANGE_MIN = parseInt(process.env.OMG_SERVE_PORT_RANGE_MIN || '43100', 10);
-const SERVE_PORT_RANGE_MAX = parseInt(process.env.OMG_SERVE_PORT_RANGE_MAX || '43999', 10);
-const SERVE_PORT_PICK_ATTEMPTS = parseInt(process.env.OMG_SERVE_PORT_PICK_ATTEMPTS || '60', 10);
-const SERVE_LOCK_WAIT_TIMEOUT_MS = parseInt(process.env.OMG_SERVE_LOCK_WAIT_TIMEOUT_MS || '12000', 10);
-const SERVE_LOCK_STALE_MS = parseInt(process.env.OMG_SERVE_LOCK_STALE_MS || '30000', 10);
-const SERVE_LOCK_LEASE_RENEW_MS = parseInt(process.env.OMG_SERVE_LOCK_LEASE_RENEW_MS || '2500', 10);
-const SERVE_LOCK_RETRY_MIN_MS = parseInt(process.env.OMG_SERVE_LOCK_RETRY_MIN_MS || '80', 10);
-const SERVE_LOCK_RETRY_MAX_MS = parseInt(process.env.OMG_SERVE_LOCK_RETRY_MAX_MS || '220', 10);
+const SDK_SERVER_START_TIMEOUT_MS = parseInt(process.env.OMG_SDK_SERVER_START_TIMEOUT_MS || '15000', 10);
+const SDK_PORT_RANGE_MIN = parseInt(process.env.OMG_SDK_PORT_RANGE_MIN || '43100', 10);
+const SDK_PORT_RANGE_MAX = parseInt(process.env.OMG_SDK_PORT_RANGE_MAX || '43999', 10);
+const SDK_PORT_PICK_ATTEMPTS = parseInt(process.env.OMG_SDK_PORT_PICK_ATTEMPTS || '60', 10);
 
-const RUNTIME_DIR = path.join(__dirname, '..', '..', 'runtime');
-const SERVE_LOCK_DIR = path.join(RUNTIME_DIR, 'serve-locks');
-
-const serveDaemons = new Map();
-const daemonOps = new Map();
+const activeRuns = new Set();
+const runtimeStats = new Map();
 let stopAllInProgress = false;
 
 function parseRetryAfterSeconds(text) {
@@ -46,292 +36,172 @@ function maybeCaptureRateLimit(state, line) {
   };
 }
 
-function shouldUseServe(instance) {
-  const forced = String(process.env.OMG_EXECUTION_TRANSPORT || '').trim().toLowerCase();
-  if (forced === 'run') return false;
-  if (forced === 'serve') return true;
-
-  const cmd = String(instance.opencodeCommand || '').trim();
-  if (!cmd) return false;
-  const parts = cmd.split(/\s+/);
-  const bin = parts[0];
-  if (!bin) return false;
-  if (/^(.+\/)?opencode$/.test(bin)) {
-    const mode = String(parts[1] || '').trim().toLowerCase();
-    if (!mode || mode === 'run' || mode === 'serve') return true;
-  }
-  return false;
-}
-
 function setupLogStream(instance, prompt) {
   const logDir = path.dirname(path.resolve(instance.logFile || './logs/default.log'));
   fs.mkdirSync(logDir, { recursive: true });
   const logPath = path.resolve(instance.logFile || './logs/default.log');
   const logStream = fs.createWriteStream(logPath, { flags: 'a' });
   logStream.write(`\n--- ${new Date().toISOString()} | prompt: ${prompt} ---\n`);
-  return { logStream, logPath };
+  return { logStream };
 }
 
-function nowIso() {
-  return new Date().toISOString();
+function randomInt(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-function isPidAlive(pid) {
-  const n = Number(pid);
-  if (!Number.isInteger(n) || n <= 0) return false;
-  try {
-    process.kill(n, 0);
-    return true;
-  } catch (err) {
-    if (err && err.code === 'EPERM') return true;
-    return false;
+function toValidPortRange() {
+  const min = Number.isInteger(SDK_PORT_RANGE_MIN) ? SDK_PORT_RANGE_MIN : 43100;
+  const max = Number.isInteger(SDK_PORT_RANGE_MAX) ? SDK_PORT_RANGE_MAX : 43999;
+  if (min > 0 && max > 0 && min <= max && max <= 65535) {
+    return { min, max };
   }
+  return { min: 43100, max: 43999 };
 }
 
-function scopeSlugFromKey(key) {
-  const hash = createHash('sha1').update(String(key || '')).digest('hex').slice(0, 16);
-  const label = String(key || '')
-    .replace(/[^a-zA-Z0-9._-]+/g, '_')
-    .slice(0, 48)
-    .replace(/^_+|_+$/g, '') || 'scope';
-  return `${label}__${hash}`;
-}
-
-function getServeScopePathsFromKey(key) {
-  const slug = scopeSlugFromKey(key);
-  const scopeDir = path.join(SERVE_LOCK_DIR, slug);
-  const lockDir = path.join(scopeDir, 'lock');
-  return {
-    slug,
-    scopeDir,
-    lockDir,
-    ownerPath: path.join(lockDir, 'owner.json'),
-    daemonPath: path.join(scopeDir, 'daemon.json'),
-  };
-}
-
-function getServeScopePathsForInstance(instance) {
-  return getServeScopePathsFromKey(getServeScopeKey(instance));
-}
-
-async function ensureServeScopeDir(paths) {
-  await fsp.mkdir(paths.scopeDir, { recursive: true });
-}
-
-async function writeJsonAtomic(filePath, data) {
-  await fsp.mkdir(path.dirname(filePath), { recursive: true });
-  const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  await fsp.writeFile(tmp, JSON.stringify(data, null, 2) + '\n', 'utf8');
-  await fsp.rename(tmp, filePath);
-}
-
-async function readJsonSafe(filePath) {
-  try {
-    const raw = await fsp.readFile(filePath, 'utf8');
-    return JSON.parse(raw);
-  } catch (_err) {
-    return null;
-  }
-}
-
-async function removeDirSafe(dirPath) {
-  try {
-    await fsp.rm(dirPath, { recursive: true, force: true });
-  } catch (_err) {
-  }
-}
-
-async function removeFileSafe(filePath) {
-  try {
-    await fsp.unlink(filePath);
-  } catch (_err) {
-  }
-}
-
-function waitMs(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function jitterMs(min, max) {
-  const lo = Number.isFinite(min) ? min : 80;
-  const hi = Number.isFinite(max) ? max : 220;
-  const safeHi = hi < lo ? lo : hi;
-  return randomInt(lo, safeHi);
-}
-
-function makeOwnerRecord(key, reason, ownerId, leaseUntil) {
-  return {
-    key,
-    ownerId,
-    pid: process.pid,
-    hostname: os.hostname(),
-    acquiredAt: nowIso(),
-    leaseUntil,
-    reason: String(reason || 'unknown'),
-  };
-}
-
-function parseTsMs(v) {
-  const t = Date.parse(String(v || ''));
-  return Number.isFinite(t) ? t : 0;
-}
-
-async function acquireScopeLock(key, reason) {
-  const paths = getServeScopePathsFromKey(key);
-  await ensureServeScopeDir(paths);
-  const ownerId = randomUUID();
-  const deadline = Date.now() + Math.max(1000, SERVE_LOCK_WAIT_TIMEOUT_MS);
-  let renewTimer = null;
-  let released = false;
-  let acquired = false;
-
-  const writeOwner = async () => {
-    const leaseUntil = new Date(Date.now() + Math.max(1500, SERVE_LOCK_STALE_MS)).toISOString();
-    const owner = makeOwnerRecord(key, reason, ownerId, leaseUntil);
-    await writeJsonAtomic(paths.ownerPath, owner);
-  };
-
-  while (Date.now() < deadline) {
-    try {
-      await fsp.mkdir(paths.lockDir);
-      await writeOwner();
-      renewTimer = setInterval(() => {
-        writeOwner().catch(() => {});
-      }, Math.max(500, SERVE_LOCK_LEASE_RENEW_MS));
-      acquired = true;
-      break;
-    } catch (err) {
-      if (!err || err.code !== 'EEXIST') throw err;
-      const owner = await readJsonSafe(paths.ownerPath);
-      const leaseUntilMs = owner ? parseTsMs(owner.leaseUntil) : 0;
-      const stale = !leaseUntilMs || Date.now() > leaseUntilMs;
-      const ownerPidAlive = owner && isPidAlive(owner.pid);
-
-      if (stale && !ownerPidAlive) {
-        const ownerCheck = await readJsonSafe(paths.ownerPath);
-        const sameOwner = (!owner && !ownerCheck)
-          || (owner && ownerCheck && String(owner.ownerId || '') === String(ownerCheck.ownerId || ''));
-        if (sameOwner) {
-          await removeDirSafe(paths.lockDir);
-          continue;
-        }
-      }
-
-      await waitMs(jitterMs(SERVE_LOCK_RETRY_MIN_MS, SERVE_LOCK_RETRY_MAX_MS));
-    }
-  }
-
-  if (!acquired) {
-    throw new Error(`timeout waiting for lock ${key}`);
-  }
-
-  const release = async () => {
-    if (released) return;
-    released = true;
-    if (renewTimer) clearInterval(renewTimer);
-    const owner = await readJsonSafe(paths.ownerPath);
-    if (!owner || String(owner.ownerId || '') !== ownerId) {
-      return;
-    }
-    await removeFileSafe(paths.ownerPath);
-    try {
-      await fsp.rmdir(paths.lockDir);
-    } catch (_err) {
-      await removeDirSafe(paths.lockDir);
-    }
-  };
-
-  return {
-    key,
-    ownerId,
-    paths,
-    release,
-  };
-}
-
-function runDaemonOpExclusive(key, task) {
-  const prev = daemonOps.get(key) || Promise.resolve();
-  const run = prev.then(task, task);
-  const marker = run.catch(() => {});
-  daemonOps.set(key, marker);
-  return run.finally(() => {
-    if (daemonOps.get(key) === marker) {
-      daemonOps.delete(key);
-    }
+function isPortAvailable(port) {
+  return new Promise((resolve) => {
+    const srv = net.createServer();
+    srv.unref();
+    srv.once('error', () => {
+      resolve(false);
+    });
+    srv.listen(port, '127.0.0.1', () => {
+      srv.close(() => resolve(true));
+    });
   });
 }
 
-async function checkDaemonHealth(baseUrl, timeoutMs = 1000) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(`${baseUrl}/doc`, { signal: controller.signal });
-    return !!res.ok;
-  } catch (_err) {
-    return false;
-  } finally {
-    clearTimeout(timer);
+async function pickRandomAvailablePortInRange() {
+  const range = toValidPortRange();
+  const attempts = Number.isInteger(SDK_PORT_PICK_ATTEMPTS) && SDK_PORT_PICK_ATTEMPTS > 0
+    ? SDK_PORT_PICK_ATTEMPTS
+    : 60;
+
+  for (let i = 0; i < attempts; i++) {
+    const candidate = randomInt(range.min, range.max);
+    // eslint-disable-next-line no-await-in-loop
+    if (await isPortAvailable(candidate)) {
+      return candidate;
+    }
   }
+
+  throw new Error(`failed to find available port in ${range.min}-${range.max} after ${attempts} attempts`);
 }
 
-async function readDaemonRecordByKey(key) {
-  const paths = getServeScopePathsFromKey(key);
-  return readJsonSafe(paths.daemonPath);
+function getRuntimeScopeKey(instance) {
+  const repoName = String(instance && instance.name ? instance.name : '').trim();
+  const workdir = path.resolve(String(instance && instance.workdir ? instance.workdir : '.'));
+  if (repoName) return `${repoName}::${workdir}`;
+  return `workdir::${workdir}`;
 }
 
-async function writeDaemonRecordByKey(key, record) {
-  const paths = getServeScopePathsFromKey(key);
-  await ensureServeScopeDir(paths);
-  await writeJsonAtomic(paths.daemonPath, record);
-}
-
-async function clearDaemonRecordByKey(key) {
-  const paths = getServeScopePathsFromKey(key);
-  await removeFileSafe(paths.daemonPath);
-}
-
-async function killPidHard(pid) {
-  if (!isPidAlive(pid)) return;
-  try {
-    process.kill(pid, 'SIGTERM');
-  } catch (_err) {
+function getRuntimeStat(instance) {
+  const key = getRuntimeScopeKey(instance);
+  if (!runtimeStats.has(key)) {
+    runtimeStats.set(key, {
+      key,
+      activeRuns: 0,
+      transport: 'idle',
+      lastStartedAt: 0,
+    });
   }
-  await waitMs(400);
-  if (!isPidAlive(pid)) return;
-  try {
-    process.kill(pid, 'SIGKILL');
-  } catch (_err) {
+  return runtimeStats.get(key);
+}
+
+function beginRuntimeRun(instance, transport, handle) {
+  const stat = getRuntimeStat(instance);
+  stat.activeRuns += 1;
+  stat.transport = transport;
+  stat.lastStartedAt = Date.now();
+  activeRuns.add(handle);
+}
+
+function endRuntimeRun(instance, handle) {
+  const stat = getRuntimeStat(instance);
+  stat.activeRuns = Math.max(0, stat.activeRuns - 1);
+  if (stat.activeRuns === 0) stat.transport = 'idle';
+  activeRuns.delete(handle);
+}
+
+function getRuntimeStatusForInstance(instance) {
+  const key = getRuntimeScopeKey(instance);
+  const stat = runtimeStats.get(key);
+  if (!stat) {
+    return {
+      active: false,
+      key,
+      transport: 'idle',
+      activeRuns: 0,
+      lastStartedAt: null,
+    };
   }
-}
 
-async function isRecordHealthy(record) {
-  if (!record || !Number.isInteger(Number(record.pid)) || !record.baseUrl) return false;
-  if (!isPidAlive(Number(record.pid))) return false;
-  return checkDaemonHealth(String(record.baseUrl), 900);
-}
-
-async function adoptDaemonRecord(key, record) {
-  const entry = {
+  return {
+    active: stat.activeRuns > 0,
     key,
-    proc: null,
-    port: Number(record.port),
-    pid: Number(record.pid),
-    baseUrl: String(record.baseUrl),
-    readyPromise: null,
-    ready: true,
-    stderrTail: [],
-    external: true,
+    transport: stat.transport,
+    activeRuns: stat.activeRuns,
+    lastStartedAt: stat.lastStartedAt || null,
   };
-  entry.readyPromise = Promise.resolve(entry);
-  serveDaemons.set(key, entry);
-  return entry;
+}
+
+async function stopAllRuntimeExecutors() {
+  stopAllInProgress = true;
+  try {
+    for (const handle of Array.from(activeRuns)) {
+      try {
+        handle.kill('SIGTERM');
+        handle.kill('SIGKILL');
+      } catch (_err) {
+      }
+    }
+  } finally {
+    stopAllInProgress = false;
+  }
+}
+
+function shouldUseSdk(instance) {
+  const forced = String(process.env.OMG_EXECUTION_TRANSPORT || '').trim().toLowerCase();
+  if (forced === 'command') return false;
+  if (forced === 'sdk') return true;
+
+  const cmd = String(instance.opencodeCommand || '').trim();
+  if (!cmd) return true;
+  const parts = cmd.split(/\s+/).filter(Boolean);
+  const bin = String(parts[0] || '');
+  return /^(.+\/)?opencode$/.test(bin);
+}
+
+let sdkModulePromise = null;
+
+async function loadSdkModule() {
+  if (!sdkModulePromise) {
+    const shim = String(process.env.OMG_OPENCODE_SDK_SHIM || '').trim();
+    if (shim) {
+      sdkModulePromise = import(pathToFileURL(path.resolve(shim)).href)
+        .then((mod) => (mod && mod.default && mod.default.createOpencode ? mod.default : mod));
+    } else {
+      sdkModulePromise = import('@opencode-ai/sdk');
+    }
+  }
+  return sdkModulePromise;
+}
+
+function unwrapData(result) {
+  if (!result || typeof result !== 'object') return result;
+  if (result.error) {
+    const err = new Error(String(result.error.message || result.error.code || 'sdk request failed'));
+    err.details = result.error;
+    throw err;
+  }
+  if (Object.prototype.hasOwnProperty.call(result, 'data')) return result.data;
+  return result;
 }
 
 function runViaCommand(instance, prompt, { onEvent, onDone, onError, sessionId }) {
-  const cmdParts = instance.opencodeCommand.split(/\s+/);
-  const cmd = cmdParts[0];
+  const cmdParts = String(instance.opencodeCommand || '').trim().split(/\s+/).filter(Boolean);
+  const cmd = cmdParts[0] || 'opencode';
   const cmdArgs = [...cmdParts.slice(1), '--format', 'json'];
-
   if (sessionId) cmdArgs.push('--session', sessionId);
   cmdArgs.push(prompt);
 
@@ -368,7 +238,6 @@ function runViaCommand(instance, prompt, { onEvent, onDone, onError, sessionId }
   function parseLine(line) {
     const trimmed = line.trim();
     if (!trimmed) return;
-
     try {
       const evt = JSON.parse(trimmed);
       const part = evt.part || {};
@@ -379,19 +248,16 @@ function runViaCommand(instance, prompt, { onEvent, onDone, onError, sessionId }
         onEvent({ type: 'step_start', sessionId: latestSessionId });
         return;
       }
-
       if (evt.type === 'step_finish') {
         onEvent({ type: 'step_finish', reason: part.reason || null, sessionId: latestSessionId });
         return;
       }
-
       if (evt.type === 'text') {
         const text = String(part.text || '');
         if (text.trim()) latestFinalText = text;
         onEvent({ type: 'text', content: text, textKind: 'final', sessionId: latestSessionId });
         return;
       }
-
       if (evt.type === 'tool_use') {
         const toolState = part.state || {};
         onEvent({
@@ -403,7 +269,6 @@ function runViaCommand(instance, prompt, { onEvent, onDone, onError, sessionId }
         });
         return;
       }
-
       onEvent({ type: 'raw', content: trimmed, sessionId: latestSessionId });
     } catch {
       onEvent({ type: 'raw', content: trimmed, sessionId: latestSessionId });
@@ -475,534 +340,74 @@ function runViaCommand(instance, prompt, { onEvent, onDone, onError, sessionId }
   return proc;
 }
 
-function toValidPortRange() {
-  const min = Number.isInteger(SERVE_PORT_RANGE_MIN) ? SERVE_PORT_RANGE_MIN : 43100;
-  const max = Number.isInteger(SERVE_PORT_RANGE_MAX) ? SERVE_PORT_RANGE_MAX : 43999;
-  if (min > 0 && max > 0 && min <= max && max <= 65535) {
-    return { min, max };
-  }
-  return { min: 43100, max: 43999 };
-}
-
-function randomInt(min, max) {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-}
-
-function isPortAvailable(port) {
-  return new Promise((resolve) => {
-    const srv = net.createServer();
-    srv.unref();
-    srv.once('error', () => {
-      resolve(false);
-    });
-    srv.listen(port, '127.0.0.1', () => {
-      srv.close(() => resolve(true));
-    });
-  });
-}
-
-async function pickRandomAvailablePortInRange() {
-  const range = toValidPortRange();
-  const attempts = Number.isInteger(SERVE_PORT_PICK_ATTEMPTS) && SERVE_PORT_PICK_ATTEMPTS > 0
-    ? SERVE_PORT_PICK_ATTEMPTS
-    : 60;
-
-  for (let i = 0; i < attempts; i++) {
-    const candidate = randomInt(range.min, range.max);
-    // eslint-disable-next-line no-await-in-loop
-    if (await isPortAvailable(candidate)) {
-      return candidate;
-    }
-  }
-
-  throw new Error(`failed to find available port in ${range.min}-${range.max} after ${attempts} attempts`);
-}
-
-function getServeScopeKey(instance) {
-  const repoName = String(instance && instance.name ? instance.name : '').trim();
-  const workdir = path.resolve(String(instance && instance.workdir ? instance.workdir : '.'));
-  if (repoName) return `${repoName}::${workdir}`;
-  return `workdir::${workdir}`;
-}
-
-function killServeProcess(entry) {
-  if (!entry || !entry.proc || entry.proc.killed) return;
-  try {
-    entry.proc.kill('SIGTERM');
-  } catch (_err) {
-  }
-  setTimeout(() => {
-    if (!entry.proc || entry.proc.killed) return;
-    try {
-      entry.proc.kill('SIGKILL');
-    } catch (_err) {
-    }
-  }, 1500);
-}
-
-async function stopEntryProcess(entry) {
-  if (!entry || !entry.proc) return;
-  await new Promise((resolve) => {
-    let finished = false;
-    const done = () => {
-      if (finished) return;
-      finished = true;
-      resolve();
-    };
-
-    entry.proc.once('exit', done);
-    try {
-      entry.proc.kill('SIGTERM');
-    } catch (_err) {
-      done();
-      return;
-    }
-
-    setTimeout(() => {
-      if (finished) return;
-      try {
-        entry.proc.kill('SIGKILL');
-      } catch (_err) {
-      }
-      done();
-    }, 1200);
-  });
-}
-
-async function spawnServeDaemon(instance, key) {
-  const cmdParts = String(instance.opencodeCommand || '').trim().split(/\s+/).filter(Boolean);
-  const bin = cmdParts[0] || 'opencode';
-  let lastError = null;
-
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const port = await pickRandomAvailablePortInRange();
-    const baseUrl = `http://127.0.0.1:${port}`;
-
-    const proc = spawn(bin, ['serve', '--hostname', '127.0.0.1', '--port', String(port)], {
-      cwd: instance.workdir,
-      env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    const entry = {
-      key,
-      proc,
-      port,
-      pid: Number(proc.pid || 0),
-      baseUrl,
-      readyPromise: null,
-      ready: false,
-      stderrTail: [],
-      external: false,
-    };
-
-    proc.stderr.on('data', (chunk) => {
-      const lines = chunk.toString().split('\n').map((v) => v.trim()).filter(Boolean);
-      for (const line of lines) {
-        entry.stderrTail.push(line);
-        if (entry.stderrTail.length > 8) entry.stderrTail.shift();
-      }
-    });
-
-    const failedBeforeReady = new Promise((_, reject) => {
-      proc.once('error', (err) => reject(err));
-      proc.once('exit', (code, signal) => reject(new Error(`serve exited before ready (code=${code}, signal=${signal || 'none'})`)));
-    });
-
-    try {
-      await Promise.race([waitForServeReady(baseUrl), failedBeforeReady]);
-      entry.ready = true;
-      proc.on('exit', () => {
-        const current = serveDaemons.get(key);
-        if (current && current.proc === proc) {
-          serveDaemons.delete(key);
-        }
-      });
-      return entry;
-    } catch (err) {
-      lastError = err;
-      killServeProcess(entry);
-      if (attempt < 2) {
-        continue;
-      }
-      const tail = entry.stderrTail.join(' | ');
-      const detail = tail ? ` | stderr: ${tail}` : '';
-      throw new Error(`failed to start serve daemon for ${key}: ${err.message}${detail}`);
-    }
-  }
-
-  throw lastError || new Error(`failed to start serve daemon for ${key}`);
-}
-
-async function ensureServeDaemon(instance) {
-  const key = getServeScopeKey(instance);
-  if (stopAllInProgress) {
-    throw new Error('serve lifecycle is stopping; retry after restart completes');
-  }
-
-  return runDaemonOpExclusive(key, async () => {
-    const existing = serveDaemons.get(key);
-    if (existing && existing.readyPromise) {
-      const resolved = await existing.readyPromise;
-      if (resolved && resolved.baseUrl && await checkDaemonHealth(resolved.baseUrl, 900)) {
-        return resolved;
-      }
-      serveDaemons.delete(key);
-    }
-
-    const lock = await acquireScopeLock(key, 'ensure');
-    try {
-      const record = await readDaemonRecordByKey(key);
-      if (record && await isRecordHealthy(record)) {
-        return adoptDaemonRecord(key, record);
-      }
-
-      if (record && isPidAlive(Number(record.pid))) {
-        await killPidHard(Number(record.pid));
-      }
-      await clearDaemonRecordByKey(key);
-
-      const existingAfterLock = serveDaemons.get(key);
-      if (existingAfterLock) {
-        await stopEntryProcess(existingAfterLock);
-        serveDaemons.delete(key);
-      }
-
-      const entry = await spawnServeDaemon(instance, key);
-      entry.readyPromise = Promise.resolve(entry);
-      serveDaemons.set(key, entry);
-      await writeDaemonRecordByKey(key, {
-        key,
-        pid: entry.pid,
-        port: entry.port,
-        baseUrl: entry.baseUrl,
-        startedAt: nowIso(),
-        ownerPid: process.pid,
-        ownerHostname: os.hostname(),
-        status: 'ready',
-      });
-      return entry;
-    } finally {
-      await lock.release();
-    }
-  });
-}
-
-async function stopServeDaemonByKey(key) {
-  await runDaemonOpExclusive(key, async () => {
-    const lock = await acquireScopeLock(key, 'stop');
-    try {
-      const entry = serveDaemons.get(key);
-      serveDaemons.delete(key);
-      if (entry) {
-        await stopEntryProcess(entry);
-      }
-
-      const record = await readDaemonRecordByKey(key);
-      if (record && isPidAlive(Number(record.pid))) {
-        await killPidHard(Number(record.pid));
-      }
-      await clearDaemonRecordByKey(key);
-    } finally {
-      await lock.release();
-    }
-  });
-}
-
-async function stopServeDaemonForInstance(instance) {
-  const key = getServeScopeKey(instance);
-  await stopServeDaemonByKey(key);
-}
-
-async function stopAllServeDaemons() {
-  stopAllInProgress = true;
-  try {
-    const keys = new Set(Array.from(serveDaemons.keys()));
-    try {
-      await fsp.mkdir(SERVE_LOCK_DIR, { recursive: true });
-      const dirs = await fsp.readdir(SERVE_LOCK_DIR, { withFileTypes: true });
-      for (const dir of dirs) {
-        if (!dir.isDirectory()) continue;
-        const daemonPath = path.join(SERVE_LOCK_DIR, dir.name, 'daemon.json');
-        const record = await readJsonSafe(daemonPath);
-        if (record && record.key) keys.add(String(record.key));
-      }
-    } catch (_err) {
-    }
-
-    for (const key of keys) {
-      // eslint-disable-next-line no-await-in-loop
-      await stopServeDaemonByKey(key);
-    }
-  } finally {
-    stopAllInProgress = false;
-  }
-}
-
-function getServeDaemonStatusForInstance(instance) {
-  const key = getServeScopeKey(instance);
-  const entry = serveDaemons.get(key);
-  if (entry) {
-    return {
-      active: true,
-      key,
-      ready: !!entry.ready,
-      port: Number.isFinite(entry.port) ? entry.port : null,
-      source: entry.external ? 'state-file' : 'memory',
-    };
-  }
-
-  const paths = getServeScopePathsFromKey(key);
-  let record = null;
-  try {
-    if (fs.existsSync(paths.daemonPath)) {
-      record = JSON.parse(fs.readFileSync(paths.daemonPath, 'utf8'));
-    }
-  } catch (_err) {
-  }
-
-  if (!record || !isPidAlive(Number(record.pid))) {
-    return { active: false, key, ready: false, port: null, source: 'none' };
-  }
-
-  return {
-    active: true,
-    key,
-    ready: true,
-    port: Number.isFinite(Number(record.port)) ? Number(record.port) : null,
-    source: 'state-file',
-  };
-}
-
-async function waitForServeReady(baseUrl) {
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < SERVE_READY_TIMEOUT_MS) {
-    try {
-      const res = await fetch(`${baseUrl}/doc`);
-      if (res.ok) return;
-    } catch (_err) {
-    }
-    await new Promise((resolve) => setTimeout(resolve, 120));
-  }
-  throw new Error(`opencode serve did not become ready within ${SERVE_READY_TIMEOUT_MS}ms`);
-}
-
-async function jsonRequest(baseUrl, route, options) {
-  const res = await fetch(`${baseUrl}${route}`, options);
-  const text = await res.text();
-  if (!res.ok) {
-    throw new Error(`serve ${route} failed (${res.status}): ${text.slice(0, 240)}`);
-  }
-  if (!text) return null;
-  try {
-    return JSON.parse(text);
-  } catch (_err) {
-    return text;
-  }
-}
-
-function openSSE(baseUrl, onPacket, onError) {
-  const aborter = new AbortController();
-  let closed = false;
-
-  (async () => {
-    try {
-      const res = await fetch(`${baseUrl}/event`, {
-        headers: { accept: 'text/event-stream' },
-        signal: aborter.signal,
-      });
-      if (!res.ok || !res.body) {
-        throw new Error(`event stream unavailable (${res.status})`);
-      }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = '';
-
-      while (!closed) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const packets = buf.split('\n\n');
-        buf = packets.pop() || '';
-
-        for (const packet of packets) {
-          const lines = packet.split('\n');
-          const data = lines
-            .filter((l) => l.startsWith('data:'))
-            .map((l) => l.slice(5).trim())
-            .join('\n');
-          if (!data) continue;
-          onPacket(data);
-        }
-      }
-    } catch (err) {
-      if (!closed) onError(err);
-    }
-  })();
-
-  return {
-    close() {
-      closed = true;
-      aborter.abort();
-    },
-  };
-}
-
-function runViaServe(instance, prompt, { onEvent, onDone, onError, sessionId }) {
+function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
   const { logStream } = setupLogStream(instance, prompt);
   const state = {
     done: false,
-    killed: false,
-    sessionId: sessionId || '',
+    sessionId: String(sessionId || '').trim(),
     rateLimit: null,
     stderrSamples: [],
-    partState: new Map(),
-    partOrderSeq: 0,
-    partDeltas: new Map(),
-    waiting: null,
+    finalText: '',
   };
 
-  function partIndexValue(raw) {
-    const n = Number(raw);
-    if (Number.isFinite(n) && Number.isInteger(n)) return n;
-    return null;
-  }
+  const partMap = new Map();
+  let partSeq = 0;
+  let closeServer = null;
+  let abortSession = null;
 
-  function getPartState(partId, props = {}) {
-    const id = String(partId || '').trim();
-    if (!id) return null;
-
-    let entry = state.partState.get(id);
-    if (!entry) {
-      entry = {
-        id,
-        type: '',
-        text: '',
-        preview: '',
-        index: partIndexValue(props.index),
-        seq: state.partOrderSeq++,
-      };
-      state.partState.set(id, entry);
-    }
-
-    const nextIndex = partIndexValue(props.index);
-    if (nextIndex !== null) {
-      if (entry.index === null || nextIndex < entry.index) {
-        entry.index = nextIndex;
-      }
-    }
-
-    if (props.type && !entry.type) entry.type = props.type;
-    return entry;
-  }
-
-  function getPendingDeltas(partId) {
-    return state.partDeltas.get(String(partId || '')) || { text: '', reasoning: '' };
-  }
-
-  function setPendingDeltas(partId, next) {
-    if (!partId) return;
-    const id = String(partId);
-    if (!next.text && !next.reasoning) {
-      state.partDeltas.delete(id);
-      return;
-    }
-    state.partDeltas.set(id, next);
-  }
-
-  function mergePendingText(partId, targetType, baseText, existingText = '') {
-    const pending = getPendingDeltas(partId);
-    if (targetType !== 'text' && targetType !== 'reasoning') {
-      return String(baseText || '');
-    }
-
-    const pendingText = targetType === 'reasoning' ? pending.reasoning : pending.text;
-    const base = String(baseText || '');
-    const existing = String(existingText || '');
-
-    let merged = base;
-
-    if (!merged) {
-      merged = existing || '';
-    } else if (!merged.includes(existing) && !existing.includes(merged)) {
-      const needsJoin = existing.endsWith('\n') || merged.startsWith('\n');
-      merged = existing + (needsJoin ? '' : '\n') + merged;
-    } else if (existing) {
-      merged = merged.includes(existing) ? merged : existing;
-    }
-
-    if (!pendingText) {
-      if (targetType === 'reasoning') {
-        pending.reasoning = '';
-      } else {
-        pending.text = '';
-      }
-      return merged;
-    }
-
-    if (merged.includes(pendingText)) {
-      if (targetType === 'reasoning') {
-        pending.reasoning = '';
-      } else {
-        pending.text = '';
-      }
-      return merged;
-    }
-
-    const needsJoin = merged.endsWith('\n') || pendingText.startsWith('\n');
-    merged = merged + (needsJoin ? '' : '\n') + pendingText;
-
-    if (targetType === 'reasoning') {
-      pending.reasoning = '';
-    } else {
-      pending.text = '';
-    }
-    setPendingDeltas(partId, pending);
-    return merged;
-  }
-
-  function getCombinedText() {
-    const entries = Array.from(state.partState.entries()).map(([, entry]) => entry);
-    entries.sort((a, b) => {
-      const aHasIndex = a.index !== null;
-      const bHasIndex = b.index !== null;
-      if (aHasIndex && bHasIndex && a.index !== b.index) return a.index - b.index;
-      if (aHasIndex !== bHasIndex) return aHasIndex ? -1 : 1;
-      if (a.seq !== b.seq) return a.seq - b.seq;
-      return String(a.id).localeCompare(String(b.id));
+  function sortedFinalText() {
+    const parts = Array.from(partMap.values());
+    parts.sort((a, b) => {
+      if (a.index !== null && b.index !== null && a.index !== b.index) return a.index - b.index;
+      if (a.index !== null && b.index === null) return -1;
+      if (a.index === null && b.index !== null) return 1;
+      return a.seq - b.seq;
     });
-
-    return entries
-      .map((entry) => entry.text)
-      .map((value) => String(value || '').trim())
-      .filter((value) => value.length > 0)
+    return parts
+      .filter((p) => p.type === 'text')
+      .map((p) => String(p.text || '').trim())
+      .filter(Boolean)
       .join('\n\n');
   }
 
-  let serveProc = null;
-  let serveBaseUrl = '';
-  let sse = null;
-  let stdoutListener = null;
-  let stderrListener = null;
+  function updatePart(part) {
+    const id = String(part && part.id ? part.id : '').trim();
+    if (!id) return null;
+    let entry = partMap.get(id);
+    if (!entry) {
+      entry = {
+        id,
+        seq: partSeq++,
+        index: Number.isInteger(Number(part.index)) ? Number(part.index) : null,
+        type: String(part.type || ''),
+        text: '',
+      };
+      partMap.set(id, entry);
+    }
+    const idx = Number(part.index);
+    if (Number.isInteger(idx) && (entry.index === null || idx < entry.index)) {
+      entry.index = idx;
+    }
+    entry.type = String(part.type || entry.type || '');
+    if (entry.type === 'text') {
+      entry.text = String(part.text || '');
+    }
+    return entry;
+  }
 
   function finish(exitCode, timeoutMsg) {
     if (state.done) return;
     state.done = true;
     clearTimeout(timeout);
-    if (sse) sse.close();
-    if (serveProc && stdoutListener && serveProc.stdout) {
-      serveProc.stdout.off('data', stdoutListener);
-    }
-    if (serveProc && stderrListener && serveProc.stderr) {
-      serveProc.stderr.off('data', stderrListener);
+    if (typeof closeServer === 'function') {
+      try { closeServer(); } catch (_err) {}
     }
     logStream.end();
     onDone(exitCode, timeoutMsg, {
       sessionId: state.sessionId,
       rateLimit: state.rateLimit,
       stderrSamples: state.stderrSamples.slice(-5),
-      finalText: getCombinedText(),
+      finalText: state.finalText,
     });
   }
 
@@ -1010,44 +415,26 @@ function runViaServe(instance, prompt, { onEvent, onDone, onError, sessionId }) 
     if (state.done) return;
     state.done = true;
     clearTimeout(timeout);
-    if (sse) sse.close();
-    if (serveProc && stdoutListener && serveProc.stdout) {
-      serveProc.stdout.off('data', stdoutListener);
+    if (typeof closeServer === 'function') {
+      try { closeServer(); } catch (_err) {}
     }
-    if (serveProc && stderrListener && serveProc.stderr) {
-      serveProc.stderr.off('data', stderrListener);
-    }
+    const msg = String(err && err.message ? err.message : err || 'sdk runtime failed');
+    state.stderrSamples.push(msg);
+    if (state.stderrSamples.length > 5) state.stderrSamples.shift();
+    maybeCaptureRateLimit(state, msg);
     logStream.end();
-    onError(err);
+    onError(err instanceof Error ? err : new Error(msg));
   }
 
-  async function abortSession() {
-    if (!serveBaseUrl || !state.sessionId) return;
-    try {
-      await jsonRequest(serveBaseUrl, `/session/${state.sessionId}/abort`, { method: 'POST' });
-    } catch (err) {
-      const msg = String(err && err.message ? err.message : err);
-      maybeCaptureRateLimit(state, msg);
-      state.stderrSamples.push(msg);
-      if (state.stderrSamples.length > 5) state.stderrSamples.shift();
-    }
-  }
-
-  const procHandle = {
+  const handle = {
     killed: false,
-    stdout: null,
-    stderr: null,
-    kill(signal) {
-      procHandle.killed = true;
-      state.killed = true;
-      const sig = String(signal || 'SIGTERM').toUpperCase();
-      abortSession().catch(() => {});
-      if (sig === 'SIGKILL') {
-        setTimeout(() => {
-          if (!state.done) {
-            finish(143, null);
-          }
-        }, 120);
+    kill(_signal) {
+      handle.killed = true;
+      if (typeof abortSession === 'function') {
+        abortSession().catch(() => {});
+      }
+      if (!state.done) {
+        finish(143, null);
       }
       return true;
     },
@@ -1055,247 +442,232 @@ function runViaServe(instance, prompt, { onEvent, onDone, onError, sessionId }) 
 
   const timeout = setTimeout(() => {
     if (state.done) return;
-    state.killed = true;
-    procHandle.kill('SIGTERM');
-    setTimeout(() => {
-      if (!state.done) procHandle.kill('SIGKILL');
-    }, 5000);
+    handle.kill('SIGTERM');
     finish(null, `Process timed out after ${MAX_PROCESS_SEC}s`);
   }, MAX_PROCESS_SEC * 1000);
 
   (async () => {
     try {
-      const daemon = await ensureServeDaemon(instance);
-      serveProc = daemon.proc;
-      serveBaseUrl = daemon.baseUrl;
-
-      procHandle.stdout = serveProc ? serveProc.stdout : null;
-      procHandle.stderr = serveProc ? serveProc.stderr : null;
-
-      stdoutListener = (chunk) => {
-        logStream.write(chunk.toString());
-      };
-      stderrListener = (chunk) => {
-        const text = chunk.toString();
-        logStream.write(text);
-        const lines = text.split('\n').map((v) => v.trim()).filter(Boolean);
-        for (const line of lines) {
-          state.stderrSamples.push(line);
-          if (state.stderrSamples.length > 5) state.stderrSamples.shift();
-          maybeCaptureRateLimit(state, line);
-        }
-      };
-      if (serveProc && serveProc.stdout && serveProc.stderr) {
-        serveProc.stdout.on('data', stdoutListener);
-        serveProc.stderr.on('data', stderrListener);
+      if (stopAllInProgress) {
+        throw new Error('runtime lifecycle is stopping; retry after restart completes');
       }
 
+      const sdk = await loadSdkModule();
+      if (!sdk || typeof sdk.createOpencode !== 'function') {
+        throw new Error('failed to load sdk createOpencode');
+      }
+
+      const sdkPort = await pickRandomAvailablePortInRange();
+      const runtime = await sdk.createOpencode({
+        hostname: '127.0.0.1',
+        port: sdkPort,
+        timeout: SDK_SERVER_START_TIMEOUT_MS,
+      });
+      const client = runtime.client;
+      closeServer = runtime && runtime.server && typeof runtime.server.close === 'function'
+        ? () => runtime.server.close()
+        : null;
+
+      const query = { directory: instance.workdir };
       if (state.sessionId) {
         try {
-          await jsonRequest(serveBaseUrl, `/session/${state.sessionId}`, { method: 'GET' });
+          await unwrapData(await client.session.get({
+            url: '/session/{id}',
+            path: { id: state.sessionId },
+            query,
+          }));
         } catch (_err) {
-          try {
-            const resumed = await jsonRequest(serveBaseUrl, '/session', {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({
-                parentID: state.sessionId,
-                title: `hermux ${new Date().toISOString()}`,
-              }),
-            });
-            state.sessionId = String(resumed && resumed.id ? resumed.id : '').trim();
-          } catch (_e2) {
-            state.sessionId = '';
-          }
+          const resumed = await unwrapData(await client.session.create({
+            url: '/session',
+            query,
+            body: {
+              parentID: state.sessionId,
+              title: `hermux ${new Date().toISOString()}`,
+            },
+          }));
+          state.sessionId = String((resumed && resumed.id) || '').trim();
         }
       }
 
       if (!state.sessionId) {
-        const session = await jsonRequest(serveBaseUrl, '/session', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ title: `hermux ${new Date().toISOString()}` }),
-        });
-        state.sessionId = String(session && session.id ? session.id : '').trim();
+        const created = await unwrapData(await client.session.create({
+          url: '/session',
+          query,
+          body: {
+            title: `hermux ${new Date().toISOString()}`,
+          },
+        }));
+        state.sessionId = String((created && created.id) || '').trim();
       }
 
       if (!state.sessionId) {
-        throw new Error('failed to establish serve session id');
+        throw new Error('failed to establish sdk session id');
       }
 
-      sse = openSSE(
-        serveBaseUrl,
-        (packet) => {
-          if (state.done) return;
-          logStream.write(packet + '\n');
-          maybeCaptureRateLimit(state, packet);
-          let evt = null;
-          try {
-            evt = JSON.parse(packet);
-          } catch (_err) {
-            onEvent({ type: 'raw', content: packet, sessionId: state.sessionId });
-            return;
+      abortSession = async () => {
+        await client.session.abort({
+          url: '/session/{id}/abort',
+          path: { id: state.sessionId },
+          query,
+        });
+      };
+
+      const subscription = await client.event.subscribe({
+        url: '/event',
+        query,
+      });
+
+      const stream = subscription && subscription.stream;
+      if (!stream || typeof stream[Symbol.asyncIterator] !== 'function') {
+        throw new Error('sdk event stream unavailable');
+      }
+
+      const readerPromise = (async () => {
+        for await (const evt of stream) {
+          if (state.done) break;
+          const type = String((evt && evt.type) || '');
+          const props = (evt && evt.properties) || {};
+          logStream.write(`${JSON.stringify(evt)}\n`);
+
+          if (type === 'session.error') {
+            const errText = JSON.stringify(props.error || props);
+            maybeCaptureRateLimit(state, errText);
+            state.stderrSamples.push(errText);
+            if (state.stderrSamples.length > 5) state.stderrSamples.shift();
+            onEvent({ type: 'raw', content: errText, sessionId: state.sessionId });
+            continue;
           }
 
-          const type = String(evt.type || '');
-          const props = evt.properties || {};
-
           if (type === 'session.status' && String(props.sessionID || '') === state.sessionId) {
-            const statusType = String((props.status || {}).type || '').trim().toLowerCase();
-            if (statusType === 'retry') {
-              state.waiting = { kind: 'retry' };
-              onEvent({ type: 'wait', status: 'retry', sessionId: state.sessionId });
-            }
-            if (statusType === 'busy') {
+            const status = String((props.status && props.status.type) || '').toLowerCase();
+            if (status === 'busy') {
               onEvent({ type: 'step_start', sessionId: state.sessionId });
+            } else if (status === 'retry') {
+              const nextTs = Number((props.status && props.status.next) || 0);
+              const retryAfterSeconds = Number.isFinite(nextTs) && nextTs > 0
+                ? Math.max(0, Math.ceil((nextTs - Date.now()) / 1000))
+                : null;
+              onEvent({ type: 'wait', status: 'retry', retryAfterSeconds, sessionId: state.sessionId });
             }
-            return;
+            continue;
           }
 
           if (type === 'session.idle' && String(props.sessionID || '') === state.sessionId) {
-            clearTimeout(timeout);
+            state.finalText = sortedFinalText();
             finish(0, null);
-            return;
+            break;
           }
 
-          if (type === 'message.part.delta') {
-            const sid = String(props.sessionID || '');
-            if (sid !== state.sessionId) return;
-            const partId = String(props.partID || '');
-            const field = String(props.field || '');
-            if (field !== 'text') return;
-            if (!partId) return;
-            const delta = String(props.delta || '');
-            if (!delta) return;
-
-            const partState = getPartState(partId, { index: props.partIndex, type: props.type });
-            if (partState.type === 'text') {
-              partState.text = String(partState.text || '') + delta;
-              onEvent({ type: 'text', content: getCombinedText(), textKind: 'final', sessionId: state.sessionId });
-              return;
-            }
-
-            if (partState.type === 'reasoning') {
-              partState.preview = String(partState.preview || '') + delta;
-              onEvent({ type: 'text', content: partState.preview, textKind: 'reasoning', sessionId: state.sessionId });
-              return;
-            }
-
-            const pending = getPendingDeltas(partId);
-            if (field === 'text') {
-              pending.text += delta;
-              setPendingDeltas(partId, pending);
-            }
-            return;
+          if (type !== 'message.part.updated') {
+            onEvent({ type: 'raw', content: JSON.stringify(evt), sessionId: state.sessionId });
+            continue;
           }
 
-          if (type === 'message.part.updated') {
-            const part = props.part || {};
-            const sid = String(part.sessionID || '');
-            if (sid !== state.sessionId) return;
-            const ptype = String(part.type || '');
-            const partId = String(part.id || '');
-            const partState = partId ? getPartState(partId, { index: part.index, type: ptype }) : null;
+          const part = props.part || {};
+          if (String(part.sessionID || '') !== state.sessionId) continue;
+          const ptype = String(part.type || '');
 
-            if (ptype === 'step-start') {
-              onEvent({ type: 'step_start', sessionId: state.sessionId });
-              return;
-            }
-            if (ptype === 'step-finish') {
-              onEvent({ type: 'step_finish', reason: part.reason || null, sessionId: state.sessionId });
-              return;
-            }
-
-            if (partState) {
-              partState.type = ptype;
-            }
-
-            if (ptype === 'text') {
-              const baseText = String(part.text || '');
-              const mergedText = partId
-                ? mergePendingText(partId, 'text', baseText, partState ? partState.text : '')
-                : baseText;
-              if (partState && partId) {
-                partState.text = mergedText;
-                onEvent({ type: 'text', content: getCombinedText(), textKind: 'final', sessionId: state.sessionId });
-              } else {
-                onEvent({ type: 'text', content: mergedText, textKind: 'final', sessionId: state.sessionId });
-              }
-              return;
-            }
-
-            if (ptype === 'reasoning') {
-              const baseText = String(part.text || '');
-              const mergedText = partId
-                ? mergePendingText(partId, 'reasoning', baseText, partState ? partState.preview : '')
-                : baseText;
-              if (partState && partId) {
-                partState.preview = mergedText;
-              }
-              if (mergedText) {
-                onEvent({ type: 'text', content: mergedText, textKind: 'reasoning', sessionId: state.sessionId });
-              }
-              return;
-            }
-
-            if (ptype === 'tool') {
-              const toolState = part.state || {};
-              onEvent({
-                type: 'tool_use',
-                name: part.tool || 'tool',
-                input: toolState.input || {},
-                output: toolState.output || '',
-                sessionId: state.sessionId,
-              });
-              return;
-            }
-
-            if (partState && partId) {
-              partState.type = ptype;
-            }
-            onEvent({ type: 'raw', content: packet, sessionId: state.sessionId });
+          if (ptype === 'step-start') {
+            onEvent({ type: 'step_start', sessionId: state.sessionId });
+            continue;
           }
-        },
-        (err) => {
-          if (!state.done) {
-            clearTimeout(timeout);
-            fail(err);
+          if (ptype === 'step-finish') {
+            onEvent({ type: 'step_finish', reason: part.reason || null, sessionId: state.sessionId });
+            continue;
           }
+          if (ptype === 'tool') {
+            const toolState = part.state || {};
+            onEvent({
+              type: 'tool_use',
+              name: part.tool || 'tool',
+              input: toolState.input || {},
+              output: toolState.output || toolState.error || '',
+              sessionId: state.sessionId,
+            });
+            continue;
+          }
+          if (ptype === 'reasoning') {
+            const reasoningText = String(part.text || props.delta || '');
+            if (reasoningText) {
+              onEvent({ type: 'text', content: reasoningText, textKind: 'reasoning', sessionId: state.sessionId });
+            }
+            continue;
+          }
+          if (ptype === 'text') {
+            updatePart(part);
+            state.finalText = sortedFinalText();
+            onEvent({ type: 'text', content: state.finalText || String(part.text || ''), textKind: 'final', sessionId: state.sessionId });
+            continue;
+          }
+
+          onEvent({ type: 'raw', content: JSON.stringify(evt), sessionId: state.sessionId });
         }
-      );
+      })();
 
-      await jsonRequest(serveBaseUrl, `/session/${state.sessionId}/prompt_async`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
+      await unwrapData(await client.session.promptAsync({
+        url: '/session/{id}/prompt_async',
+        path: { id: state.sessionId },
+        query,
+        body: {
           parts: [{ type: 'text', text: prompt }],
-        }),
-      });
+        },
+      }));
+
+      await readerPromise;
+      if (!state.done) {
+        state.finalText = sortedFinalText();
+        finish(0, null);
+      }
     } catch (err) {
-      clearTimeout(timeout);
       fail(err);
     }
   })();
 
-  return procHandle;
+  return handle;
 }
 
 function runOpencode(instance, prompt, handlers) {
-  if (shouldUseServe(instance)) {
-    return runViaServe(instance, prompt, handlers);
+  if (shouldUseSdk(instance)) {
+    const handle = runViaSdk(instance, prompt, {
+      onEvent: handlers.onEvent,
+      onDone: (...args) => {
+        endRuntimeRun(instance, handle);
+        handlers.onDone(...args);
+      },
+      onError: (err) => {
+        endRuntimeRun(instance, handle);
+        handlers.onError(err);
+      },
+      sessionId: handlers.sessionId,
+    });
+    beginRuntimeRun(instance, 'sdk', handle);
+    return handle;
   }
-  return runViaCommand(instance, prompt, handlers);
+
+  const handle = runViaCommand(instance, prompt, {
+    onEvent: handlers.onEvent,
+    onDone: (...args) => {
+      endRuntimeRun(instance, handle);
+      handlers.onDone(...args);
+    },
+    onError: (err) => {
+      endRuntimeRun(instance, handle);
+      handlers.onError(err);
+    },
+    sessionId: handlers.sessionId,
+  });
+  beginRuntimeRun(instance, 'command', handle);
+  return handle;
 }
 
 module.exports = {
   runOpencode,
-  stopAllServeDaemons,
-  getServeDaemonStatusForInstance,
+  stopAllRuntimeExecutors,
+  getRuntimeStatusForInstance,
   _internal: {
     toValidPortRange,
     pickRandomAvailablePortInRange,
-    getServeScopeKey,
-    getServeScopePathsForInstance,
-    stopServeDaemonForInstance,
+    getRuntimeScopeKey,
+    shouldUseSdk,
   },
 };

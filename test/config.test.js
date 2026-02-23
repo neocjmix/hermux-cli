@@ -84,7 +84,7 @@ test('config addChatIdToRepo validates input and repo existence', () => {
   try {
     config.save({
       global: { telegramBotToken: '1:abc' },
-      repos: [{ name: 'repo-a', enabled: true, workdir: '/tmp/a', chatIds: [], opencodeCommand: 'opencode serve', logFile: './logs/a.log' }],
+      repos: [{ name: 'repo-a', enabled: true, workdir: '/tmp/a', chatIds: [], opencodeCommand: 'opencode sdk', logFile: './logs/a.log' }],
     });
 
     const badRepo = config.addChatIdToRepo('', '100');
@@ -108,7 +108,7 @@ test('config addChatIdToRepo returns changed false when mapping already exists i
   try {
     config.save({
       global: { telegramBotToken: '1:abc' },
-      repos: [{ name: 'repo-a', enabled: true, workdir: '/tmp/a', chatIds: ['100'], opencodeCommand: 'opencode serve', logFile: './logs/a.log' }],
+      repos: [{ name: 'repo-a', enabled: true, workdir: '/tmp/a', chatIds: ['100'], opencodeCommand: 'opencode sdk', logFile: './logs/a.log' }],
     });
 
     const result = config.addChatIdToRepo('repo-a', '100');
@@ -126,8 +126,8 @@ test('config getEnabledRepos returns only enabled repos', () => {
     config.save({
       global: { telegramBotToken: '1:abc' },
       repos: [
-        { name: 'repo-on', enabled: true, workdir: '/tmp/on', chatIds: [], opencodeCommand: 'opencode serve', logFile: './logs/on.log' },
-        { name: 'repo-off', enabled: false, workdir: '/tmp/off', chatIds: [], opencodeCommand: 'opencode serve', logFile: './logs/off.log' },
+        { name: 'repo-on', enabled: true, workdir: '/tmp/on', chatIds: [], opencodeCommand: 'opencode sdk', logFile: './logs/on.log' },
+        { name: 'repo-off', enabled: false, workdir: '/tmp/off', chatIds: [], opencodeCommand: 'opencode sdk', logFile: './logs/off.log' },
       ],
     });
 
@@ -144,7 +144,7 @@ test('config resetConfig respects keepToken option', () => {
   try {
     config.save({
       global: { telegramBotToken: '1:abc' },
-      repos: [{ name: 'repo-a', enabled: true, workdir: '/tmp/a', chatIds: [], opencodeCommand: 'opencode serve', logFile: './logs/a.log' }],
+      repos: [{ name: 'repo-a', enabled: true, workdir: '/tmp/a', chatIds: [], opencodeCommand: 'opencode sdk', logFile: './logs/a.log' }],
     });
 
     const kept = config.resetConfig({ keepToken: true });
@@ -155,7 +155,7 @@ test('config resetConfig respects keepToken option', () => {
 
     config.save({
       global: { telegramBotToken: '1:abc' },
-      repos: [{ name: 'repo-b', enabled: true, workdir: '/tmp/b', chatIds: [], opencodeCommand: 'opencode serve', logFile: './logs/b.log' }],
+      repos: [{ name: 'repo-b', enabled: true, workdir: '/tmp/b', chatIds: [], opencodeCommand: 'opencode sdk', logFile: './logs/b.log' }],
     });
     const cleared = config.resetConfig({ keepToken: false });
     assert.equal(cleared.keepToken, false);

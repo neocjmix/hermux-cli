@@ -144,7 +144,7 @@ test('gateway e2e uses telegram stub for mapped /start command flow', async () =
       enabled: true,
       workdir: '/tmp/demo',
       chatIds: ['100'],
-      opencodeCommand: 'opencode serve',
+      opencodeCommand: 'opencode sdk',
       logFile: './logs/demo.log',
     }],
   });
@@ -211,7 +211,7 @@ test('gateway e2e uses telegram stub for callback_query interrupt idle contract'
       enabled: true,
       workdir: '/tmp/demo',
       chatIds: ['100'],
-      opencodeCommand: 'opencode serve',
+      opencodeCommand: 'opencode sdk',
       logFile: './logs/demo.log',
     }],
   });
@@ -279,7 +279,7 @@ test('gateway e2e logs polling conflict detail when webhook is active', async ()
       enabled: true,
       workdir: '/tmp/demo',
       chatIds: ['100'],
-      opencodeCommand: 'opencode serve',
+      opencodeCommand: 'opencode sdk',
       logFile: './logs/demo.log',
     }],
   });
@@ -326,7 +326,7 @@ test('gateway e2e remains alive when scenario forces sendMessage API error', asy
       enabled: true,
       workdir: '/tmp/demo',
       chatIds: ['100'],
-      opencodeCommand: 'opencode serve',
+      opencodeCommand: 'opencode sdk',
       logFile: './logs/demo.log',
     }],
   });
@@ -399,7 +399,7 @@ test('gateway e2e recovers polling after webhook deletion and processes /start',
       enabled: true,
       workdir: '/tmp/demo',
       chatIds: ['100'],
-      opencodeCommand: 'opencode serve',
+      opencodeCommand: 'opencode sdk',
       logFile: './logs/demo.log',
     }],
   });
@@ -478,7 +478,7 @@ test('gateway e2e survives answerCallbackQuery failure and keeps idle interrupt 
       enabled: true,
       workdir: '/tmp/demo',
       chatIds: ['100'],
-      opencodeCommand: 'opencode serve',
+      opencodeCommand: 'opencode sdk',
       logFile: './logs/demo.log',
     }],
   });
@@ -558,7 +558,7 @@ test('gateway e2e retries sendMessage without parse_mode after HTML send failure
       enabled: true,
       workdir: '/tmp/demo',
       chatIds: ['100'],
-      opencodeCommand: 'opencode serve',
+      opencodeCommand: 'opencode sdk',
       logFile: './logs/demo.log',
     }],
   });

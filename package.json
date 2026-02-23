@@ -15,6 +15,7 @@
     "test:e2e:telegram": "node --test --test-concurrency=1 test/gateway-e2e-telegram-stub.test.js"
   },
   "dependencies": {
+    "@opencode-ai/sdk": "^1.2.10",
     "node-telegram-bot-api": "^0.66.0"
   },
   "publishConfig": {

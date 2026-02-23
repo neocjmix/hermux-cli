@@ -55,7 +55,7 @@ test('cli init without --yes prints confirmation hint and keeps data', () => {
   try {
     config.save({
       global: { telegramBotToken: '123:abc' },
-      repos: [{ name: 'demo', enabled: true, workdir: '/tmp/demo', chatIds: ['1'], opencodeCommand: 'opencode serve', logFile: './logs/demo.log' }],
+      repos: [{ name: 'demo', enabled: true, workdir: '/tmp/demo', chatIds: ['1'], opencodeCommand: 'opencode sdk', logFile: './logs/demo.log' }],
     });
     sessionMap.setSessionId('demo', '1', 'sess-1');
 
@@ -78,7 +78,7 @@ test('cli init --yes --full clears repos, sessions, and global token', () => {
   try {
     config.save({
       global: { telegramBotToken: '123:abc' },
-      repos: [{ name: 'demo', enabled: true, workdir: '/tmp/demo', chatIds: ['1'], opencodeCommand: 'opencode serve', logFile: './logs/demo.log' }],
+      repos: [{ name: 'demo', enabled: true, workdir: '/tmp/demo', chatIds: ['1'], opencodeCommand: 'opencode sdk', logFile: './logs/demo.log' }],
     });
     sessionMap.setSessionId('demo', '1', 'sess-1');
 

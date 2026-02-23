@@ -8,7 +8,7 @@ const { pipeline } = require('stream/promises');
 const { spawn, spawnSync } = require('child_process');
 const TelegramBot = require('node-telegram-bot-api');
 const { load, getEnabledRepos, addChatIdToRepo, addOrUpdateRepo, setGlobalBotToken, resetConfig, CONFIG_PATH } = require('./lib/config');
-const { runOpencode, stopAllServeDaemons, getServeDaemonStatusForInstance } = require('./lib/runner');
+const { runOpencode, stopAllRuntimeExecutors, getRuntimeStatusForInstance } = require('./lib/runner');
 const { md2html, escapeHtml } = require('./lib/md2html');
 const { getSessionId, setSessionId, clearSessionId, getSessionInfo, clearAllSessions, SESSION_MAP_PATH } = require('./lib/session-map');
 const { createRepoMessageHandler } = require('./gateway-repo-message-handler');
@@ -694,7 +694,7 @@ function createOnboardingSession(chatId) {
       botToken: existingToken || '',
       name: '',
       workdir: '',
-      opencodeCommand: 'opencode serve',
+      opencodeCommand: 'opencode sdk',
       attachChat: true,
     },
   };
@@ -1556,18 +1556,16 @@ function buildRuntimeStatusHtml({ repo, state, chatId }) {
   const waitDetail = state.waitingInfo && state.waitingInfo.status === 'retry'
     ? `retry${state.waitingInfo.retryAfterSeconds ? ` (${state.waitingInfo.retryAfterSeconds}s)` : ''}`
     : '-';
-  const serveStatus = getServeDaemonStatusForInstance(repo);
-  const servePort = serveStatus.port ? String(serveStatus.port) : '-';
-  const serveState = serveStatus.active
-    ? (serveStatus.ready ? 'active' : 'starting')
-    : 'inactive';
+  const runtimeStatus = getRuntimeStatusForInstance(repo);
+  const runtimeState = runtimeStatus.active ? 'active' : 'idle';
+  const runtimeTransport = String(runtimeStatus.transport || 'unknown');
   return [
     `<b>📊 Runtime Status · ${escapeHtml(repo.name)}</b>`,
     `<code>chat: ${escapeHtml(chatId)}</code>`,
     `<code>workdir: ${escapeHtml(repo.workdir)}</code>`,
     '',
     `<code>state: ${lifecycle} | busy: ${state.running ? 'yes' : 'no'} | waiting: ${waiting} | queue: ${queueLen}</code>`,
-    `<code>serve: ${serveState} | port: ${servePort}</code>`,
+    `<code>runtime: ${runtimeState} | transport: ${runtimeTransport} | runs: ${Number(runtimeStatus.activeRuns || 0)}</code>`,
     `<code>verbose: ${state.verbose ? 'on' : 'off'}</code>`,
     `<code>session: ${escapeHtml(shortSid)}</code>`,
     `<code>wait detail: ${escapeHtml(waitDetail)}</code>`,
@@ -1819,9 +1817,9 @@ async function handleRestartCommand(bot, chatId, repo, state) {
     }
 
     try {
-      await stopAllServeDaemons();
+      await stopAllRuntimeExecutors();
     } catch (err) {
-      console.error('[restart] failed to stop serve daemons:', err.message);
+      console.error('[restart] failed to stop runtime executors:', err.message);
     }
 
     try {
@@ -2338,9 +2336,9 @@ function main() {
     } catch (_err) {
     }
     try {
-      await stopAllServeDaemons();
+      await stopAllRuntimeExecutors();
     } catch (err) {
-      console.error('[shutdown] failed to stop serve daemons:', err.message);
+      console.error('[shutdown] failed to stop runtime executors:', err.message);
     }
     process.exit(0);
   };
