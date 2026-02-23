@@ -9,6 +9,7 @@ runtime/
 state/session-map.json
 .opencode_mobile_gateway/
 tmp/
+ref/
 
 # coverage and instrumentation outputs
 coverage/

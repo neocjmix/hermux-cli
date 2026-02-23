@@ -36,6 +36,23 @@ src/
 4. Prompt messages dispatch to runner for mapped repo contexts.
 5. Runner emits progress and final output; gateway sends Telegram responses.
 
+## Event Handling Topology
+
+Event ingress is unified at Telegram update level and then split into command/callback/prompt paths.
+
+- Telegram transport source: `bot.on('message', handleMessage)` and `bot.on('callback_query', handleCallbackQuery)` in `src/gateway.js`.
+- Message classification: `createMessageHandler` parses slash commands and routes onboarding/setup commands before repo-bound dispatch in `src/gateway-message-handler.js`.
+- Repo-bound dispatch: `createRepoMessageHandler` handles runtime commands (`/status`, `/models`, `/interrupt`, `/restart`) and prompt submission in `src/gateway-repo-message-handler.js`.
+- Callback classification: `createCallbackQueryHandler` handles structured callback data (`connect:*`, `verbose:*`, model-layer callbacks) in `src/gateway-callback-query-handler.js`.
+- Runtime event adapter: `runOpencode` in `src/lib/runner.js` normalizes SDK and command transports into internal event primitives (`step_start`, `text`, `tool_use`, `wait`, `raw`).
+- Finalization path: `startPromptRun` in `src/gateway.js` merges stream/meta final text, persists session mapping, updates status panels, and dequeues next prompt FIFO.
+
+### Event Concurrency Contract
+
+- Per-repo serialization uses `withStateDispatchLock` in `src/gateway.js` and `src/gateway-message-handler.js`.
+- Control-command bypass for immediate interruption/restart (`/interrupt`, `/restart`) skips dispatch lock in `src/gateway-message-handler.js`.
+- Prompt work is queue-backed per repo (`state.queue`) and one-active-run per repo (`state.running`) in `src/gateway-repo-message-handler.js` and `src/gateway.js`.
+
 ## Isolation Model
 
 Per repo context state includes:

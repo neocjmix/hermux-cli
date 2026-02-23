@@ -37,7 +37,7 @@ test('getImagePayloadFromMessage prefers highest resolution photo', () => {
   });
 });
 
-test('buildNoOutputMessage includes diagnostics context', () => {
+test('buildNoOutputMessage includes diagnostics context without raw events in normal mode', () => {
   const text = _internal.buildNoOutputMessage({
     exitCode: 1,
     stepCount: 2,
@@ -51,6 +51,23 @@ test('buildNoOutputMessage includes diagnostics context', () => {
   assert.match(text, /No final answer text was produced/);
   assert.match(text, /steps: 2, tools: 3/);
   assert.match(text, /log: .\/logs\/x\.log/);
+  assert.doesNotMatch(text, /recent raw events/);
+});
+
+test('buildNoOutputMessage includes raw events in verbose mode', () => {
+  const text = _internal.buildNoOutputMessage({
+    exitCode: 1,
+    stepCount: 2,
+    toolCount: 3,
+    toolNames: ['bash: ls'],
+    stepReason: 'max_steps',
+    rawSamples: ['raw event'],
+    logFile: './logs/x.log',
+    includeRawDiagnostics: true,
+  });
+
+  assert.match(text, /recent raw events/);
+  assert.match(text, /raw event/);
 });
 
 test('buildNoOutputMessage includes rate-limit guidance when detected', () => {

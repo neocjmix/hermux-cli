@@ -10,8 +10,9 @@ This is the canonical documentation entrypoint.
 4. `docs/specs/UX_SPEC.md`
 5. `docs/specs/COMPONENT_CONTRACTS.md`
 6. `docs/specs/TELEGRAM_E2E_STUB_SPEC.md`
-7. `docs/ARCHITECTURE.md`
-8. `docs/DEVELOPER_GUIDE.md`
+7. `docs/specs/EVENT_HANDLING_COMPARISON.md`
+8. `docs/ARCHITECTURE.md`
+9. `docs/DEVELOPER_GUIDE.md`
 
 ## Documents
 
@@ -39,6 +40,11 @@ This is the canonical documentation entrypoint.
   - Audience: implementers and testers
   - Purpose: Telegram API stub contract for e2e/CI/debug loops
   - Update when: stub endpoints, control API, or e2e Telegram contract flows change
+
+- `docs/specs/EVENT_HANDLING_COMPARISON.md`
+  - Audience: implementers and architecture reviewers
+  - Purpose: event-handling comparison between Hermux and reference Telegram OpenCode bots
+  - Update when: event routing model, callback dispatch model, or OpenCode event adapter strategy changes
 
 - `docs/DEVELOPER_GUIDE.md`
   - Audience: developers and agents

@@ -106,6 +106,41 @@ test('runOpencode captures rate limit from stderr metadata', async () => {
   assert.equal(done.meta.rateLimit.retryAfterSeconds, 42);
 });
 
+test('runOpencode command mode preserves multi-chunk text in meta finalText', async () => {
+  const { runOpencode } = loadRunnerWithEnv({
+    OMG_MAX_PROCESS_SECONDS: 10,
+    OMG_EXECUTION_TRANSPORT: 'command',
+  });
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runner-multitext-'));
+  const events = [];
+
+  const done = await new Promise((resolve, reject) => {
+    runOpencode(
+      {
+        opencodeCommand: 'node test/fixtures/fake-opencode-multitext.js',
+        workdir: process.cwd(),
+        logFile: path.join(tmpDir, 'runner-multitext.log'),
+      },
+      'multi-text',
+      {
+        onEvent: (evt) => events.push(evt),
+        onDone: (exitCode, timeoutMsg, meta) => resolve({ exitCode, timeoutMsg, meta }),
+        onError: reject,
+        sessionId: '',
+      }
+    );
+  });
+
+  assert.equal(done.exitCode, 0);
+  assert.equal(done.timeoutMsg, null);
+  assert.equal(done.meta.sessionId, 'sess-multi');
+  assert.match(done.meta.finalText, /internal preface/);
+  assert.match(done.meta.finalText, /canonical-final-from-command/);
+  const textEvents = events.filter((evt) => evt.type === 'text');
+  assert.equal(textEvents.length >= 2, true);
+  assert.equal(textEvents.every((evt) => evt.textKind === 'stream'), true);
+});
+
 test('runOpencode sdk mode streams events and builds final text', async () => {
   const { runOpencode } = loadRunnerWithEnv({
     OMG_MAX_PROCESS_SECONDS: 10,

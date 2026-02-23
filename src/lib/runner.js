@@ -222,6 +222,16 @@ function runViaCommand(instance, prompt, { onEvent, onDone, onError, sessionId }
   const stderrSamples = [];
   const state = { rateLimit: null };
 
+  function mergeTextChunks(prev, next) {
+    const a = String(prev || '');
+    const b = String(next || '');
+    if (!a) return b;
+    if (!b) return a;
+    if (b.includes(a)) return b;
+    if (a.includes(b)) return a;
+    return `${a}\n${b}`;
+  }
+
   function parseStderrChunk(chunk) {
     stderrBuf += chunk;
     const lines = stderrBuf.split('\n');
@@ -254,8 +264,8 @@ function runViaCommand(instance, prompt, { onEvent, onDone, onError, sessionId }
       }
       if (evt.type === 'text') {
         const text = String(part.text || '');
-        if (text.trim()) latestFinalText = text;
-        onEvent({ type: 'text', content: text, textKind: 'final', sessionId: latestSessionId });
+        if (text.trim()) latestFinalText = mergeTextChunks(latestFinalText, text);
+        onEvent({ type: 'text', content: text, textKind: 'stream', sessionId: latestSessionId });
         return;
       }
       if (evt.type === 'tool_use') {

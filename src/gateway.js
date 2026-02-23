@@ -1144,7 +1144,18 @@ function formatToolBrief(evt) {
   return title;
 }
 
-function buildNoOutputMessage({ exitCode, stepCount, toolCount, toolNames, stepReason, rawSamples, logFile, rateLimit, stderrSamples }) {
+function buildNoOutputMessage({
+  exitCode,
+  stepCount,
+  toolCount,
+  toolNames,
+  stepReason,
+  rawSamples,
+  logFile,
+  rateLimit,
+  stderrSamples,
+  includeRawDiagnostics,
+}) {
   const status = exitCode === 0 ? 'done (no final text)' : `exit ${exitCode}`;
   const lines = [
     'No final answer text was produced by opencode.',
@@ -1170,7 +1181,7 @@ function buildNoOutputMessage({ exitCode, stepCount, toolCount, toolNames, stepR
     lines.push(`last step reason: ${stepReason}`);
   }
 
-  if (rawSamples.length > 0) {
+  if (includeRawDiagnostics && rawSamples.length > 0) {
     lines.push('recent raw events:');
     rawSamples.forEach((raw, idx) => {
       lines.push(`${idx + 1}. ${raw}`);
@@ -1231,6 +1242,16 @@ function sanitizeDisplayOutputText(text) {
 
 function sanitizeFinalOutputText(text, promptText) {
   return sanitizeCanonicalOutputText(text, promptText);
+}
+
+function mergeTextForFinalization(prev, next) {
+  const a = String(prev || '').trim();
+  const b = String(next || '').trim();
+  if (!a) return b;
+  if (!b) return a;
+  if (b.includes(a)) return b;
+  if (a.includes(b)) return a;
+  return `${a}\n${b}`;
 }
 
 function selectFinalOutputText(metaFinalText, streamFinalText) {
@@ -1847,6 +1868,7 @@ async function startPromptRun(bot, repo, state, runItem) {
 
   let finalText = '';
   let streamText = '';
+  let streamFinalCandidate = '';
   let streamFinalSeen = '';
   let toolCount = 0;
   let stepCount = 0;
@@ -1974,9 +1996,13 @@ async function startPromptRun(bot, repo, state, runItem) {
         if (cleaned.trim()) {
           if (evt.textKind === 'reasoning') {
             streamText = cleaned;
-          } else {
+          } else if (evt.textKind === 'final') {
             finalText = cleaned;
             streamFinalSeen = cleaned;
+            streamFinalCandidate = mergeTextForFinalization(streamFinalCandidate, cleaned);
+          } else {
+            streamText = cleaned;
+            streamFinalCandidate = mergeTextForFinalization(streamFinalCandidate, cleaned);
           }
           if (statusMsgId && cleaned !== lastStreamSnapshot) {
             lastStreamSnapshot = cleaned;
@@ -2062,7 +2088,7 @@ async function startPromptRun(bot, repo, state, runItem) {
       const status = interrupted ? 'interrupted' : (timeoutMsg ? 'timeout' : (exitCode === 0 ? 'done' : `exit ${exitCode}`));
       const finalResolution = resolveFinalizationOutput({
         metaFinalText: meta && typeof meta.finalText === 'string' ? meta.finalText : '',
-        streamFinalText: streamFinalSeen || finalText,
+        streamFinalText: streamFinalSeen || finalText || streamFinalCandidate,
         promptText,
         isVersionPrompt,
         hermuxVersion,
@@ -2111,6 +2137,7 @@ async function startPromptRun(bot, repo, state, runItem) {
           logFile: repo.logFile,
           rateLimit: meta && meta.rateLimit ? meta.rateLimit : null,
           stderrSamples: meta && Array.isArray(meta.stderrSamples) ? meta.stderrSamples : [],
+          includeRawDiagnostics: !!state.verbose,
         });
         const fallback = isVersionPrompt ? appendHermuxVersion(fallbackBase, hermuxVersion) : fallbackBase;
         await safeSend(bot, chatId, fallback);
