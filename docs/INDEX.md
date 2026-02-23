@@ -9,8 +9,9 @@ This is the canonical documentation entrypoint.
 3. `docs/rules/DOCUMENTATION_RULES.md`
 4. `docs/specs/UX_SPEC.md`
 5. `docs/specs/COMPONENT_CONTRACTS.md`
-6. `docs/ARCHITECTURE.md`
-7. `docs/DEVELOPER_GUIDE.md`
+6. `docs/specs/TELEGRAM_E2E_STUB_SPEC.md`
+7. `docs/ARCHITECTURE.md`
+8. `docs/DEVELOPER_GUIDE.md`
 
 ## Documents
 
@@ -33,6 +34,11 @@ This is the canonical documentation entrypoint.
   - Audience: implementers and testers
   - Purpose: interface-level contracts (CLI, config, routing, runner, transforms)
   - Update when: function-level/public module contract changes
+
+- `docs/specs/TELEGRAM_E2E_STUB_SPEC.md`
+  - Audience: implementers and testers
+  - Purpose: Telegram API stub contract for e2e/CI/debug loops
+  - Update when: stub endpoints, control API, or e2e Telegram contract flows change
 
 - `docs/DEVELOPER_GUIDE.md`
   - Audience: developers and agents

@@ -72,6 +72,7 @@ Recovery guarantees:
 - session map: runtime session map file
 - runtime lock/state: `runtime/serve-locks/**`
 - run logs: per-repo log path
+- telegram e2e stub fixture: `test/fixtures/telegram-mock-server.js`
 
 ## Failure Semantics
 

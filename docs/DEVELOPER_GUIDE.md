@@ -21,6 +21,10 @@ npm start
 
 # tests
 npm test
+
+# telegram stub for e2e/debug loops
+npm run telegram:stub
+npm run test:e2e:telegram
 ```
 
 Direct CLI equivalents:
@@ -83,6 +87,42 @@ Legacy `instances[]` configs are normalized during load.
 - `OMG_SERVE_LOCK_LEASE_RENEW_MS`
 - `OMG_SERVE_LOCK_RETRY_MIN_MS`
 - `OMG_SERVE_LOCK_RETRY_MAX_MS`
+
+## Telegram E2E Stub Loop
+
+Use this loop to validate Telegram contracts without real Telegram network dependency.
+
+1. Start stub server:
+
+```bash
+npm run telegram:stub
+```
+
+2. Start gateway against stub:
+
+```bash
+OMG_TELEGRAM_BASE_API_URL=http://127.0.0.1:8081 OMG_TELEGRAM_POLLING_TIMEOUT_SECONDS=0 npm start
+```
+
+3. Inject updates (example):
+
+```bash
+curl -X POST http://127.0.0.1:8081/__control/updates -H 'content-type: application/json' -d '{"token":"test-token","update":{"message":{"message_id":1,"date":1700000000,"text":"/start","chat":{"id":100,"type":"private"},"from":{"id":200,"is_bot":false,"first_name":"Tester"}}}}'
+```
+
+4. Inspect outbound Telegram API calls captured by stub:
+
+```bash
+curl http://127.0.0.1:8081/__control/requests
+```
+
+5. Run e2e contract tests:
+
+```bash
+npm run test:e2e:telegram
+```
+
+Reference: `docs/specs/TELEGRAM_E2E_STUB_SPEC.md`.
 
 ## Packaging Notes
 
