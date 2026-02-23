@@ -66,14 +66,14 @@ Command handling contract:
 Execution contract:
 
 - `runOpencode(instance, prompt, handlers)` is primary execution entrypoint
-- serve transport can persist daemon by repo scope key
-- lock/lease mechanism prevents duplicate daemon races
-- stale lock and stale daemon records are recoverable
+- SDK transport is the default runtime path
+- optional command transport fallback can be forced via `OMG_EXECUTION_TRANSPORT=command`
+- runtime status is tracked by repo scope key
 
 Failure contract:
 
 - timeout and backend errors are surfaced through handler callbacks
-- restart/shutdown paths trigger daemon cleanup behavior
+- restart/shutdown paths trigger runtime executor cleanup behavior
 
 ## 6) Output Transform Contract (`src/lib/md2html.js`)
 
@@ -90,5 +90,5 @@ Every contract above must map to at least one test suite section.
 - CLI: `test/cli.test.js`
 - Config/session: `test/config.test.js`, `test/session-map.test.js`
 - Gateway runtime/UX behavior: `test/gateway-internal.test.js`, `test/gateway-main.test.js`
-- Runner daemon/lifecycle: `test/runner.test.js`
+- Runner runtime lifecycle: `test/runner.test.js`
 - Transform: `test/md2html.test.js`

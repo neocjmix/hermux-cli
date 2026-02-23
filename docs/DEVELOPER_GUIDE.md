@@ -66,7 +66,7 @@ Reference rule: `docs/rules/DOCUMENTATION_RULES.md`.
       "enabled": true,
       "workdir": "/absolute/path",
       "chatIds": ["-1001111111111"],
-      "opencodeCommand": "opencode serve",
+      "opencodeCommand": "opencode sdk",
       "logFile": "./logs/my-repo.log"
     }
   ]
@@ -78,15 +78,12 @@ Legacy `instances[]` configs are normalized during load.
 ## Runtime Tuning Environment Variables
 
 - `OMG_MAX_PROCESS_SECONDS`
-- `OMG_SERVE_READY_TIMEOUT_MS`
-- `OMG_SERVE_PORT_RANGE_MIN`
-- `OMG_SERVE_PORT_RANGE_MAX`
-- `OMG_SERVE_PORT_PICK_ATTEMPTS`
-- `OMG_SERVE_LOCK_WAIT_TIMEOUT_MS`
-- `OMG_SERVE_LOCK_STALE_MS`
-- `OMG_SERVE_LOCK_LEASE_RENEW_MS`
-- `OMG_SERVE_LOCK_RETRY_MIN_MS`
-- `OMG_SERVE_LOCK_RETRY_MAX_MS`
+- `OMG_SDK_SERVER_START_TIMEOUT_MS`
+- `OMG_SDK_PORT_RANGE_MIN`
+- `OMG_SDK_PORT_RANGE_MAX`
+- `OMG_SDK_PORT_PICK_ATTEMPTS`
+- `OMG_EXECUTION_TRANSPORT` (`sdk` or `command`)
+- `OMG_OPENCODE_SDK_SHIM` (test shim path override)
 
 ## Telegram E2E Stub Loop
 

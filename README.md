@@ -1,6 +1,6 @@
 # hermux
 
-Telegram gateway for running local `opencode` sessions from chat, with repo-scoped isolation and a persistent `opencode serve` runtime.
+Telegram gateway for running local `opencode` sessions from chat, with repo-scoped isolation and an SDK-backed runtime executor.
 
 ## Start Here
 
@@ -14,7 +14,7 @@ hermux start
 - One global Telegram bot token.
 - Multiple repo contexts (`name`, `workdir`, `chatIds`) under one gateway process.
 - One active execution per repo context (`running` lock per repo).
-- Persistent repo-scoped serve daemon with lock/lease recovery.
+- Persistent repo-scoped runtime session continuity via SDK session IDs.
 
 ## User Command Surface
 

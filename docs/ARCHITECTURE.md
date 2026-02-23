@@ -9,7 +9,7 @@
 - Telegram boundary: one polling bot process.
 - Routing boundary: chat ID resolves to one repo context.
 - Execution boundary: one active run per repo context.
-- Backend boundary: runner executes via serve transport or command transport.
+- Backend boundary: runner executes via SDK transport or command transport.
 
 ## Module Boundaries
 
@@ -47,18 +47,16 @@ Per repo context state includes:
 
 This state is not shared across repo contexts.
 
-## Serve Daemon Lifecycle
+## Runtime Executor Lifecycle
 
 - scope key: `repoName::workdir`
-- lock path: `runtime/serve-locks/<scope>/lock`
-- daemon state path: `runtime/serve-locks/<scope>/daemon.json`
+- runtime status key: in-memory state keyed by scope in `src/lib/runner.js`
 
 Recovery guarantees:
 
-- lock-based startup serialization
-- stale lock recovery using lease + pid checks
-- stale daemon record cleanup using pid + health checks
-- global stop-all cleanup during restart/shutdown
+- per-scope active run tracking
+- explicit global executor stop during restart/shutdown
+- command-transport timeout kill fallback
 
 ## Command Surface (Current)
 
@@ -70,7 +68,7 @@ Recovery guarantees:
 
 - config: `config/instances.json`
 - session map: runtime session map file
-- runtime lock/state: `runtime/serve-locks/**`
+- runtime status/state: in-memory map in `src/lib/runner.js`
 - run logs: per-repo log path
 - telegram e2e stub fixture: `test/fixtures/telegram-mock-server.js`
 
@@ -79,7 +77,7 @@ Recovery guarantees:
 - unmapped chat interactions return setup/connect guidance
 - runner errors/timeouts return explicit error responses
 - interrupt and restart are idempotent at command level
-- restart/shutdown attempts daemon cleanup first
+- restart/shutdown attempts runtime executor cleanup first
 
 ## Reference Contracts
 
