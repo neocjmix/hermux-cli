@@ -1296,6 +1296,95 @@ function formatToolBrief(evt) {
   return title;
 }
 
+function parseRawEventContent(raw) {
+  const text = String(raw || '').trim();
+  if (!text) return { kind: 'empty', text: '' };
+  if (!(text.startsWith('{') || text.startsWith('['))) return { kind: 'text', text };
+  try {
+    const json = JSON.parse(text);
+    if (json && typeof json === 'object') return { kind: 'json', text, json };
+    return { kind: 'text', text };
+  } catch (_err) {
+    return { kind: 'text', text };
+  }
+}
+
+function formatRawEventPreview(raw) {
+  const parsed = parseRawEventContent(raw);
+  if (parsed.kind === 'empty') return { show: false, preview: '', category: 'empty', sample: '' };
+  if (parsed.kind === 'text') {
+    const preview = summarizeAuditText(parsed.text);
+    return { show: !!preview, preview, category: 'plain_text', sample: preview };
+  }
+
+  const evt = parsed.json;
+  const type = String(evt.type || '').trim();
+  const props = evt.properties && typeof evt.properties === 'object' ? evt.properties : {};
+
+  if (type === 'tui.toast.show') {
+    const title = String(props.title || '').replace(/[\u25cf\u25cb\u25cc\u25e6\u2022\u00b7]/g, '').trim();
+    const message = String(props.message || '').trim();
+    const merged = [title, message].filter(Boolean).join(' - ');
+    const preview = summarizeAuditText(merged ? `toast: ${merged}` : 'toast event');
+    return { show: !!preview, preview, category: 'toast', sample: summarizeAuditText(parsed.text) };
+  }
+
+  if (type === 'session.updated') {
+    const info = props.info && typeof props.info === 'object' ? props.info : {};
+    const sid = String(info.id || '').trim();
+    const dir = String(info.directory || '').trim();
+    const preview = summarizeAuditText(`session updated${sid ? `: ${sid.slice(0, 16)}` : ''}${dir ? ` (${dir})` : ''}`);
+    return { show: !!preview, preview, category: 'session', sample: summarizeAuditText(parsed.text) };
+  }
+
+  if (type === 'message.part.delta') {
+    const delta = String(props.delta || '').trim();
+    const field = String(props.field || '').trim();
+    const body = delta || field || 'delta';
+    const preview = summarizeAuditText(`stream delta: ${body}`);
+    return { show: !!preview, preview, category: 'message_delta', sample: summarizeAuditText(parsed.text) };
+  }
+
+  if (type === 'server.connected') {
+    return { show: true, preview: 'event stream connected', category: 'server', sample: summarizeAuditText(parsed.text) };
+  }
+
+  if (type === 'session.diff') {
+    return { show: true, preview: 'session diff updated', category: 'session_diff', sample: summarizeAuditText(parsed.text) };
+  }
+
+  if (type === 'message.updated') {
+    const info = props.info && typeof props.info === 'object' ? props.info : {};
+    const role = String(info.role || '').trim();
+    const preview = summarizeAuditText(`message updated${role ? `: ${role}` : ''}`);
+    return { show: !!preview, preview, category: 'message', sample: summarizeAuditText(parsed.text) };
+  }
+
+  const fallback = summarizeAuditText(`${type || 'json'} event`);
+  return { show: !!fallback, preview: fallback, category: 'json_other', sample: summarizeAuditText(parsed.text) };
+}
+
+function resolveRawDeliveryPlan(rawInfo, verbose) {
+  const category = rawInfo && rawInfo.category ? String(rawInfo.category) : 'unknown';
+  if (!rawInfo || !rawInfo.show || !rawInfo.preview) {
+    return { updateStream: false, sendVerboseDirect: false };
+  }
+
+  if (category === 'plain_text' || category === 'message_delta') {
+    return { updateStream: true, sendVerboseDirect: false };
+  }
+
+  if (category === 'toast') {
+    return { updateStream: !!verbose, sendVerboseDirect: false };
+  }
+
+  if (category === 'session' || category === 'session_diff' || category === 'server' || category === 'message' || category === 'json_other') {
+    return { updateStream: false, sendVerboseDirect: !!verbose };
+  }
+
+  return { updateStream: !!verbose, sendVerboseDirect: !!verbose };
+}
+
 function buildNoOutputMessage({
   exitCode,
   stepCount,
@@ -2041,6 +2130,8 @@ async function startPromptRun(bot, repo, state, runItem) {
   let lastEventAt = Date.now();
   let heartbeatTimer = null;
   let completionHandled = false;
+  let lastRawPreviewSent = '';
+  let lastRawPreviewSentAt = 0;
   const runId = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
   const runAuditMeta = {
     runId,
@@ -2269,23 +2360,38 @@ async function startPromptRun(bot, repo, state, runItem) {
       }
 
       if (type === 'raw') {
-        const trimmed = (evt.content || '').trim().slice(0, 200);
-        if (trimmed) {
-          rawSamples.push(trimmed);
+        const rawInfo = formatRawEventPreview(evt.content || '');
+        const rawPlan = resolveRawDeliveryPlan(rawInfo, !!state.verbose);
+        if (rawInfo.sample) {
+          rawSamples.push(rawInfo.sample);
           if (rawSamples.length > 3) rawSamples.shift();
-          lastRawBrief = trimmed;
+        }
+        const now = Date.now();
+        const isSamePreview = rawInfo.preview && rawInfo.preview === lastRawPreviewSent;
+        const toastCooldownMs = rawInfo.category === 'toast' ? 1500 : 0;
+        const allowByCooldown = !isSamePreview || now - lastRawPreviewSentAt >= toastCooldownMs;
+
+        if (rawPlan.updateStream && rawInfo.preview && allowByCooldown) {
+          lastRawBrief = rawInfo.preview;
+          lastRawPreviewSent = rawInfo.preview;
+          lastRawPreviewSentAt = now;
           await refreshPanel('running', false);
           await refreshStream(false);
-          if (state.verbose && !statusMsgId) {
-            await safeSend(bot, chatId, `<pre>${escapeHtml(trimmed)}</pre>`, { parse_mode: 'HTML' }, {
-              ...runAuditMeta,
-              channel: 'verbose_raw_event',
-            });
-          }
+        }
+        if (rawPlan.sendVerboseDirect && state.verbose && !statusMsgId && rawInfo.preview && allowByCooldown) {
+          lastRawPreviewSent = rawInfo.preview;
+          lastRawPreviewSentAt = now;
+          await safeSend(bot, chatId, `<code>${escapeHtml(rawInfo.preview)}</code>`, { parse_mode: 'HTML' }, {
+            ...runAuditMeta,
+            channel: 'verbose_raw_event',
+            rawCategory: rawInfo.category,
+          });
         }
         audit('run.reaction', {
           ...runAuditMeta,
           event: 'raw',
+          rawCategory: rawInfo.category,
+          rawPlan,
           rawCount: rawSamples.length,
           rawPreview: lastRawBrief,
         });
@@ -2730,5 +2836,8 @@ module.exports = {
     normalizeImageExt,
     getImagePayloadFromMessage,
     formatRepoList,
+    parseRawEventContent,
+    formatRawEventPreview,
+    resolveRawDeliveryPlan,
   },
 };

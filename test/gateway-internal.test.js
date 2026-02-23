@@ -256,6 +256,64 @@ test('extractMermaidBlocks parses fenced mermaid blocks', () => {
   assert.match(blocks[1], /sequenceDiagram/);
 });
 
+test('parseRawEventContent classifies JSON and plain text', () => {
+  const json = _internal.parseRawEventContent('{"type":"server.connected"}');
+  assert.equal(json.kind, 'json');
+  assert.equal(json.json.type, 'server.connected');
+
+  const text = _internal.parseRawEventContent('plain message');
+  assert.equal(text.kind, 'text');
+});
+
+test('formatRawEventPreview formats toast and removes spinner glyph noise', () => {
+  const out = _internal.formatRawEventPreview(JSON.stringify({
+    type: 'tui.toast.show',
+    properties: {
+      title: '● OhMyOpenCode 3.8.3',
+      message: 'Sisyphus on steroids is steering OpenCode.',
+    },
+  }));
+
+  assert.equal(out.category, 'toast');
+  assert.match(out.preview, /^toast:/);
+  assert.doesNotMatch(out.preview, /●/);
+  assert.match(out.preview, /OhMyOpenCode 3\.8\.3/);
+});
+
+test('formatRawEventPreview summarizes session and delta events', () => {
+  const sessionOut = _internal.formatRawEventPreview(JSON.stringify({
+    type: 'session.updated',
+    properties: { info: { id: 'ses_abcdef1234567890', directory: '/tmp/demo' } },
+  }));
+  assert.equal(sessionOut.category, 'session');
+  assert.match(sessionOut.preview, /session updated/);
+  assert.match(sessionOut.preview, /\/tmp\/demo/);
+
+  const deltaOut = _internal.formatRawEventPreview(JSON.stringify({
+    type: 'message.part.delta',
+    properties: { field: 'text', delta: 'hello world' },
+  }));
+  assert.equal(deltaOut.category, 'message_delta');
+  assert.match(deltaOut.preview, /stream delta: hello world/);
+});
+
+test('resolveRawDeliveryPlan applies deterministic category rules', () => {
+  const plain = _internal.resolveRawDeliveryPlan({ show: true, preview: 'hello', category: 'plain_text' }, false);
+  assert.deepEqual(plain, { updateStream: true, sendVerboseDirect: false });
+
+  const toastNormal = _internal.resolveRawDeliveryPlan({ show: true, preview: 'toast: hi', category: 'toast' }, false);
+  assert.deepEqual(toastNormal, { updateStream: false, sendVerboseDirect: false });
+
+  const toastVerbose = _internal.resolveRawDeliveryPlan({ show: true, preview: 'toast: hi', category: 'toast' }, true);
+  assert.deepEqual(toastVerbose, { updateStream: true, sendVerboseDirect: false });
+
+  const sessionVerbose = _internal.resolveRawDeliveryPlan({ show: true, preview: 'session updated', category: 'session' }, true);
+  assert.deepEqual(sessionVerbose, { updateStream: false, sendVerboseDirect: true });
+
+  const sessionNormal = _internal.resolveRawDeliveryPlan({ show: true, preview: 'session updated', category: 'session' }, false);
+  assert.deepEqual(sessionNormal, { updateStream: false, sendVerboseDirect: false });
+});
+
 test('withStateDispatchLock serializes concurrent tasks', async () => {
   const state = {};
   const seq = [];
