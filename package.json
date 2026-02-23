@@ -10,9 +10,9 @@
     "onboard": "node src/cli.js onboard",
     "start": "node src/cli.js start",
     "check": "bash scripts/check_prereqs.sh",
-    "test": "node --test --test-concurrency=1 test/*.test.js",
+    "test": "node scripts/run-tests-isolated.js \"node --test --test-concurrency=1 test/*.test.js\"",
     "telegram:stub": "node scripts/telegram_mock_server.js",
-    "test:e2e:telegram": "node --test --test-concurrency=1 test/gateway-e2e-telegram-stub.test.js"
+    "test:e2e:telegram": "node scripts/run-tests-isolated.js \"node --test --test-concurrency=1 test/gateway-e2e-telegram-stub.test.js\""
   },
   "dependencies": {
     "@opencode-ai/sdk": "^1.2.10",

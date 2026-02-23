@@ -102,6 +102,12 @@ function createMessageHandler(deps) {
     }
 
     const state = states.get(repo.name);
+
+    if (command === '/restart' || command === '/interrupt') {
+      await handleRepoMessage(bot, repo, state, msg);
+      return;
+    }
+
     await withStateDispatchLock(state, async () => {
       await handleRepoMessage(bot, repo, state, msg);
     });

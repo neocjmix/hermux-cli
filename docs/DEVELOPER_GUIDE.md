@@ -22,6 +22,9 @@ npm start
 # tests
 npm test
 
+# isolated e2e
+npm run test:e2e:telegram
+
 # telegram stub for e2e/debug loops
 npm run telegram:stub
 npm run test:e2e:telegram
@@ -84,6 +87,16 @@ Legacy `instances[]` configs are normalized during load.
 - `OMG_SDK_PORT_PICK_ATTEMPTS`
 - `OMG_EXECUTION_TRANSPORT` (`sdk` or `command`)
 - `OMG_OPENCODE_SDK_SHIM` (test shim path override)
+
+## Test Profile Isolation
+
+`npm test` and `npm run test:e2e:telegram` run through an isolated profile root (`.tmp/test-profile`) and set:
+
+- `OMG_CONFIG_DIR` / `OMG_CONFIG_PATH`
+- `OMG_STATE_DIR` / `OMG_SESSION_MAP_PATH`
+- `OMG_RUNTIME_DIR`
+
+This prevents test runs from mutating developer/production files under `config/`, `state/`, and `runtime/`.
 
 ## Telegram E2E Stub Loop
 

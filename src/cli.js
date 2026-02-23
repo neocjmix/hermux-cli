@@ -5,7 +5,8 @@ const fs = require('fs');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 
-const RUNTIME_DIR = path.join(__dirname, '..', 'runtime');
+const DEFAULT_RUNTIME_DIR = path.join(__dirname, '..', 'runtime');
+const RUNTIME_DIR = path.resolve(process.env.OMG_RUNTIME_DIR || DEFAULT_RUNTIME_DIR);
 const PID_PATH = path.join(RUNTIME_DIR, 'gateway.pid');
 const LOG_PATH = path.join(RUNTIME_DIR, 'gateway.log');
 

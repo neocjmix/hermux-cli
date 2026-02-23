@@ -18,7 +18,8 @@ const { version: HERMUX_VERSION } = require('../package.json');
 
 const TG_MAX_LEN = 4000;
 const IMAGE_UPLOAD_DIR = '.opencode_mobile_gateway/uploads';
-const RUNTIME_DIR = path.join(__dirname, '..', 'runtime');
+const DEFAULT_RUNTIME_DIR = path.join(__dirname, '..', 'runtime');
+const RUNTIME_DIR = path.resolve(process.env.OMG_RUNTIME_DIR || DEFAULT_RUNTIME_DIR);
 const PID_PATH = path.join(RUNTIME_DIR, 'gateway.pid');
 const LOG_PATH = path.join(RUNTIME_DIR, 'gateway.log');
 const RESTART_NOTICE_PATH = path.join(RUNTIME_DIR, 'restart-notice.json');

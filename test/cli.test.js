@@ -8,7 +8,7 @@ const config = require('../src/lib/config');
 const sessionMap = require('../src/lib/session-map');
 
 const cliPath = path.resolve(__dirname, '..', 'src', 'cli.js');
-const runtimeDir = path.resolve(__dirname, '..', 'runtime');
+const runtimeDir = path.resolve(process.env.OMG_RUNTIME_DIR || path.join(__dirname, '..', 'runtime'));
 const pidPath = path.join(runtimeDir, 'gateway.pid');
 
 const SNAPSHOT = Symbol('missing');

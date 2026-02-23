@@ -176,6 +176,19 @@ test('message handler serializes concurrent mapped messages through lock', async
   assert.deepEqual(sequence, ['start:a', 'end:a', 'start:b', 'end:b']);
 });
 
+test('message handler bypasses state lock for mapped /restart and /interrupt', async () => {
+  const { calls, deps, chatRouter, states } = makeHarness();
+  chatRouter.set('100', { name: 'demo', workdir: '/tmp/demo' });
+  states.set('demo', { running: true, queue: [] });
+  const handler = createMessageHandler(deps);
+
+  await handler({ chat: { id: '100' }, text: '/restart' });
+  await handler({ chat: { id: '100' }, text: '/interrupt' });
+
+  assert.equal(calls.withStateDispatchLock, 0);
+  assert.equal(calls.repoDispatch, 2);
+});
+
 test('message handler delegates /init to init command flow', async () => {
   const { calls, deps } = makeHarness();
   const handler = createMessageHandler(deps);
