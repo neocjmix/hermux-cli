@@ -53,6 +53,17 @@ Event ingress is unified at Telegram update level and then split into command/ca
 - Control-command bypass for immediate interruption/restart (`/interrupt`, `/restart`) skips dispatch lock in `src/gateway-message-handler.js`.
 - Prompt work is queue-backed per repo (`state.queue`) and one-active-run per repo (`state.running`) in `src/gateway-repo-message-handler.js` and `src/gateway.js`.
 
+## Observability
+
+Development/debug runtime uses dense structured audit logs.
+
+- File: `runtime/audit-events.jsonl` (or `${OMG_RUNTIME_DIR}/audit-events.jsonl`)
+- Source: `src/lib/audit-log.js` and integration points in `src/gateway.js`
+- Coverage:
+  - inbound Telegram updates (`telegram.update`)
+  - normalized runtime events and reaction decisions (`run.event_received`, `run.reaction`, `run.finalization`, `run.complete`, `run.error`)
+  - Telegram API outcomes (`telegram.send`, `telegram.edit`, `telegram.delete`, `telegram.send_photo`, `telegram.send_document`)
+
 ## Isolation Model
 
 Per repo context state includes:

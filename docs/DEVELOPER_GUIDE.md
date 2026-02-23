@@ -98,6 +98,23 @@ Legacy `instances[]` configs are normalized during load.
 
 This prevents test runs from mutating developer/production files under `config/`, `state/`, and `runtime/`.
 
+## Event/Telegram Audit Logging
+
+Hermux now writes dense JSONL audit logs for development/debugging to:
+
+- `runtime/audit-events.jsonl` (or `${OMG_RUNTIME_DIR}/audit-events.jsonl`)
+
+Each record includes:
+
+- `kind`: event category (`telegram.update`, `run.event_received`, `run.reaction`, `run.finalization`, `telegram.send`, `telegram.edit`, `telegram.delete`, etc.)
+- `payload`: structured metadata (repo/chat/run correlation ids, event type, decision summary, and Telegram API outcome)
+
+Use cases:
+
+- trace OpenCode runtime events to gateway reactions,
+- trace gateway reactions to actual Telegram send/edit/delete outcomes,
+- diagnose output loss/merge/leak behavior with per-run context.
+
 ## Telegram E2E Stub Loop
 
 Use this loop to validate Telegram contracts without real Telegram network dependency.

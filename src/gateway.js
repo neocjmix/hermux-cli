@@ -11,6 +11,7 @@ const { load, getEnabledRepos, addChatIdToRepo, addOrUpdateRepo, setGlobalBotTok
 const { runOpencode, stopAllRuntimeExecutors, getRuntimeStatusForInstance } = require('./lib/runner');
 const { md2html, escapeHtml } = require('./lib/md2html');
 const { getSessionId, setSessionId, clearSessionId, getSessionInfo, clearAllSessions, SESSION_MAP_PATH } = require('./lib/session-map');
+const { makeAuditLogger } = require('./lib/audit-log');
 const { createRepoMessageHandler } = require('./gateway-repo-message-handler');
 const { createMessageHandler } = require('./gateway-message-handler');
 const { createCallbackQueryHandler } = require('./gateway-callback-query-handler');
@@ -29,9 +30,20 @@ const STREAM_EDIT_MIN_INTERVAL_VERBOSE_MS = 280;
 const STREAM_HEARTBEAT_MS = 1500;
 const OPENCODE_CONFIG_PATH = process.env.OMG_OPENCODE_CONFIG_PATH || path.join(process.env.HOME || '', '.config', 'opencode', 'opencode.json');
 const OMO_CONFIG_PATH = process.env.OMG_OMO_CONFIG_PATH || path.join(process.env.HOME || '', '.config', 'opencode', 'oh-my-opencode.json');
+const auditLogger = makeAuditLogger(RUNTIME_DIR);
 let connectMutationQueue = Promise.resolve();
 let restartMutationQueue = Promise.resolve();
 let restartInProgress = false;
+
+function summarizeAuditText(text) {
+  const value = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!value) return '';
+  return value.length > 500 ? `${value.slice(0, 500)}...(truncated)` : value;
+}
+
+function audit(kind, payload) {
+  auditLogger.write(kind, payload);
+}
 
 function withConnectMutationLock(task) {
   const run = connectMutationQueue.then(task, task);
@@ -970,79 +982,219 @@ function splitByLimit(text, maxLen) {
   return out;
 }
 
-async function safeSend(bot, chatId, text, opts) {
+async function safeSend(bot, chatId, text, opts, auditMeta) {
+  const parseMode = opts && opts.parse_mode ? String(opts.parse_mode) : '';
+  const preview = summarizeAuditText(text);
   try {
-    return await bot.sendMessage(chatId, text, opts);
+    const message = await bot.sendMessage(chatId, text, opts);
+    audit('telegram.send', {
+      ok: true,
+      chatId: String(chatId),
+      parseMode,
+      messageId: message && message.message_id ? message.message_id : null,
+      textPreview: preview,
+      meta: auditMeta || null,
+    });
+    return message;
   } catch (err) {
     console.error('send failed:', err.code || err.message, '| chat:', chatId, '| parse_mode:', opts && opts.parse_mode ? opts.parse_mode : 'none');
+    audit('telegram.send', {
+      ok: false,
+      stage: 'primary',
+      chatId: String(chatId),
+      parseMode,
+      error: String(err && (err.code || err.message || err) || ''),
+      textPreview: preview,
+      meta: auditMeta || null,
+    });
     if (opts && opts.parse_mode) {
       try {
-        return await bot.sendMessage(chatId, text);
+        const message = await bot.sendMessage(chatId, text);
+        audit('telegram.send', {
+          ok: true,
+          stage: 'fallback_plain',
+          chatId: String(chatId),
+          parseMode: '',
+          messageId: message && message.message_id ? message.message_id : null,
+          textPreview: preview,
+          meta: auditMeta || null,
+        });
+        return message;
       } catch (e) {
         console.error('plain send also failed:', e.code || e.message, '| chat:', chatId);
+        audit('telegram.send', {
+          ok: false,
+          stage: 'fallback_plain',
+          chatId: String(chatId),
+          parseMode: '',
+          error: String(e && (e.code || e.message || e) || ''),
+          textPreview: preview,
+          meta: auditMeta || null,
+        });
       }
     }
   }
   return null;
 }
 
-async function sendHtml(bot, chatId, html) {
+async function sendHtml(bot, chatId, html, auditMeta) {
   const chunks = splitByLimit(html, TG_MAX_LEN);
   let lastMsg = null;
-  for (const c of chunks) {
-    lastMsg = await safeSend(bot, chatId, c, { parse_mode: 'HTML' });
+  for (let i = 0; i < chunks.length; i++) {
+    const c = chunks[i];
+    lastMsg = await safeSend(bot, chatId, c, { parse_mode: 'HTML' }, {
+      ...(auditMeta || {}),
+      chunkIndex: i,
+      chunkCount: chunks.length,
+    });
   }
   return lastMsg;
 }
 
-async function sendMarkdownAsHtml(bot, chatId, markdown) {
+async function sendMarkdownAsHtml(bot, chatId, markdown, auditMeta) {
   const html = md2html(String(markdown || ''));
-  return sendHtml(bot, chatId, html);
+  return sendHtml(bot, chatId, html, auditMeta);
 }
 
-async function editHtml(bot, chatId, messageId, html) {
+async function editHtml(bot, chatId, messageId, html, auditMeta) {
   const truncated = html.length > TG_MAX_LEN ? html.slice(0, TG_MAX_LEN - 3) + '...' : html;
+  const preview = summarizeAuditText(truncated);
   try {
     await bot.editMessageText(truncated, { chat_id: chatId, message_id: messageId, parse_mode: 'HTML' });
+    audit('telegram.edit', {
+      ok: true,
+      stage: 'primary',
+      chatId: String(chatId),
+      messageId,
+      parseMode: 'HTML',
+      textPreview: preview,
+      meta: auditMeta || null,
+    });
   } catch (err) {
     if (!err.message.includes('message is not modified')) {
       console.error('edit failed:', err.code || err.message, '| chat:', chatId, '| message_id:', messageId);
+      audit('telegram.edit', {
+        ok: false,
+        stage: 'primary',
+        chatId: String(chatId),
+        messageId,
+        parseMode: 'HTML',
+        error: String(err && (err.code || err.message || err) || ''),
+        textPreview: preview,
+        meta: auditMeta || null,
+      });
       try {
         await bot.editMessageText(truncated, { chat_id: chatId, message_id: messageId });
+        audit('telegram.edit', {
+          ok: true,
+          stage: 'fallback_plain',
+          chatId: String(chatId),
+          messageId,
+          parseMode: '',
+          textPreview: preview,
+          meta: auditMeta || null,
+        });
       } catch (e) {
         console.error('plain edit also failed:', e.code || e.message, '| chat:', chatId, '| message_id:', messageId);
+        audit('telegram.edit', {
+          ok: false,
+          stage: 'fallback_plain',
+          chatId: String(chatId),
+          messageId,
+          parseMode: '',
+          error: String(e && (e.code || e.message || e) || ''),
+          textPreview: preview,
+          meta: auditMeta || null,
+        });
       }
+    } else {
+      audit('telegram.edit', {
+        ok: true,
+        stage: 'not_modified',
+        chatId: String(chatId),
+        messageId,
+        parseMode: 'HTML',
+        textPreview: preview,
+        meta: auditMeta || null,
+      });
     }
   }
 }
 
-async function safeDeleteMessage(bot, chatId, messageId) {
+async function safeDeleteMessage(bot, chatId, messageId, auditMeta) {
   try {
     await bot.deleteMessage(chatId, messageId);
+    audit('telegram.delete', {
+      ok: true,
+      chatId: String(chatId),
+      messageId,
+      meta: auditMeta || null,
+    });
     return true;
   } catch (err) {
     const msg = String(err && err.message ? err.message : err || '').trim();
     console.error(`delete failed: ${msg}`);
+    audit('telegram.delete', {
+      ok: false,
+      chatId: String(chatId),
+      messageId,
+      error: msg,
+      meta: auditMeta || null,
+    });
     return false;
   }
 }
 
-async function safeSendPhoto(bot, chatId, filePath, caption) {
+async function safeSendPhoto(bot, chatId, filePath, caption, auditMeta) {
   try {
     const stream = fs.createReadStream(filePath);
-    return await bot.sendPhoto(chatId, stream, caption ? { caption } : undefined);
+    const message = await bot.sendPhoto(chatId, stream, caption ? { caption } : undefined);
+    audit('telegram.send_photo', {
+      ok: true,
+      chatId: String(chatId),
+      messageId: message && message.message_id ? message.message_id : null,
+      filePath: String(filePath || ''),
+      captionPreview: summarizeAuditText(caption || ''),
+      meta: auditMeta || null,
+    });
+    return message;
   } catch (err) {
     console.error('send photo failed:', err.message);
+    audit('telegram.send_photo', {
+      ok: false,
+      chatId: String(chatId),
+      filePath: String(filePath || ''),
+      captionPreview: summarizeAuditText(caption || ''),
+      error: String(err && err.message ? err.message : err || ''),
+      meta: auditMeta || null,
+    });
     return null;
   }
 }
 
-async function safeSendDocument(bot, chatId, filePath, caption) {
+async function safeSendDocument(bot, chatId, filePath, caption, auditMeta) {
   try {
     const stream = fs.createReadStream(filePath);
-    return await bot.sendDocument(chatId, stream, caption ? { caption } : undefined);
+    const message = await bot.sendDocument(chatId, stream, caption ? { caption } : undefined);
+    audit('telegram.send_document', {
+      ok: true,
+      chatId: String(chatId),
+      messageId: message && message.message_id ? message.message_id : null,
+      filePath: String(filePath || ''),
+      captionPreview: summarizeAuditText(caption || ''),
+      meta: auditMeta || null,
+    });
+    return message;
   } catch (err) {
     console.error('send document failed:', err.message);
+    audit('telegram.send_document', {
+      ok: false,
+      chatId: String(chatId),
+      filePath: String(filePath || ''),
+      captionPreview: summarizeAuditText(caption || ''),
+      error: String(err && err.message ? err.message : err || ''),
+      meta: auditMeta || null,
+    });
     return null;
   }
 }
@@ -1889,6 +2041,19 @@ async function startPromptRun(bot, repo, state, runItem) {
   let lastEventAt = Date.now();
   let heartbeatTimer = null;
   let completionHandled = false;
+  const runId = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+  const runAuditMeta = {
+    runId,
+    repo: repo.name,
+    chatId: String(chatId),
+  };
+
+  audit('run.start', {
+    ...runAuditMeta,
+    sessionId: activeSessionId || null,
+    isVersionPrompt,
+    promptPreview: summarizeAuditText(promptText),
+  });
 
   const buildPanel = (phase) => buildLiveStatusPanelHtml({
     repoName: repo.name,
@@ -1904,9 +2069,17 @@ async function startPromptRun(bot, repo, state, runItem) {
     lastStepReason,
   });
 
-  const statusMsg = await safeSend(bot, chatId, buildPanel('running'), { parse_mode: 'HTML' });
+  const statusMsg = await safeSend(bot, chatId, buildPanel('running'), { parse_mode: 'HTML' }, {
+    ...runAuditMeta,
+    channel: 'status_panel',
+    phase: 'start',
+  });
   const statusMsgId = statusMsg ? statusMsg.message_id : null;
-  const streamMsg = await safeSend(bot, chatId, buildStreamingStatusHtml('(starting...)', state.verbose), { parse_mode: 'HTML' });
+  const streamMsg = await safeSend(bot, chatId, buildStreamingStatusHtml('(starting...)', state.verbose), { parse_mode: 'HTML' }, {
+    ...runAuditMeta,
+    channel: 'stream_preview',
+    phase: 'start',
+  });
   const streamMsgId = streamMsg ? streamMsg.message_id : null;
 
   const getAdaptiveInterval = (now, kind) => {
@@ -1931,7 +2104,11 @@ async function startPromptRun(bot, repo, state, runItem) {
     if (!force && html === lastPanelHtml) return;
     lastPanelEditAt = now;
     lastPanelHtml = html;
-    await editHtml(bot, chatId, statusMsgId, html);
+    await editHtml(bot, chatId, statusMsgId, html, {
+      ...runAuditMeta,
+      channel: 'status_panel',
+      phase,
+    });
   };
 
   const refreshStream = async (force) => {
@@ -1959,7 +2136,11 @@ async function startPromptRun(bot, repo, state, runItem) {
     if (!force && previewText === lastTextSnapshot) return;
     lastTextSnapshot = previewText;
     lastTextEditAt = now;
-    await editHtml(bot, chatId, streamMsgId, buildStreamingStatusHtml(previewText, state.verbose));
+    await editHtml(bot, chatId, streamMsgId, buildStreamingStatusHtml(previewText, state.verbose), {
+      ...runAuditMeta,
+      channel: 'stream_preview',
+      phase: 'running',
+    });
   };
 
   heartbeatTimer = setInterval(async () => {
@@ -1979,6 +2160,13 @@ async function startPromptRun(bot, repo, state, runItem) {
       const type = evt.type;
       if (evt.sessionId) activeSessionId = evt.sessionId;
       lastEventAt = Date.now();
+      audit('run.event_received', {
+        ...runAuditMeta,
+        type,
+        textKind: evt.textKind || null,
+        sessionId: evt.sessionId || activeSessionId || null,
+        contentPreview: summarizeAuditText(evt.content || evt.name || ''),
+      });
 
       if (type === 'step_start') {
         waitInfo = null;
@@ -1986,6 +2174,11 @@ async function startPromptRun(bot, repo, state, runItem) {
         stepCount++;
         await refreshPanel('running', false);
         await refreshStream(false);
+        audit('run.reaction', {
+          ...runAuditMeta,
+          event: 'step_start',
+          stepCount,
+        });
         return;
       }
 
@@ -2009,6 +2202,13 @@ async function startPromptRun(bot, repo, state, runItem) {
             await refreshPanel('running', false);
             await refreshStream(false);
           }
+          audit('run.reaction', {
+            ...runAuditMeta,
+            event: 'text',
+            textKind: evt.textKind || 'stream',
+            finalCandidateLength: streamFinalCandidate.length,
+            streamLength: streamText.length,
+          });
         }
         return;
       }
@@ -2024,8 +2224,17 @@ async function startPromptRun(bot, repo, state, runItem) {
         await refreshStream(false);
         if (state.verbose && !statusMsgId) {
           const toolMsg = `<code>${escapeHtml(brief)}</code>`;
-          await safeSend(bot, chatId, toolMsg, { parse_mode: 'HTML' });
+          await safeSend(bot, chatId, toolMsg, { parse_mode: 'HTML' }, {
+            ...runAuditMeta,
+            channel: 'verbose_tool_event',
+          });
         }
+        audit('run.reaction', {
+          ...runAuditMeta,
+          event: 'tool_use',
+          toolCount,
+          tool: brief,
+        });
         return;
       }
 
@@ -2035,6 +2244,11 @@ async function startPromptRun(bot, repo, state, runItem) {
         lastStepReason = evt.reason || lastStepReason;
         await refreshPanel('running', false);
         await refreshStream(false);
+        audit('run.reaction', {
+          ...runAuditMeta,
+          event: 'step_finish',
+          reason: lastStepReason || null,
+        });
         return;
       }
 
@@ -2046,6 +2260,11 @@ async function startPromptRun(bot, repo, state, runItem) {
         state.waitingInfo = waitInfo;
         await refreshPanel('running', false);
         await refreshStream(false);
+        audit('run.reaction', {
+          ...runAuditMeta,
+          event: 'wait',
+          waitInfo,
+        });
         return;
       }
 
@@ -2058,9 +2277,18 @@ async function startPromptRun(bot, repo, state, runItem) {
           await refreshPanel('running', false);
           await refreshStream(false);
           if (state.verbose && !statusMsgId) {
-            await safeSend(bot, chatId, `<pre>${escapeHtml(trimmed)}</pre>`, { parse_mode: 'HTML' });
+            await safeSend(bot, chatId, `<pre>${escapeHtml(trimmed)}</pre>`, { parse_mode: 'HTML' }, {
+              ...runAuditMeta,
+              channel: 'verbose_raw_event',
+            });
           }
         }
+        audit('run.reaction', {
+          ...runAuditMeta,
+          event: 'raw',
+          rawCount: rawSamples.length,
+          rawPreview: lastRawBrief,
+        });
       }
     },
 
@@ -2094,13 +2322,33 @@ async function startPromptRun(bot, repo, state, runItem) {
         hermuxVersion,
       });
       const mergedFinal = finalResolution.mergedFinal;
+      audit('run.finalization', {
+        ...runAuditMeta,
+        status,
+        interrupted,
+        timeout: !!timeoutMsg,
+        shouldSendFinal: finalResolution.shouldSendFinal,
+        finalLength: String(finalResolution.outgoingText || '').length,
+        mergedFinalLength: String(mergedFinal || '').length,
+      });
 
       if (interrupted) {
-        await safeSend(bot, chatId, 'Interrupted current task.');
+        await safeSend(bot, chatId, 'Interrupted current task.', undefined, {
+          ...runAuditMeta,
+          channel: 'control',
+          reason: 'interrupt',
+        });
       } else if (timeoutMsg) {
-        await safeSend(bot, chatId, `Timed out: ${timeoutMsg}`);
+        await safeSend(bot, chatId, `Timed out: ${timeoutMsg}`, undefined, {
+          ...runAuditMeta,
+          channel: 'control',
+          reason: 'timeout',
+        });
       } else if (finalResolution.shouldSendFinal) {
-        await sendMarkdownAsHtml(bot, chatId, finalResolution.outgoingText);
+        await sendMarkdownAsHtml(bot, chatId, finalResolution.outgoingText, {
+          ...runAuditMeta,
+          channel: 'final_output',
+        });
 
         const mermaidBlocks = extractMermaidBlocks(mergedFinal);
         if (mermaidBlocks.length > 0) {
@@ -2116,12 +2364,27 @@ async function startPromptRun(bot, repo, state, runItem) {
               const a = artifacts[i];
               const caption = artifacts.length > 1 ? `Mermaid diagram ${i + 1}/${artifacts.length}` : 'Mermaid diagram';
               if (a.kind === 'svg') {
-                await safeSendDocument(bot, chatId, a.path, caption);
+                await safeSendDocument(bot, chatId, a.path, caption, {
+                  ...runAuditMeta,
+                  channel: 'mermaid_artifact',
+                  kind: 'svg',
+                });
               } else if (a.kind === 'png') {
-                await safeSendPhoto(bot, chatId, a.path, caption);
+                await safeSendPhoto(bot, chatId, a.path, caption, {
+                  ...runAuditMeta,
+                  channel: 'mermaid_artifact',
+                  kind: 'png',
+                });
               } else if (a.kind === 'mmd') {
-                await safeSendDocument(bot, chatId, a.path, `${caption} (source, render failed)`);
-                await safeSend(bot, chatId, `Mermaid render failed; sent source file instead.\nreason: ${String(a.error || '').slice(0, 300)}`);
+                await safeSendDocument(bot, chatId, a.path, `${caption} (source, render failed)`, {
+                  ...runAuditMeta,
+                  channel: 'mermaid_artifact',
+                  kind: 'mmd',
+                });
+                await safeSend(bot, chatId, `Mermaid render failed; sent source file instead.\nreason: ${String(a.error || '').slice(0, 300)}`, undefined, {
+                  ...runAuditMeta,
+                  channel: 'mermaid_render_error',
+                });
               }
             }
           }
@@ -2140,7 +2403,11 @@ async function startPromptRun(bot, repo, state, runItem) {
           includeRawDiagnostics: !!state.verbose,
         });
         const fallback = isVersionPrompt ? appendHermuxVersion(fallbackBase, hermuxVersion) : fallbackBase;
-        await safeSend(bot, chatId, fallback);
+        await safeSend(bot, chatId, fallback, undefined, {
+          ...runAuditMeta,
+          channel: 'no_output_fallback',
+          includeRawDiagnostics: !!state.verbose,
+        });
       }
 
       if (statusMsgId) {
@@ -2148,9 +2415,17 @@ async function startPromptRun(bot, repo, state, runItem) {
       }
       if (streamMsgId) {
         if (!interrupted && !timeoutMsg && finalResolution.shouldSendFinal) {
-          const deleted = await safeDeleteMessage(bot, chatId, streamMsgId);
+          const deleted = await safeDeleteMessage(bot, chatId, streamMsgId, {
+            ...runAuditMeta,
+            channel: 'stream_preview',
+            phase: 'completion',
+          });
           if (!deleted) {
-            await editHtml(bot, chatId, streamMsgId, buildStreamingStatusHtml(finalResolution.streamCompletionText, state.verbose));
+            await editHtml(bot, chatId, streamMsgId, buildStreamingStatusHtml(finalResolution.streamCompletionText, state.verbose), {
+              ...runAuditMeta,
+              channel: 'stream_preview',
+              phase: 'completion',
+            });
           }
         } else {
           const endText = interrupted
@@ -2158,9 +2433,21 @@ async function startPromptRun(bot, repo, state, runItem) {
             : timeoutMsg
               ? 'timed out.'
               : finalResolution.streamCompletionText;
-          await editHtml(bot, chatId, streamMsgId, buildStreamingStatusHtml(endText, state.verbose));
+          await editHtml(bot, chatId, streamMsgId, buildStreamingStatusHtml(endText, state.verbose), {
+            ...runAuditMeta,
+            channel: 'stream_preview',
+            phase: 'completion',
+          });
         }
       }
+
+      audit('run.complete', {
+        ...runAuditMeta,
+        status,
+        exitCode,
+        timeout: timeoutMsg || null,
+        queueRemaining: Array.isArray(state.queue) ? state.queue.length : 0,
+      });
 
       if (Array.isArray(state.queue) && state.queue.length > 0) {
         const nextItem = state.queue.shift();
@@ -2193,10 +2480,19 @@ async function startPromptRun(bot, repo, state, runItem) {
           error: err.message,
         })}`);
       }
+      audit('run.error', {
+        ...runAuditMeta,
+        message: String(err && err.message ? err.message : err || ''),
+      });
       await safeSend(
         bot,
         chatId,
-        `Error: ${err.message}\n\nCheck that opencode is installed and workdir is accessible.`
+        `Error: ${err.message}\n\nCheck that opencode is installed and workdir is accessible.`,
+        undefined,
+        {
+          ...runAuditMeta,
+          channel: 'error',
+        }
       );
 
       if (Array.isArray(state.queue) && state.queue.length > 0) {
@@ -2349,8 +2645,24 @@ function main() {
     }, 1200);
   }
 
-  bot.on('message', handleMessage);
-  bot.on('callback_query', handleCallbackQuery);
+  bot.on('message', async (msg) => {
+    audit('telegram.update', {
+      updateType: 'message',
+      chatId: msg && msg.chat && msg.chat.id ? String(msg.chat.id) : '',
+      messageId: msg && msg.message_id ? msg.message_id : null,
+      textPreview: summarizeAuditText(msg && msg.text ? msg.text : ''),
+    });
+    await handleMessage(msg);
+  });
+  bot.on('callback_query', async (cq) => {
+    audit('telegram.update', {
+      updateType: 'callback_query',
+      chatId: cq && cq.message && cq.message.chat && cq.message.chat.id ? String(cq.message.chat.id) : '',
+      callbackData: summarizeAuditText(cq && cq.data ? cq.data : ''),
+      callbackId: cq && cq.id ? String(cq.id) : '',
+    });
+    await handleCallbackQuery(cq);
+  });
 
   bot.on('polling_error', (err) => {
     const detail = serializePollingError(err);
