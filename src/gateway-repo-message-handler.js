@@ -1,5 +1,11 @@
 'use strict';
 
+function summarizeText(text) {
+  const value = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!value) return '';
+  return value.length > 240 ? `${value.slice(0, 240)}...(truncated)` : value;
+}
+
 function createRepoMessageHandler(deps) {
   const {
     parseCommand,
@@ -18,6 +24,7 @@ function createRepoMessageHandler(deps) {
     requestInterrupt,
     buildPromptFromMessage,
     startPromptRun,
+    audit,
   } = deps;
 
   return async function handleRepoMessage(bot, repo, state, msg) {
@@ -26,6 +33,16 @@ function createRepoMessageHandler(deps) {
     const parsed = parseCommand(text);
     const command = parsed ? parsed.command : '';
     const isVersionPrompt = command === '/version';
+    if (typeof audit === 'function') {
+      audit('repo.message.received', {
+        repo: repo.name,
+        chatId,
+        command: command || null,
+        textPreview: summarizeText(text),
+        running: !!state.running,
+        queueLength: Array.isArray(state.queue) ? state.queue.length : 0,
+      });
+    }
 
     if (command === '/start') {
       await safeSend(
@@ -151,11 +168,27 @@ function createRepoMessageHandler(deps) {
       preparedPrompt = await buildPromptFromMessage(bot, repo, msg);
     } catch (err) {
       console.error(`[${repo.name}] failed to prepare prompt:`, err.message);
+      if (typeof audit === 'function') {
+        audit('repo.message.prepare_prompt.error', {
+          repo: repo.name,
+          chatId,
+          message: String(err && err.message ? err.message : err || ''),
+        });
+      }
       await safeSend(bot, chatId, `Failed to read image attachment: ${err.message}`);
       return;
     }
 
-    if (!preparedPrompt) return;
+    if (!preparedPrompt) {
+      if (typeof audit === 'function') {
+        audit('repo.message.prepare_prompt.skip', {
+          repo: repo.name,
+          chatId,
+          reason: 'empty_prepared_prompt',
+        });
+      }
+      return;
+    }
 
     if (!Array.isArray(state.queue)) state.queue = [];
 
@@ -166,14 +199,39 @@ function createRepoMessageHandler(deps) {
       isVersionPrompt,
     };
 
+    if (typeof audit === 'function') {
+      audit('repo.message.prompt_prepared', {
+        repo: repo.name,
+        chatId,
+        isVersionPrompt,
+        promptLength: promptText.length,
+        promptPreview: summarizeText(promptText),
+      });
+    }
+
     if (state.running) {
       state.queue.push(queuedItem);
+      if (typeof audit === 'function') {
+        audit('repo.message.queue.enqueued', {
+          repo: repo.name,
+          chatId,
+          queueLength: state.queue.length,
+          reason: 'already_running',
+        });
+      }
       if (typeof state.panelRefresh === 'function') {
         await state.panelRefresh(true);
       }
       return;
     }
 
+    if (typeof audit === 'function') {
+      audit('repo.message.run.dispatch', {
+        repo: repo.name,
+        chatId,
+        queueLength: Array.isArray(state.queue) ? state.queue.length : 0,
+      });
+    }
     await startPromptRun(bot, repo, state, queuedItem);
   };
 }

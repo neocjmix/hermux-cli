@@ -3,12 +3,14 @@
 const fs = require('fs');
 const path = require('path');
 
+const AUDIT_STRING_MAX = parseInt(process.env.OMG_AUDIT_STRING_MAX || '8000', 10);
+
 function sanitizeValue(value, depth = 0) {
   if (depth > 4) return '[max-depth]';
   if (value === null || value === undefined) return value;
   if (typeof value === 'number' || typeof value === 'boolean') return value;
   if (typeof value === 'string') {
-    return value.length > 800 ? `${value.slice(0, 800)}...(truncated)` : value;
+    return value.length > AUDIT_STRING_MAX ? `${value.slice(0, AUDIT_STRING_MAX)}...(truncated)` : value;
   }
   if (Array.isArray(value)) {
     const capped = value.slice(0, 50).map((v) => sanitizeValue(v, depth + 1));

@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const { spawn } = require('node:child_process');
@@ -82,6 +83,16 @@ function normalizeCommandsParam(raw) {
   } catch (_err) {
     return [];
   }
+}
+
+function readJsonlRecords(filePath) {
+  if (!fs.existsSync(filePath)) return [];
+  const raw = fs.readFileSync(filePath, 'utf8');
+  return raw
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
 }
 
 async function waitFor(check, { timeoutMs = 10000, stepMs = 100 } = {}) {
@@ -495,6 +506,36 @@ test('gateway e2e survives answerCallbackQuery failure and keeps idle interrupt 
       method: 'POST',
       url: `${started.controlUrl}/scenarios`,
       body: {
+        method: 'sendMessage',
+        times: 120,
+        delay_ms: 80,
+      },
+    });
+
+    await httpJson({
+      method: 'POST',
+      url: `${started.controlUrl}/scenarios`,
+      body: {
+        method: 'sendMessage',
+        times: 400,
+        delay_ms: 80,
+      },
+    });
+
+    await httpJson({
+      method: 'POST',
+      url: `${started.controlUrl}/scenarios`,
+      body: {
+        method: 'sendMessage',
+        times: 400,
+        delay_ms: 60,
+      },
+    });
+
+    await httpJson({
+      method: 'POST',
+      url: `${started.controlUrl}/scenarios`,
+      body: {
         method: 'answerCallbackQuery',
         match: { callback_query_id: 'cb-fail' },
         times: 1,
@@ -618,5 +659,186 @@ test('gateway e2e retries sendMessage without parse_mode after HTML send failure
     await stopGateway(runtime.child);
     await telegram.stop();
     restoreFile(config.CONFIG_PATH, cfgSnapshot);
+  }
+});
+
+test('gateway e2e does not send final-unit messages after run.finalization', async () => {
+  const cfgSnapshot = backupFile(config.CONFIG_PATH);
+  const token = 'test-token';
+  const telegram = createTelegramMockServer();
+  const started = await telegram.start(0);
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runtime-race-'));
+  const fixturePath = path.resolve(__dirname, 'fixtures', 'fake-opencode-sdk-final-race.js');
+
+  config.save({
+    global: { telegramBotToken: token },
+    repos: [{
+      name: 'demo',
+      enabled: true,
+      workdir: '/tmp/demo',
+      chatIds: ['100'],
+      opencodeCommand: 'opencode sdk',
+      logFile: './logs/demo.log',
+    }],
+  });
+
+  const runtime = startGateway({
+    OMG_TELEGRAM_BASE_API_URL: started.baseApiUrl,
+    OMG_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
+    OMG_OPENCODE_SDK_SHIM: fixturePath,
+    OMG_RUNTIME_DIR: runtimeDir,
+  });
+
+  try {
+    await waitForBootstrapAndClearRequests(started.controlUrl);
+
+    await httpJson({
+      method: 'POST',
+      url: `${started.controlUrl}/updates`,
+      body: {
+        token,
+        update: {
+          update_id: 20,
+          message: {
+            message_id: 20,
+            date: Math.floor(Date.now() / 1000),
+            text: 'run race demo',
+            chat: { id: 100, type: 'private' },
+            from: { id: 200, is_bot: false, first_name: 'Tester' },
+          },
+        },
+      },
+    });
+
+    const auditPath = path.join(runtimeDir, 'audit-events.jsonl');
+    const records = await waitFor(() => {
+      const rows = readJsonlRecords(auditPath);
+      const hasFinalization = rows.some((r) => r.kind === 'run.finalization');
+      const hasComplete = rows.some((r) => r.kind === 'run.complete');
+      return hasFinalization && hasComplete ? rows : null;
+    }, { timeoutMs: 20000, stepMs: 120 });
+
+    const runStart = records.find((r) => r.kind === 'run.start');
+    assert.ok(runStart);
+    const runId = String(runStart.payload && runStart.payload.runId || '');
+    assert.ok(runId);
+
+    const runRows = records.filter((r) => {
+      const payloadRunId = r && r.payload && r.payload.runId ? String(r.payload.runId) : '';
+      const metaRunId = r && r.payload && r.payload.meta && r.payload.meta.runId ? String(r.payload.meta.runId) : '';
+      return payloadRunId === runId || metaRunId === runId;
+    });
+    const finalizationIndex = runRows.findIndex((r) => r.kind === 'run.finalization');
+    assert.ok(finalizationIndex >= 0);
+
+    const afterFinalization = runRows.slice(finalizationIndex + 1);
+    const lateFinalUnitSends = afterFinalization.filter((r) => (
+      r.kind === 'telegram.send'
+      && r.payload
+      && r.payload.meta
+      && r.payload.meta.channel === 'final_unit'
+    ));
+
+    assert.equal(lateFinalUnitSends.length, 0);
+  } finally {
+    await stopGateway(runtime.child);
+    await telegram.stop();
+    restoreFile(config.CONFIG_PATH, cfgSnapshot);
+    fs.rmSync(runtimeDir, { recursive: true, force: true });
+  }
+});
+
+test('gateway e2e keeps reminder channel single-message and strips OMO markers from final_unit', async () => {
+  const cfgSnapshot = backupFile(config.CONFIG_PATH);
+  const token = 'test-token';
+  const telegram = createTelegramMockServer();
+  const started = await telegram.start(0);
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runtime-reminder-'));
+  const fixturePath = path.resolve(__dirname, 'fixtures', 'fake-opencode-sdk-reminder-race.js');
+
+  config.save({
+    global: { telegramBotToken: token },
+    repos: [{
+      name: 'demo',
+      enabled: true,
+      workdir: '/tmp/demo',
+      chatIds: ['100'],
+      opencodeCommand: 'opencode sdk',
+      logFile: './logs/demo.log',
+    }],
+  });
+
+  const runtime = startGateway({
+    OMG_TELEGRAM_BASE_API_URL: started.baseApiUrl,
+    OMG_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
+    OMG_OPENCODE_SDK_SHIM: fixturePath,
+    OMG_RUNTIME_DIR: runtimeDir,
+  });
+
+  try {
+    await waitForBootstrapAndClearRequests(started.controlUrl);
+
+    await httpJson({
+      method: 'POST',
+      url: `${started.controlUrl}/updates`,
+      body: {
+        token,
+        update: {
+          update_id: 21,
+          message: {
+            message_id: 21,
+            date: Math.floor(Date.now() / 1000),
+            text: 'run reminder race demo',
+            chat: { id: 100, type: 'private' },
+            from: { id: 200, is_bot: false, first_name: 'Tester' },
+          },
+        },
+      },
+    });
+
+    const auditPath = path.join(runtimeDir, 'audit-events.jsonl');
+    const records = await waitFor(() => {
+      const rows = readJsonlRecords(auditPath);
+      const hasComplete = rows.some((r) => r.kind === 'run.complete');
+      return hasComplete ? rows : null;
+    }, { timeoutMs: 20000, stepMs: 120 });
+
+    const runStart = records.find((r) => r.kind === 'run.start');
+    assert.ok(runStart);
+    const runId = String(runStart.payload && runStart.payload.runId || '');
+    assert.ok(runId);
+
+    const runRows = records.filter((r) => {
+      const payloadRunId = r && r.payload && r.payload.runId ? String(r.payload.runId) : '';
+      const metaRunId = r && r.payload && r.payload.meta && r.payload.meta.runId ? String(r.payload.meta.runId) : '';
+      return payloadRunId === runId || metaRunId === runId;
+    });
+
+    const reminderSends = runRows.filter((r) => (
+      r.kind === 'telegram.send'
+      && r.payload
+      && r.payload.meta
+      && r.payload.meta.channel === 'system_reminder_channel'
+    ));
+    assert.equal(reminderSends.length, 1);
+
+    const finalOutputs = runRows.filter((r) => (
+      r.kind === 'telegram.send'
+      && r.payload
+      && r.payload.meta
+      && (
+        r.payload.meta.channel === 'final_unit'
+        || r.payload.meta.channel === 'final_reconcile_send'
+        || r.payload.meta.channel === 'final_output'
+      )
+    ));
+    assert.equal(finalOutputs.length > 0, true);
+    const leakedMarker = finalOutputs.some((r) => /OMO_INTERNAL_INITIATOR/.test(String(r.payload && r.payload.textPreview || '')));
+    assert.equal(leakedMarker, false);
+  } finally {
+    await stopGateway(runtime.child);
+    await telegram.stop();
+    restoreFile(config.CONFIG_PATH, cfgSnapshot);
+    fs.rmSync(runtimeDir, { recursive: true, force: true });
   }
 });

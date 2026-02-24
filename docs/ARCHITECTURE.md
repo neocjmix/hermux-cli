@@ -61,8 +61,11 @@ Development/debug runtime uses dense structured audit logs.
 - Source: `src/lib/audit-log.js` and integration points in `src/gateway.js`
 - Coverage:
   - inbound Telegram updates (`telegram.update`)
+  - message/callback router decisions (`router.message.*`, `router.callback.*`, `repo.message.*`)
   - normalized runtime events and reaction decisions (`run.event_received`, `run.reaction`, `run.finalization`, `run.complete`, `run.error`)
+  - final/reminder/UI/reconcile internals (`run.final_pipeline.*`, `run.reconcile.*`, `run.ui.*`, `run.final_unit_send*`, `run.heartbeat.*`)
   - Telegram API outcomes (`telegram.send`, `telegram.edit`, `telegram.delete`, `telegram.send_photo`, `telegram.send_document`)
+  - chunked-send boundaries and completion (`telegram.send_batch.start`, `telegram.send_batch.complete`)
 
 ## Isolation Model
 

@@ -503,7 +503,23 @@ test('sanitizeFinalOutputText removes system reminder blocks and prompt echo', (
   assert.equal(cleaned, 'Final **answer** block');
 });
 
-test('sanitizeFinalOutputText keeps legacy wrapper text if present', () => {
+test('sanitizeFinalOutputText aggressively drops everything before last prompt occurrence', () => {
+  const prompt = 'Analyze this system';
+  const raw = [
+    'ultrawork header',
+    'context chunk 1',
+    prompt,
+    'expanded chain',
+    prompt,
+    '',
+    'actual final answer',
+  ].join('\n');
+
+  const cleaned = _internal.sanitizeFinalOutputText(raw, prompt);
+  assert.equal(cleaned, 'actual final answer');
+});
+
+test('sanitizeFinalOutputText drops legacy wrapper when prompt appears later in text', () => {
   const prompt = 'diagnose this';
   const raw = [
     '<ultrawork-mode>',
@@ -516,8 +532,119 @@ test('sanitizeFinalOutputText keeps legacy wrapper text if present', () => {
   ].join('\n');
 
   const cleaned = _internal.sanitizeFinalOutputText(raw, prompt);
-  assert.match(cleaned, /<ultrawork-mode>/);
+  assert.equal(cleaned.includes('<ultrawork-mode>'), false);
   assert.match(cleaned, /Canonical final answer body/);
+});
+
+test('sanitizeFinalOutputText strips OMO initiator markers (raw and escaped)', () => {
+  const prompt = 'diag';
+  const raw = [
+    prompt,
+    '',
+    'alpha',
+    '<!-- OMO_INTERNAL_INITIATOR -->',
+    'beta',
+    '&lt;!-- OMO_INTERNAL_INITIATOR --&gt;',
+    'gamma',
+  ].join('\n');
+  const cleaned = _internal.sanitizeFinalOutputText(raw, prompt);
+  assert.equal(/OMO_INTERNAL_INITIATOR/.test(cleaned), false);
+  assert.match(cleaned, /alpha/);
+  assert.match(cleaned, /beta/);
+  assert.match(cleaned, /gamma/);
+});
+
+test('extractLatestSystemReminder returns latest reminder and stripped text', () => {
+  const raw = [
+    'a',
+    '<system-reminder>first</system-reminder>',
+    'b',
+    '<system-reminder>second</system-reminder>',
+  ].join('\n');
+  const out = _internal.extractLatestSystemReminder(raw);
+  assert.equal(out.reminderText, 'second');
+  assert.equal(out.text.includes('system-reminder'), false);
+  assert.match(out.text, /a/);
+  assert.match(out.text, /b/);
+});
+
+test('formatSystemReminderForDisplay compacts completed reminders into code block', () => {
+  const raw = [
+    '[ALL BACKGROUND TASKS COMPLETE]',
+    '',
+    'Completed:',
+    '- bg_1: one',
+    '- bg_2: two',
+    '',
+    'Use background_output(task_id="<id>") to retrieve each result.',
+  ].join('\n');
+  const out = _internal.formatSystemReminderForDisplay(raw);
+  assert.equal(out.startsWith('```text\nCompleted:\n- bg_1: one\n- bg_2: two\n```'), true);
+  assert.equal(out.includes('Use background_output'), false);
+});
+
+test('formatSystemReminderForDisplay handles prefixed and generic bracket header', () => {
+  const raw = 'system-reminder:\n[BACKGROUND TASK COMPLETED]\n\nCompleted:\n- bg_x: x';
+  const out = _internal.formatSystemReminderForDisplay(raw);
+  assert.equal(out, '```text\nCompleted:\n- bg_x: x\n```');
+});
+
+test('reconcileOutputSnapshot applies stream and final text in one shared flow', () => {
+  const snapshot = _internal.createOutputSnapshot();
+  const prompt = 'do task';
+
+  const streamPass = _internal.reconcileOutputSnapshot(snapshot, {
+    rawText: `${prompt}\n\nintermediate answer`,
+    textKind: 'stream',
+    promptText: prompt,
+    authoritativeFinal: false,
+  });
+  assert.equal(streamPass.cleaned, 'intermediate answer');
+  assert.equal(snapshot.streamText, 'intermediate answer');
+  assert.equal(snapshot.finalCandidate, 'intermediate answer');
+
+  const finalPass = _internal.reconcileOutputSnapshot(snapshot, {
+    rawText: 'final answer',
+    textKind: 'final',
+    promptText: prompt,
+    authoritativeFinal: false,
+  });
+  assert.equal(finalPass.classifiedKind, 'final');
+  assert.equal(snapshot.finalSeen, 'final answer');
+  assert.match(snapshot.finalCandidate, /final answer/);
+});
+
+test('reconcileOutputSnapshot extracts reminder and strips it from cleaned output', () => {
+  const snapshot = _internal.createOutputSnapshot();
+  const out = _internal.reconcileOutputSnapshot(snapshot, {
+    rawText: '<system-reminder>keep queueing</system-reminder>\n\nbody text',
+    textKind: 'stream',
+    promptText: '',
+    authoritativeFinal: false,
+  });
+
+  assert.equal(out.reminderText, 'keep queueing');
+  assert.equal(out.cleaned, 'body text');
+  assert.equal(snapshot.streamText, 'body text');
+});
+
+test('reconcileOutputSnapshot returns reasoning text without mutating final candidate', () => {
+  const snapshot = _internal.createOutputSnapshot();
+  snapshot.rawFinalSnapshot = 'stable final';
+  snapshot.canonicalFinal = 'stable final';
+  snapshot.finalCandidate = 'stable final';
+
+  const out = _internal.reconcileOutputSnapshot(snapshot, {
+    rawText: 'reasoning trace line',
+    textKind: 'reasoning',
+    promptText: '',
+    authoritativeFinal: false,
+  });
+
+  assert.equal(out.classifiedKind, 'reasoning');
+  assert.equal(out.reasoningText, 'reasoning trace line');
+  assert.equal(snapshot.streamText, 'reasoning trace line');
+  assert.equal(snapshot.finalCandidate, 'stable final');
 });
 
 test('selectFinalOutputText prefers authoritative full text when stream is trailing fragment', () => {

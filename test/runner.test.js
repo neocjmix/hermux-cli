@@ -175,6 +175,47 @@ test('runOpencode sdk mode streams events and builds final text', async () => {
   assert.equal(events.some((e) => e.type === 'text' && /final:sdk-hello/.test(String(e.content))), true);
 });
 
+test('runOpencode sdk mode drains async onEvent work before onDone', async () => {
+  const { runOpencode } = loadRunnerWithEnv({
+    OMG_MAX_PROCESS_SECONDS: 10,
+    OMG_EXECUTION_TRANSPORT: 'sdk',
+    OMG_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
+  });
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runner-sdk-drain-'));
+  const eventsAfterDone = [];
+  let completed = false;
+
+  const done = await new Promise((resolve, reject) => {
+    runOpencode(
+      {
+        opencodeCommand: 'opencode sdk',
+        workdir: process.cwd(),
+        logFile: path.join(tmpDir, 'runner-sdk-drain.log'),
+      },
+      'sdk-drain',
+      {
+        onEvent: async (evt) => {
+          if (evt.type === 'text') {
+            await new Promise((r) => setTimeout(r, 80));
+          }
+          if (completed) eventsAfterDone.push(evt.type);
+        },
+        onDone: (exitCode, timeoutMsg, meta) => {
+          completed = true;
+          resolve({ exitCode, timeoutMsg, meta });
+        },
+        onError: reject,
+        sessionId: '',
+      }
+    );
+  });
+
+  await new Promise((r) => setTimeout(r, 180));
+  assert.equal(done.exitCode, 0);
+  assert.equal(done.timeoutMsg, null);
+  assert.deepEqual(eventsAfterDone, []);
+});
+
 test('runOpencode sdk mode reuses provided session id when valid', async () => {
   const { runOpencode } = loadRunnerWithEnv({
     OMG_MAX_PROCESS_SECONDS: 10,
@@ -203,6 +244,38 @@ test('runOpencode sdk mode reuses provided session id when valid', async () => {
   assert.equal(done.exitCode, 0);
   assert.equal(done.timeoutMsg, null);
   assert.equal(done.meta.sessionId, 'sdk-session');
+});
+
+test('runOpencode sdk mode captures late text that arrives after idle', async () => {
+  const { runOpencode } = loadRunnerWithEnv({
+    OMG_MAX_PROCESS_SECONDS: 10,
+    OMG_EXECUTION_TRANSPORT: 'sdk',
+    OMG_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk-idle-tail.js'),
+    OMG_SDK_IDLE_DRAIN_MS: 220,
+  });
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runner-sdk-idle-tail-'));
+
+  const done = await new Promise((resolve, reject) => {
+    runOpencode(
+      {
+        opencodeCommand: 'opencode sdk',
+        workdir: process.cwd(),
+        logFile: path.join(tmpDir, 'runner-sdk-idle-tail.log'),
+      },
+      'sdk-idle-tail',
+      {
+        onEvent: () => {},
+        onDone: (exitCode, timeoutMsg, meta) => resolve({ exitCode, timeoutMsg, meta }),
+        onError: reject,
+        sessionId: '',
+      }
+    );
+  });
+
+  assert.equal(done.exitCode, 0);
+  assert.equal(done.timeoutMsg, null);
+  assert.equal(done.meta.sessionId, 'sdk-idle-tail');
+  assert.match(String(done.meta.finalText || ''), /chunk-3-tail/);
 });
 
 test('runtime status reflects active sdk run and resets after completion', async () => {

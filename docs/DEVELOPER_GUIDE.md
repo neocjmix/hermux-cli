@@ -106,8 +106,15 @@ Hermux now writes dense JSONL audit logs for development/debugging to:
 
 Each record includes:
 
-- `kind`: event category (`telegram.update`, `run.event_received`, `run.reaction`, `run.finalization`, `telegram.send`, `telegram.edit`, `telegram.delete`, etc.)
+- `kind`: event category (`telegram.update`, `router.message.*`, `router.callback.*`, `repo.message.*`, `run.event_received`, `run.reaction`, `run.final_pipeline.*`, `run.reconcile.*`, `run.ui.*`, `run.finalization`, `run.complete`, `telegram.send`, `telegram.send_batch.*`, `telegram.edit`, `telegram.delete`, etc.)
 - `payload`: structured metadata (repo/chat/run correlation ids, event type, decision summary, and Telegram API outcome)
+
+Additional high-signal fields now commonly included in payloads:
+
+- `durationMs` for Telegram API calls and batch send windows
+- `textLength` / `htmlLength` and truncated previews for safe payload visibility
+- reconciliation decision counters (`targetCount`, `currentCount`, `edited`, `removed`, `skippedSame`)
+- UI/update control reasons (`reason: interval_throttled|unchanged|superseded|empty`)
 
 Use cases:
 

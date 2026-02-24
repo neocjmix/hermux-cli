@@ -82,6 +82,10 @@ function createTelegramMockServer() {
     }
   }
 
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
   function buildMethodResult(state, method, params) {
     if (method === 'getUpdates') {
       if (state.webhook && state.webhook.url) {
@@ -201,6 +205,7 @@ function createTelegramMockServer() {
         method: String(body.method || ''),
         match: body.match && typeof body.match === 'object' ? body.match : null,
         times: Number.isFinite(Number(body.times)) ? Number(body.times) : null,
+        delay_ms: Number.isFinite(Number(body.delay_ms)) ? Number(body.delay_ms) : null,
         response: body.response && typeof body.response === 'object' ? body.response : null,
         response_data: body.response_data && typeof body.response_data === 'object' ? body.response_data : null,
       });
@@ -274,6 +279,13 @@ function createTelegramMockServer() {
       scenario: scenario ? { method: scenario.method, match: scenario.match, times: scenario.times } : null,
       response: payload,
     });
+
+    const delayMs = scenario && Number.isFinite(Number(scenario.delay_ms))
+      ? Number(scenario.delay_ms)
+      : 0;
+    if (delayMs > 0) {
+      await sleep(delayMs);
+    }
 
     cleanupScenarios();
     return json(res, 200, payload);

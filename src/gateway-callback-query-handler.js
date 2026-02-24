@@ -1,5 +1,11 @@
 'use strict';
 
+function summarizeText(text) {
+  const value = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!value) return '';
+  return value.length > 240 ? `${value.slice(0, 240)}...(truncated)` : value;
+}
+
 function createCallbackQueryHandler(deps) {
   const {
     bot,
@@ -23,14 +29,29 @@ function createCallbackQueryHandler(deps) {
     OPENCODE_CONFIG_PATH,
     OMO_CONFIG_PATH,
     getOmoAgentEntry,
+    audit,
   } = deps;
 
   return async function handleCallbackQuery(query) {
     const data = String((query && query.data) || '').trim();
     const chat = query && query.message && query.message.chat;
     const chatId = chat ? String(chat.id) : '';
+    if (typeof audit === 'function') {
+      audit('router.callback.received', {
+        chatId: chatId || null,
+        callbackId: query && query.id ? String(query.id) : null,
+        dataPreview: summarizeText(data),
+      });
+    }
 
     if (!data || !chatId) {
+      if (typeof audit === 'function') {
+        audit('router.callback.skip', {
+          reason: 'missing_data_or_chat',
+          hasData: !!data,
+          hasChat: !!chatId,
+        });
+      }
       if (query && query.id) {
         await bot.answerCallbackQuery(query.id).catch(() => {});
       }
@@ -39,6 +60,7 @@ function createCallbackQueryHandler(deps) {
 
     try {
       if (data.startsWith('connect:')) {
+        if (typeof audit === 'function') audit('router.callback.route', { chatId, target: 'connect', dataPreview: summarizeText(data) });
         const repoName = data.slice('connect:'.length).trim();
         await handleConnectCommand(bot, chatId, [repoName], chatRouter, states);
         if (query.id) {
@@ -48,6 +70,7 @@ function createCallbackQueryHandler(deps) {
       }
 
       if (data.startsWith('verbose:')) {
+        if (typeof audit === 'function') audit('router.callback.route', { chatId, target: 'verbose', dataPreview: summarizeText(data) });
         const action = data.slice('verbose:'.length).trim();
         const repo = chatRouter.get(chatId);
         if (!repo) {
@@ -67,6 +90,7 @@ function createCallbackQueryHandler(deps) {
       }
 
       if (data === 'interrupt:now') {
+        if (typeof audit === 'function') audit('router.callback.route', { chatId, target: 'interrupt', dataPreview: summarizeText(data) });
         const repo = chatRouter.get(chatId);
         if (!repo) {
           await safeSend(bot, chatId, 'This chat is not mapped to a repo. Run /repos then /connect <repo>.');
@@ -97,6 +121,7 @@ function createCallbackQueryHandler(deps) {
       }
 
       if (data === 'm:r') {
+        if (typeof audit === 'function') audit('router.callback.route', { chatId, target: 'models_root', dataPreview: summarizeText(data) });
         const repo = chatRouter.get(chatId);
         if (!repo) {
           await safeSend(bot, chatId, 'This chat is not mapped to a repo. Run /repos then /connect <repo>.');
@@ -114,6 +139,7 @@ function createCallbackQueryHandler(deps) {
       }
 
       if (data === 'm:l:op') {
+        if (typeof audit === 'function') audit('router.callback.route', { chatId, target: 'models_layer_op', dataPreview: summarizeText(data) });
         const providers = getProviderModelChoices();
         if (providers.length === 0) {
           await safeSend(bot, chatId, 'No model choices found in opencode config.');
@@ -129,6 +155,7 @@ function createCallbackQueryHandler(deps) {
       }
 
       if (data === 'm:l:omo') {
+        if (typeof audit === 'function') audit('router.callback.route', { chatId, target: 'models_layer_omo', dataPreview: summarizeText(data) });
         const snap = getModelsSnapshot();
         if (snap.agentNames.length === 0) {
           await safeSend(bot, chatId, 'No configured agents in oh-my-opencode.');
@@ -144,6 +171,7 @@ function createCallbackQueryHandler(deps) {
       }
 
       if (data.startsWith('m:a:')) {
+        if (typeof audit === 'function') audit('router.callback.route', { chatId, target: 'models_agent', dataPreview: summarizeText(data) });
         const idx = Number(data.slice('m:a:'.length).trim());
         const st = modelUiState.get(chatId) || {};
         const names = Array.isArray(st.agentNames) ? st.agentNames : [];
@@ -163,6 +191,7 @@ function createCallbackQueryHandler(deps) {
       }
 
       if (data.startsWith('m:p:')) {
+        if (typeof audit === 'function') audit('router.callback.route', { chatId, target: 'models_provider', dataPreview: summarizeText(data) });
         const idx = Number(data.slice('m:p:'.length).trim());
         const st = modelUiState.get(chatId) || {};
         const providers = Array.isArray(st.providers) ? st.providers : [];
@@ -183,6 +212,7 @@ function createCallbackQueryHandler(deps) {
       }
 
       if (data === 'm:bp') {
+        if (typeof audit === 'function') audit('router.callback.route', { chatId, target: 'models_back_provider', dataPreview: summarizeText(data) });
         const st = modelUiState.get(chatId) || {};
         const providers = Array.isArray(st.providers) ? st.providers : [];
         if (providers.length > 0) {
@@ -196,6 +226,7 @@ function createCallbackQueryHandler(deps) {
       }
 
       if (data === 'm:mp:prev' || data === 'm:mp:next') {
+        if (typeof audit === 'function') audit('router.callback.route', { chatId, target: 'models_page', dataPreview: summarizeText(data) });
         const st = modelUiState.get(chatId) || {};
         const providers = Array.isArray(st.providers) ? st.providers : [];
         const selectedProvider = Number(st.selectedProvider);
@@ -221,6 +252,7 @@ function createCallbackQueryHandler(deps) {
       }
 
       if (data.startsWith('m:o:')) {
+        if (typeof audit === 'function') audit('router.callback.route', { chatId, target: 'models_apply_op', dataPreview: summarizeText(data) });
         const idx = Number(data.slice('m:o:'.length));
         const st = modelUiState.get(chatId) || {};
         const providers = Array.isArray(st.providers) ? st.providers : [];
@@ -245,6 +277,7 @@ function createCallbackQueryHandler(deps) {
       }
 
       if (data.startsWith('m:s:')) {
+        if (typeof audit === 'function') audit('router.callback.route', { chatId, target: 'models_apply_omo', dataPreview: summarizeText(data) });
         const idx = Number(data.slice('m:s:'.length));
         const st = modelUiState.get(chatId) || {};
         const agent = String(st.agent || '').trim();
@@ -271,6 +304,13 @@ function createCallbackQueryHandler(deps) {
       }
     } catch (err) {
       console.error('[callback_query] failed:', err.message);
+      if (typeof audit === 'function') {
+        audit('router.callback.error', {
+          chatId,
+          dataPreview: summarizeText(data),
+          message: String(err && err.message ? err.message : err || ''),
+        });
+      }
     }
 
     if (query.id) {

@@ -11,6 +11,7 @@ const SDK_SERVER_START_TIMEOUT_MS = parseInt(process.env.OMG_SDK_SERVER_START_TI
 const SDK_PORT_RANGE_MIN = parseInt(process.env.OMG_SDK_PORT_RANGE_MIN || '43100', 10);
 const SDK_PORT_RANGE_MAX = parseInt(process.env.OMG_SDK_PORT_RANGE_MAX || '43999', 10);
 const SDK_PORT_PICK_ATTEMPTS = parseInt(process.env.OMG_SDK_PORT_PICK_ATTEMPTS || '60', 10);
+const SDK_IDLE_DRAIN_MS = parseInt(process.env.OMG_SDK_IDLE_DRAIN_MS || '220', 10);
 
 const activeRuns = new Set();
 const runtimeStats = new Map();
@@ -206,6 +207,26 @@ function runViaCommand(instance, prompt, { onEvent, onDone, onError, sessionId }
   cmdArgs.push(prompt);
 
   const { logStream } = setupLogStream(instance, prompt);
+  const startedAt = Date.now();
+  let eventSeq = 0;
+  let logClosed = false;
+  logStream.on('error', () => {});
+
+  function trace(kind, payload) {
+    const rec = {
+      ts: new Date().toISOString(),
+      tMs: Date.now() - startedAt,
+      transport: 'command',
+      kind,
+      eventSeq,
+      payload: payload || {},
+    };
+    try {
+      if (logClosed || logStream.destroyed || logStream.writableEnded) return;
+      logStream.write(`[trace] ${JSON.stringify(rec)}\n`);
+    } catch (_err) {
+    }
+  }
 
   const proc = spawn(cmd, cmdArgs, {
     cwd: instance.workdir,
@@ -217,10 +238,45 @@ function runViaCommand(instance, prompt, { onEvent, onDone, onError, sessionId }
   let lineBuf = '';
   let stderrBuf = '';
   let killed = false;
+  let settled = false;
   let latestSessionId = sessionId || '';
   let latestFinalText = '';
   const stderrSamples = [];
   const state = { rateLimit: null };
+  let eventQueue = Promise.resolve();
+
+  function dispatchEvent(event) {
+    eventSeq += 1;
+    trace('dispatch.enqueue', {
+      type: event && event.type ? event.type : 'unknown',
+      textKind: event && event.textKind ? event.textKind : null,
+      sessionId: event && event.sessionId ? event.sessionId : null,
+      content: event && typeof event.content === 'string' ? event.content : '',
+      contentLength: event && typeof event.content === 'string' ? event.content.length : 0,
+    });
+    eventQueue = eventQueue.then(() => Promise.resolve(onEvent(event)));
+    return eventQueue;
+  }
+
+  function settleDone(exitCode, timeoutMsg, meta) {
+    if (settled) return;
+    settled = true;
+    trace('settle.done', {
+      exitCode,
+      timeoutMsg,
+      meta,
+    });
+    onDone(exitCode, timeoutMsg, meta);
+  }
+
+  function settleError(err) {
+    if (settled) return;
+    settled = true;
+    trace('settle.error', {
+      message: String(err && err.message ? err.message : err || ''),
+    });
+    onError(err);
+  }
 
   function mergeTextChunks(prev, next) {
     const a = String(prev || '');
@@ -255,22 +311,27 @@ function runViaCommand(instance, prompt, { onEvent, onDone, onError, sessionId }
       if (evtSessionId) latestSessionId = evtSessionId;
 
       if (evt.type === 'step_start') {
-        onEvent({ type: 'step_start', sessionId: latestSessionId });
+        dispatchEvent({ type: 'step_start', sessionId: latestSessionId });
         return;
       }
       if (evt.type === 'step_finish') {
-        onEvent({ type: 'step_finish', reason: part.reason || null, sessionId: latestSessionId });
+        dispatchEvent({ type: 'step_finish', reason: part.reason || null, sessionId: latestSessionId });
         return;
       }
       if (evt.type === 'text') {
         const text = String(part.text || '');
         if (text.trim()) latestFinalText = mergeTextChunks(latestFinalText, text);
-        onEvent({ type: 'text', content: text, textKind: 'stream', sessionId: latestSessionId });
+        trace('command.text.parsed', {
+          text,
+          textLength: text.length,
+          latestFinalLength: latestFinalText.length,
+        });
+        dispatchEvent({ type: 'text', content: text, textKind: 'stream', sessionId: latestSessionId });
         return;
       }
       if (evt.type === 'tool_use') {
         const toolState = part.state || {};
-        onEvent({
+        dispatchEvent({
           type: 'tool_use',
           name: part.tool || 'tool',
           input: toolState.input || {},
@@ -279,9 +340,9 @@ function runViaCommand(instance, prompt, { onEvent, onDone, onError, sessionId }
         });
         return;
       }
-      onEvent({ type: 'raw', content: trimmed, sessionId: latestSessionId });
+      dispatchEvent({ type: 'raw', content: trimmed, sessionId: latestSessionId });
     } catch {
-      onEvent({ type: 'raw', content: trimmed, sessionId: latestSessionId });
+      dispatchEvent({ type: 'raw', content: trimmed, sessionId: latestSessionId });
     }
   }
 
@@ -317,7 +378,7 @@ function runViaCommand(instance, prompt, { onEvent, onDone, onError, sessionId }
     }
   }, MAX_PROCESS_SEC * 1000);
 
-  proc.on('close', (code) => {
+  proc.on('close', async (code) => {
     clearTimeout(timeout);
     if (lineBuf.trim()) parseLine(lineBuf);
     if (stderrBuf.trim()) {
@@ -327,6 +388,7 @@ function runViaCommand(instance, prompt, { onEvent, onDone, onError, sessionId }
       maybeCaptureRateLimit(state, tail);
     }
     logStream.end();
+    logClosed = true;
 
     const meta = {
       sessionId: latestSessionId,
@@ -334,17 +396,31 @@ function runViaCommand(instance, prompt, { onEvent, onDone, onError, sessionId }
       stderrSamples: stderrSamples.slice(),
       finalText: latestFinalText,
     };
+    try {
+      trace('command.close.await_event_queue', {
+        code,
+        killed,
+      });
+      await eventQueue;
+      trace('command.close.event_queue_drained', {
+        finalTextLength: latestFinalText.length,
+      });
+    } catch (err) {
+      settleError(err instanceof Error ? err : new Error(String(err || 'event dispatch failed')));
+      return;
+    }
     if (killed) {
-      onDone(null, `Process timed out after ${MAX_PROCESS_SEC}s`, meta);
+      settleDone(null, `Process timed out after ${MAX_PROCESS_SEC}s`, meta);
     } else {
-      onDone(code, null, meta);
+      settleDone(code, null, meta);
     }
   });
 
   proc.on('error', (err) => {
     clearTimeout(timeout);
     logStream.end();
-    onError(err);
+    logClosed = true;
+    settleError(err);
   });
 
   return proc;
@@ -352,6 +428,26 @@ function runViaCommand(instance, prompt, { onEvent, onDone, onError, sessionId }
 
 function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
   const { logStream } = setupLogStream(instance, prompt);
+  const startedAt = Date.now();
+  let eventSeq = 0;
+  let logClosed = false;
+  logStream.on('error', () => {});
+
+  function trace(kind, payload) {
+    const rec = {
+      ts: new Date().toISOString(),
+      tMs: Date.now() - startedAt,
+      transport: 'sdk',
+      kind,
+      eventSeq,
+      payload: payload || {},
+    };
+    try {
+      if (logClosed || logStream.destroyed || logStream.writableEnded) return;
+      logStream.write(`[trace] ${JSON.stringify(rec)}\n`);
+    } catch (_err) {
+    }
+  }
   const state = {
     done: false,
     sessionId: String(sessionId || '').trim(),
@@ -364,6 +460,54 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
   let partSeq = 0;
   let closeServer = null;
   let abortSession = null;
+  let eventQueue = Promise.resolve();
+  let idleFinalizeTimer = null;
+  let idlePending = false;
+
+  function dispatchEvent(event) {
+    eventSeq += 1;
+    trace('dispatch.enqueue', {
+      type: event && event.type ? event.type : 'unknown',
+      textKind: event && event.textKind ? event.textKind : null,
+      sessionId: event && event.sessionId ? event.sessionId : null,
+      content: event && typeof event.content === 'string' ? event.content : '',
+      contentLength: event && typeof event.content === 'string' ? event.content.length : 0,
+    });
+    eventQueue = eventQueue.then(() => Promise.resolve(onEvent(event)));
+    return eventQueue;
+  }
+
+  function clearIdleFinalizeTimer() {
+    if (idleFinalizeTimer) {
+      clearTimeout(idleFinalizeTimer);
+      idleFinalizeTimer = null;
+    }
+  }
+
+  function scheduleIdleFinalize() {
+    clearIdleFinalizeTimer();
+    trace('idle.finalize.scheduled', {
+      delayMs: Math.max(0, SDK_IDLE_DRAIN_MS),
+      currentFinalLength: String(state.finalText || '').length,
+    });
+    idleFinalizeTimer = setTimeout(async () => {
+      if (state.done) return;
+      state.finalText = sortedFinalText();
+      trace('idle.finalize.firing', {
+        finalTextLength: state.finalText.length,
+        finalText: state.finalText,
+      });
+      try {
+        trace('idle.finalize.await_event_queue', {});
+        await eventQueue;
+        trace('idle.finalize.event_queue_drained', {});
+      } catch (err) {
+        fail(err instanceof Error ? err : new Error(String(err || 'event dispatch failed')));
+        return;
+      }
+      finish(0, null);
+    }, Math.max(0, SDK_IDLE_DRAIN_MS));
+  }
 
   function sortedFinalText() {
     const parts = Array.from(partMap.values());
@@ -408,11 +552,19 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
   function finish(exitCode, timeoutMsg) {
     if (state.done) return;
     state.done = true;
+    clearIdleFinalizeTimer();
     clearTimeout(timeout);
     if (typeof closeServer === 'function') {
       try { closeServer(); } catch (_err) {}
     }
+    trace('settle.done', {
+      exitCode,
+      timeoutMsg,
+      finalTextLength: String(state.finalText || '').length,
+      finalText: state.finalText,
+    });
     logStream.end();
+    logClosed = true;
     onDone(exitCode, timeoutMsg, {
       sessionId: state.sessionId,
       rateLimit: state.rateLimit,
@@ -424,6 +576,7 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
   function fail(err) {
     if (state.done) return;
     state.done = true;
+    clearIdleFinalizeTimer();
     clearTimeout(timeout);
     if (typeof closeServer === 'function') {
       try { closeServer(); } catch (_err) {}
@@ -432,7 +585,11 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
     state.stderrSamples.push(msg);
     if (state.stderrSamples.length > 5) state.stderrSamples.shift();
     maybeCaptureRateLimit(state, msg);
+    trace('settle.error', {
+      message: String(err && err.message ? err.message : err || ''),
+    });
     logStream.end();
+    logClosed = true;
     onError(err instanceof Error ? err : new Error(msg));
   }
 
@@ -538,56 +695,67 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
           const type = String((evt && evt.type) || '');
           const props = (evt && evt.properties) || {};
           logStream.write(`${JSON.stringify(evt)}\n`);
+          trace('sdk.event.raw', {
+            type,
+            sessionId: String(props.sessionID || (props.part && props.part.sessionID) || ''),
+            event: evt,
+          });
 
           if (type === 'session.error') {
             const errText = JSON.stringify(props.error || props);
             maybeCaptureRateLimit(state, errText);
             state.stderrSamples.push(errText);
             if (state.stderrSamples.length > 5) state.stderrSamples.shift();
-            onEvent({ type: 'raw', content: errText, sessionId: state.sessionId });
+            await dispatchEvent({ type: 'raw', content: errText, sessionId: state.sessionId });
             continue;
           }
 
           if (type === 'session.status' && String(props.sessionID || '') === state.sessionId) {
             const status = String((props.status && props.status.type) || '').toLowerCase();
             if (status === 'busy') {
-              onEvent({ type: 'step_start', sessionId: state.sessionId });
+              await dispatchEvent({ type: 'step_start', sessionId: state.sessionId });
             } else if (status === 'retry') {
               const nextTs = Number((props.status && props.status.next) || 0);
               const retryAfterSeconds = Number.isFinite(nextTs) && nextTs > 0
                 ? Math.max(0, Math.ceil((nextTs - Date.now()) / 1000))
                 : null;
-              onEvent({ type: 'wait', status: 'retry', retryAfterSeconds, sessionId: state.sessionId });
+              await dispatchEvent({ type: 'wait', status: 'retry', retryAfterSeconds, sessionId: state.sessionId });
             }
             continue;
           }
 
           if (type === 'session.idle' && String(props.sessionID || '') === state.sessionId) {
-            state.finalText = sortedFinalText();
-            finish(0, null);
-            break;
+            idlePending = true;
+            trace('sdk.session.idle', {
+              sessionId: state.sessionId,
+              finalTextLength: String(state.finalText || '').length,
+              sortedFinalLength: sortedFinalText().length,
+            });
+            scheduleIdleFinalize();
+            continue;
           }
 
           if (type !== 'message.part.updated') {
-            onEvent({ type: 'raw', content: JSON.stringify(evt), sessionId: state.sessionId });
+            await dispatchEvent({ type: 'raw', content: JSON.stringify(evt), sessionId: state.sessionId });
             continue;
           }
 
           const part = props.part || {};
           if (String(part.sessionID || '') !== state.sessionId) continue;
+          if (idlePending) scheduleIdleFinalize();
           const ptype = String(part.type || '');
 
           if (ptype === 'step-start') {
-            onEvent({ type: 'step_start', sessionId: state.sessionId });
+            await dispatchEvent({ type: 'step_start', sessionId: state.sessionId });
             continue;
           }
           if (ptype === 'step-finish') {
-            onEvent({ type: 'step_finish', reason: part.reason || null, sessionId: state.sessionId });
+            await dispatchEvent({ type: 'step_finish', reason: part.reason || null, sessionId: state.sessionId });
             continue;
           }
           if (ptype === 'tool') {
             const toolState = part.state || {};
-            onEvent({
+            await dispatchEvent({
               type: 'tool_use',
               name: part.tool || 'tool',
               input: toolState.input || {},
@@ -599,18 +767,32 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
           if (ptype === 'reasoning') {
             const reasoningText = String(part.text || props.delta || '');
             if (reasoningText) {
-              onEvent({ type: 'text', content: reasoningText, textKind: 'reasoning', sessionId: state.sessionId });
+              trace('sdk.reasoning.part', {
+                partId: String(part.id || ''),
+                index: Number.isFinite(Number(part.index)) ? Number(part.index) : null,
+                text: reasoningText,
+                textLength: reasoningText.length,
+              });
+              await dispatchEvent({ type: 'text', content: reasoningText, textKind: 'reasoning', sessionId: state.sessionId });
             }
             continue;
           }
           if (ptype === 'text') {
             updatePart(part);
             state.finalText = sortedFinalText();
-            onEvent({ type: 'text', content: state.finalText || String(part.text || ''), textKind: 'final', sessionId: state.sessionId });
+            trace('sdk.text.part', {
+              partId: String(part.id || ''),
+              index: Number.isFinite(Number(part.index)) ? Number(part.index) : null,
+              partText: String(part.text || ''),
+              partTextLength: String(part.text || '').length,
+              sortedFinalLength: state.finalText.length,
+              sortedFinalText: state.finalText,
+            });
+            await dispatchEvent({ type: 'text', content: state.finalText || String(part.text || ''), textKind: 'final', sessionId: state.sessionId });
             continue;
           }
 
-          onEvent({ type: 'raw', content: JSON.stringify(evt), sessionId: state.sessionId });
+          await dispatchEvent({ type: 'raw', content: JSON.stringify(evt), sessionId: state.sessionId });
         }
       })();
 
