@@ -196,6 +196,7 @@ test('buildTelegramFormattingShowcase includes markdown and html formatting samp
 test('buildLiveStatusPanelHtml shows emoji-rich compact panel', () => {
   const html = _internal.buildLiveStatusPanelHtml({
     repoName: 'demo-repo',
+    runId: '1771942552137-b2a4c1',
     verbose: false,
     phase: 'running',
     stepCount: 2,
@@ -204,6 +205,8 @@ test('buildLiveStatusPanelHtml shows emoji-rich compact panel', () => {
     sessionId: 'sess-abcdef',
     waitInfo: null,
     lastTool: 'bash: ls',
+    lastReasoning: '',
+    lastReminder: '```text\nsystem-reminder:\ncheck this\n```',
     lastRaw: '',
     lastStepReason: 'continue',
   });
@@ -213,12 +216,16 @@ test('buildLiveStatusPanelHtml shows emoji-rich compact panel', () => {
   assert.match(html, /🔁 2/);
   assert.match(html, /🧰 1/);
   assert.match(html, /📥 queue: 2/);
+  assert.match(html, /🧷 1771942552137-b2a4c1/);
+  assert.match(html, /<pre><code class="language-text">/);
+  assert.match(html, /system-reminder:/);
   assert.doesNotMatch(html, /🔧/);
 });
 
 test('buildLiveStatusPanelHtml renders waiting quota state', () => {
   const html = _internal.buildLiveStatusPanelHtml({
     repoName: 'demo-repo',
+    runId: '1771942552137-b2a4c1',
     verbose: false,
     phase: 'waiting',
     stepCount: 1,
@@ -227,6 +234,8 @@ test('buildLiveStatusPanelHtml renders waiting quota state', () => {
     sessionId: 'sess-abcdef',
     waitInfo: { status: 'retry', retryAfterSeconds: 42 },
     lastTool: '',
+    lastReasoning: '',
+    lastReminder: '',
     lastRaw: '',
     lastStepReason: '',
   });
@@ -581,6 +590,11 @@ test('formatSystemReminderForDisplay compacts completed reminders into code bloc
   const out = _internal.formatSystemReminderForDisplay(raw);
   assert.equal(out.startsWith('```text\nCompleted:\n- bg_1: one\n- bg_2: two\n```'), true);
   assert.equal(out.includes('Use background_output'), false);
+});
+
+test('formatSystemReminderForDisplay always wraps generic reminders in code block', () => {
+  const out = _internal.formatSystemReminderForDisplay('system-reminder:\nwatch queue size');
+  assert.equal(out, '```text\nsystem-reminder:\nwatch queue size\n```');
 });
 
 test('formatSystemReminderForDisplay handles prefixed and generic bracket header', () => {

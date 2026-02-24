@@ -748,7 +748,7 @@ test('gateway e2e does not send final-unit messages after run.finalization', asy
   }
 });
 
-test('gateway e2e keeps reminder channel single-message and strips OMO markers from final_unit', async () => {
+test('gateway e2e renders reminders in status panel and strips OMO markers from final_unit', async () => {
   const cfgSnapshot = backupFile(config.CONFIG_PATH);
   const token = 'test-token';
   const telegram = createTelegramMockServer();
@@ -820,7 +820,17 @@ test('gateway e2e keeps reminder channel single-message and strips OMO markers f
       && r.payload.meta
       && r.payload.meta.channel === 'system_reminder_channel'
     ));
-    assert.equal(reminderSends.length, 1);
+    assert.equal(reminderSends.length, 0);
+
+    const panelUpdates = runRows.filter((r) => (
+      (r.kind === 'telegram.send' || r.kind === 'telegram.edit')
+      && r.payload
+      && r.payload.meta
+      && r.payload.meta.channel === 'status_panel'
+    ));
+    assert.equal(panelUpdates.length > 0, true);
+    const reminderInPanel = panelUpdates.some((r) => /reminder-latest/.test(String(r.payload && r.payload.textPreview || '')));
+    assert.equal(reminderInPanel, true);
 
     const finalOutputs = runRows.filter((r) => (
       r.kind === 'telegram.send'

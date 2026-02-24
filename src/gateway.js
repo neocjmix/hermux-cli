@@ -1523,7 +1523,9 @@ function formatSystemReminderForDisplay(text) {
 
   const completedAt = lines.findIndex((line) => /^\*\*?Completed:\*\*?$|^Completed:$/.test(String(line || '').trim()));
   if (completedAt < 0) {
-    return `system-reminder:\n${lines.join('\n').trim()}`;
+    const body = lines.join('\n').trim();
+    if (!body) return '';
+    return ['```text', 'system-reminder:', body, '```'].join('\n');
   }
 
   const compact = ['Completed:'];
@@ -1542,7 +1544,9 @@ function formatSystemReminderForDisplay(text) {
   }
 
   if (compact.length <= 1) {
-    return `system-reminder:\n${lines.join('\n').trim()}`;
+    const body = lines.join('\n').trim();
+    if (!body) return '';
+    return ['```text', 'system-reminder:', body, '```'].join('\n');
   }
 
   return ['```text', ...compact, '```'].join('\n');
@@ -1736,6 +1740,7 @@ function buildStreamingStatusHtml(text, verbose) {
 
 function buildLiveStatusPanelHtml({
   repoName,
+  runId,
   verbose,
   phase,
   stepCount,
@@ -1744,7 +1749,8 @@ function buildLiveStatusPanelHtml({
   sessionId,
   waitInfo,
   lastTool,
-  lastRaw,
+  lastReasoning,
+  lastReminder,
   lastStepReason,
 }) {
   const phaseIcon = phase === 'running'
@@ -1764,9 +1770,9 @@ function buildLiveStatusPanelHtml({
     lines.push(`<code>📥 queue: ${queueLength}</code>`);
   }
 
-  const shortSession = String(sessionId || '').trim();
-  if (shortSession) {
-    lines.push(`<code>🪪 ${escapeHtml(shortSession.slice(0, 20))}</code>`);
+  const shortRunId = String(runId || '').trim();
+  if (shortRunId) {
+    lines.push(`<code>🧷 ${escapeHtml(shortRunId.slice(0, 20))}</code>`);
   }
 
   if (waitInfo && waitInfo.status === 'retry') {
@@ -1776,6 +1782,17 @@ function buildLiveStatusPanelHtml({
     } else {
       lines.push('<code>⌛ waiting for model quota</code>');
     }
+  }
+
+  const reasoningPreview = String(lastReasoning || '').trim();
+  if (reasoningPreview) {
+    const clipped = reasoningPreview.length > 240 ? `${reasoningPreview.slice(0, 237)}...` : reasoningPreview;
+    lines.push(md2html(`💭 ${clipped}`));
+  }
+
+  const reminderPreview = String(lastReminder || '').trim();
+  if (reminderPreview) {
+    lines.push(md2html(reminderPreview));
   }
 
   const out = lines.join('\n');
@@ -2319,20 +2336,14 @@ async function startPromptRun(bot, repo, state, runItem) {
   let lastStreamSnapshot = '';
   let lastToolBrief = '';
   let lastRawBrief = '';
+  let lastReasoningBrief = '';
+  let lastReminderBrief = '';
   let lastPanelHtml = '';
   let waitInfo = null;
   let heartbeatTimer = null;
   let completionHandled = false;
   let lastRawPreviewSent = '';
   let lastRawPreviewSentAt = 0;
-  let reminderMessageId = null;
-  let lastReminderHtml = '';
-  let reminderSeq = 0;
-  let reminderQueue = Promise.resolve();
-  let reasoningMessageId = null;
-  let lastReasoningHtml = '';
-  let reasoningSeq = 0;
-  let reasoningQueue = Promise.resolve();
   let finalUnitMessageIds = [];
   let lastFinalUnitChunks = [];
   let textEventSeq = 0;
@@ -2351,81 +2362,6 @@ async function startPromptRun(bot, repo, state, runItem) {
       tMs: Date.now() - runStartedAt,
       ...(payload || {}),
     });
-  };
-
-  const refreshSystemReminderChannel = async (reminder, force) => {
-    const reminderText = String(reminder || '').trim();
-    if (!reminderText) return;
-
-    const seq = ++reminderSeq;
-    const display = formatSystemReminderForDisplay(reminderText);
-    const html = buildStreamingStatusHtml(display, state.verbose);
-    auditRun('run.ui.reminder.queue', {
-      seq,
-      force: !!force,
-      length: reminderText.length,
-      reminderText,
-    });
-
-    reminderQueue = reminderQueue.then(async () => {
-      if (!force && seq < reminderSeq) {
-        auditRun('run.ui.reminder.skip', {
-          seq,
-          reason: 'superseded',
-        });
-        return;
-      }
-
-      if (!reminderMessageId) {
-        auditRun('run.ui.reminder.send', {
-          seq,
-          htmlLength: html.length,
-          html,
-        });
-        const sent = await safeSend(bot, chatId, html, { parse_mode: 'HTML' }, {
-          ...runAuditMeta,
-          channel: 'system_reminder_channel',
-          phase: 'running',
-        });
-        if (sent && sent.message_id) {
-          reminderMessageId = sent.message_id;
-          lastReminderHtml = html;
-          auditRun('run.ui.reminder.sent', {
-            seq,
-            reminderMsgId: reminderMessageId,
-          });
-        }
-        return;
-      }
-
-      if (!force && html === lastReminderHtml) {
-        auditRun('run.ui.reminder.skip', {
-          seq,
-          reason: 'same_html',
-        });
-        return;
-      }
-
-      auditRun('run.ui.reminder.edit', {
-        seq,
-        reminderMsgId: reminderMessageId,
-        htmlLength: html.length,
-        html,
-      });
-      await editHtml(bot, chatId, reminderMessageId, html, {
-        ...runAuditMeta,
-        channel: 'system_reminder_channel',
-        phase: 'running',
-      });
-      lastReminderHtml = html;
-    }).catch((err) => {
-      auditRun('run.ui.reminder.error', {
-        seq,
-        message: String(err && err.message ? err.message : err || ''),
-      });
-    });
-
-    return reminderQueue;
   };
 
   const refreshFinalUnitChannel = async (force, explicitText) => {
@@ -2517,40 +2453,6 @@ async function startPromptRun(bot, repo, state, runItem) {
     lastFinalUnitChunks = chunks;
   };
 
-  const refreshReasoningChannel = async (reasoning, force) => {
-    const text = String(reasoning || '').trim();
-    if (!text) return;
-    const html = buildStreamingStatusHtml(text, state.verbose);
-    const seq = ++reasoningSeq;
-    reasoningQueue = reasoningQueue.then(async () => {
-      if (!force && seq < reasoningSeq) return;
-
-      if (!reasoningMessageId) {
-        const sent = await safeSend(bot, chatId, html, { parse_mode: 'HTML' }, {
-          ...runAuditMeta,
-          channel: 'reasoning_channel',
-          phase: 'running',
-        });
-        if (sent && sent.message_id) {
-          reasoningMessageId = sent.message_id;
-          lastReasoningHtml = html;
-        }
-        return;
-      }
-
-      if (!force && html === lastReasoningHtml) return;
-      if (html === lastReasoningHtml) return;
-      await editHtml(bot, chatId, reasoningMessageId, html, {
-        ...runAuditMeta,
-        channel: 'reasoning_channel',
-        phase: 'running',
-      });
-      lastReasoningHtml = html;
-    });
-
-    return reasoningQueue;
-  };
-
   auditRun('run.start', {
     sessionId: activeSessionId || null,
     isVersionPrompt,
@@ -2560,6 +2462,7 @@ async function startPromptRun(bot, repo, state, runItem) {
 
   const buildPanel = (phase) => buildLiveStatusPanelHtml({
     repoName: repo.name,
+    runId,
     verbose: !!state.verbose,
     phase: phase === 'running' && waitInfo ? 'waiting' : phase,
     stepCount,
@@ -2568,7 +2471,8 @@ async function startPromptRun(bot, repo, state, runItem) {
     sessionId: activeSessionId,
     waitInfo,
     lastTool: lastToolBrief,
-    lastRaw: lastRawBrief,
+    lastReasoning: lastReasoningBrief,
+    lastReminder: lastReminderBrief,
     lastStepReason,
   });
 
@@ -2655,12 +2559,17 @@ async function startPromptRun(bot, repo, state, runItem) {
           ? String(reconciled.reasoningText || '')
           : cleaned;
         if (reconciled.classifiedKind === 'reasoning') {
-          await refreshReasoningChannel(reconciled.reasoningText, true);
+          lastReasoningBrief = statusTriggerText;
+          await refreshPanel('running', true);
         } else {
           await refreshFinalUnitChannel(false);
         }
         if (reconciled.reminderTexts.length > 0) {
-          await refreshSystemReminderChannel(reconciled.reminderTexts.join('\n\n'), true);
+          const reminderDisplay = formatSystemReminderForDisplay(reconciled.reminderTexts.join('\n\n'));
+          if (reminderDisplay && reminderDisplay !== lastReminderBrief) {
+            lastReminderBrief = reminderDisplay;
+            await refreshPanel('running', true);
+          }
         }
         if (statusTriggerText.trim()) {
           if (statusMsgId && statusTriggerText !== lastStreamSnapshot) {
@@ -2743,7 +2652,6 @@ async function startPromptRun(bot, repo, state, runItem) {
           lastRawBrief = rawInfo.preview;
           lastRawPreviewSent = rawInfo.preview;
           lastRawPreviewSentAt = now;
-          await refreshPanel('running', false);
         }
         if (rawPlan.sendVerboseDirect && state.verbose && !statusMsgId && rawInfo.preview && allowByCooldown) {
           lastRawPreviewSent = rawInfo.preview;
@@ -2800,7 +2708,10 @@ async function startPromptRun(bot, repo, state, runItem) {
         seq: ++textEventSeq,
       });
       if (completionSnapshot.reminderTexts.length > 0) {
-        await refreshSystemReminderChannel(completionSnapshot.reminderTexts.join('\n\n'), true);
+        const reminderDisplay = formatSystemReminderForDisplay(completionSnapshot.reminderTexts.join('\n\n'));
+        if (reminderDisplay) {
+          lastReminderBrief = reminderDisplay;
+        }
       }
       auditRun('run.completion.snapshot', {
         completionSnapshot,
@@ -2815,8 +2726,6 @@ async function startPromptRun(bot, repo, state, runItem) {
       });
       const mergedFinal = finalResolution.mergedFinal;
       await refreshFinalUnitChannel(true, outputSnapshot.canonicalFinal);
-      await reminderQueue;
-      await reasoningQueue;
       auditRun('run.finalization', {
         status,
         interrupted,
@@ -2919,8 +2828,6 @@ async function startPromptRun(bot, repo, state, runItem) {
     onError: async (err) => {
       if (completionHandled) return;
       completionHandled = true;
-      await reminderQueue;
-      await reasoningQueue;
       state.running = false;
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       clearInterruptEscalationTimer(state);
