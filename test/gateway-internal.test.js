@@ -54,6 +54,33 @@ test('buildNoOutputMessage includes diagnostics context without raw events in no
   assert.doesNotMatch(text, /recent raw events/);
 });
 
+test('buildAuditContentMeta records stable hash and truncation intent', () => {
+  const small = _internal.buildAuditContentMeta('abc');
+  assert.equal(small.contentRawLength, 3);
+  assert.equal(small.willAuditTruncate, false);
+  assert.equal(small.contentSha256, 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+
+  const huge = _internal.buildAuditContentMeta('x'.repeat(17001));
+  assert.equal(huge.contentRawLength, 17001);
+  assert.equal(huge.willAuditTruncate, true);
+  assert.equal(huge.auditStringMax >= 16000, true);
+});
+
+test('buildNoOutputMessage surfaces sanitized-empty reason when raw output existed', () => {
+  const text = _internal.buildNoOutputMessage({
+    exitCode: 0,
+    stepCount: 1,
+    toolCount: 0,
+    toolNames: [],
+    stepReason: '',
+    rawSamples: [],
+    logFile: './logs/x.log',
+    noOutputReason: 'sanitized_prompt_echo',
+  });
+
+  assert.match(text, /sanitized as prompt\/control echo/);
+});
+
 test('buildNoOutputMessage includes raw events in verbose mode', () => {
   const text = _internal.buildNoOutputMessage({
     exitCode: 1,
@@ -717,4 +744,21 @@ test('resolveFinalizationOutput reports no-answer completion when both sources a
   assert.equal(resolved.shouldSendFinal, false);
   assert.equal(resolved.outgoingText, '');
   assert.equal(resolved.streamCompletionText, 'completed (no final answer produced).');
+  assert.equal(resolved.emptyReason, 'no_raw_output');
+});
+
+test('resolveFinalizationOutput classifies sanitized-empty when raw output exists', () => {
+  const prompt = 'run this exact prompt';
+  const resolved = _internal.resolveFinalizationOutput({
+    metaFinalText: `<ultrawork-mode>\n${prompt}`,
+    streamFinalText: '',
+    promptText: prompt,
+    isVersionPrompt: false,
+    hermuxVersion: '0.0.0',
+  });
+
+  assert.equal(resolved.shouldSendFinal, false);
+  assert.equal(resolved.hadRawFinal, true);
+  assert.equal(resolved.emptyReason, 'sanitized_prompt_echo');
+  assert.equal(resolved.streamCompletionText, 'completed (output was sanitized to empty).');
 });

@@ -12,12 +12,14 @@ const SDK_PORT_RANGE_MIN = parseInt(process.env.OMG_SDK_PORT_RANGE_MIN || '43100
 const SDK_PORT_RANGE_MAX = parseInt(process.env.OMG_SDK_PORT_RANGE_MAX || '43999', 10);
 const SDK_PORT_PICK_ATTEMPTS = parseInt(process.env.OMG_SDK_PORT_PICK_ATTEMPTS || '60', 10);
 const SDK_IDLE_DRAIN_MS = parseInt(process.env.OMG_SDK_IDLE_DRAIN_MS || '220', 10);
+const SDK_POST_COMPLETE_LINGER_MS = parseInt(process.env.OMG_SDK_POST_COMPLETE_LINGER_MS || '1200', 10);
 
 const activeRuns = new Set();
 const runtimeStats = new Map();
 const sdkRuntimes = new Map();
 const sdkRuntimeOps = new Map();
 let stopAllInProgress = false;
+const SESSION_EVENT_BUFFER_LIMIT = parseInt(process.env.OMG_SESSION_EVENT_BUFFER_LIMIT || '200', 10);
 
 function parseRetryAfterSeconds(text) {
   const src = String(text || '');
@@ -234,11 +236,26 @@ async function createSdkRuntimeForScope(scopeKey) {
     client,
     port: sdkPort,
     startedAt: Date.now(),
+    eventCursor: 0,
+    subscriptionEpoch: 0,
+    serverEpoch: 1,
+    pumpPromise: null,
+    pumpReadyPromise: null,
+    eventStream: null,
+    observersBySession: new Map(),
+    sessionBuffers: new Map(),
+    auditPath: '',
+    auditQueue: Promise.resolve(),
   };
 }
 
 async function closeSdkRuntimeEntry(entry) {
   if (!entry) return;
+  entry.pumpPromise = null;
+  entry.pumpReadyPromise = null;
+  entry.eventStream = null;
+  entry.observersBySession = new Map();
+  entry.sessionBuffers = new Map();
   const runtime = entry.runtime;
   if (runtime && runtime.server && typeof runtime.server.close === 'function') {
     try {
@@ -246,6 +263,192 @@ async function closeSdkRuntimeEntry(entry) {
     } catch (_err) {
     }
   }
+}
+
+function resolveAuditPath(instance) {
+  const logFile = String((instance && instance.logFile) || '').trim();
+  if (!logFile) return '';
+  return path.resolve(logFile);
+}
+
+function queueScopeAudit(entry, instance, kind, payload) {
+  const auditPath = resolveAuditPath(instance) || entry.auditPath || '';
+  if (!auditPath) return;
+  entry.auditPath = auditPath;
+  const dir = path.dirname(auditPath);
+  const line = `[router] ${JSON.stringify({
+    ts: new Date().toISOString(),
+    kind,
+    scopeKey: entry.scopeKey,
+    serverEpoch: entry.serverEpoch,
+    subscriptionEpoch: entry.subscriptionEpoch,
+    eventCursor: entry.eventCursor,
+    payload: payload || {},
+  })}\n`;
+  entry.auditQueue = entry.auditQueue
+    .then(() => fs.promises.mkdir(dir, { recursive: true }))
+    .then(() => fs.promises.appendFile(auditPath, line))
+    .catch(() => {});
+}
+
+function resolveSessionIdentity(evt) {
+  const type = String((evt && evt.type) || '');
+  const props = (evt && evt.properties) || {};
+  const part = props.part || {};
+  const info = props.info || {};
+  const candidates = [
+    String(props.sessionID || '').trim(),
+    String(part.sessionID || '').trim(),
+    String(info.sessionID || '').trim(),
+  ].filter(Boolean);
+  if (type.startsWith('session.') && String(info.id || '').trim()) {
+    candidates.push(String(info.id || '').trim());
+  }
+  const sessionId = candidates[0] || '';
+  return {
+    type,
+    sessionId,
+    messageId: String(props.messageID || part.messageID || '').trim(),
+    partId: String(props.partID || part.id || '').trim(),
+    lane: sessionId ? 'session' : 'global',
+  };
+}
+
+function pushBufferedSessionEvent(entry, sessionId, framedEvent) {
+  if (!sessionId) return;
+  const current = entry.sessionBuffers.get(sessionId) || [];
+  current.push(framedEvent);
+  const max = Number.isInteger(SESSION_EVENT_BUFFER_LIMIT) && SESSION_EVENT_BUFFER_LIMIT > 0
+    ? SESSION_EVENT_BUFFER_LIMIT
+    : 200;
+  if (current.length > max) {
+    current.splice(0, current.length - max);
+  }
+  entry.sessionBuffers.set(sessionId, current);
+}
+
+function addSessionObserver(entry, sessionId, observer, instance, options) {
+  const sid = String(sessionId || '').trim();
+  if (!sid) {
+    throw new Error('cannot add session observer without session id');
+  }
+  const replayBuffered = !options || options.replayBuffered !== false;
+  let set = entry.observersBySession.get(sid);
+  if (!set) {
+    set = new Set();
+    entry.observersBySession.set(sid, set);
+  }
+  set.add(observer);
+  queueScopeAudit(entry, instance, 'router.observer.attach', {
+    lane: 'session',
+    sessionId: sid,
+    observerCount: set.size,
+  });
+
+  if (replayBuffered) {
+    const buffered = entry.sessionBuffers.get(sid) || [];
+    for (const framed of buffered) {
+      observer.onEvent(framed).catch(() => {});
+    }
+  }
+
+  return () => {
+    const cur = entry.observersBySession.get(sid);
+    if (!cur) return;
+    cur.delete(observer);
+    if (cur.size === 0) entry.observersBySession.delete(sid);
+    queueScopeAudit(entry, instance, 'router.observer.detach', {
+      lane: 'session',
+      sessionId: sid,
+      observerCount: cur.size,
+    });
+  };
+}
+
+async function ensureSdkEventPump(instance, entry) {
+  if (entry.pumpReadyPromise) return entry.pumpReadyPromise;
+
+  let readyResolve;
+  let readyReject;
+  entry.pumpReadyPromise = new Promise((resolve, reject) => {
+    readyResolve = resolve;
+    readyReject = reject;
+  });
+
+  entry.pumpPromise = (async () => {
+    entry.subscriptionEpoch += 1;
+    const query = { directory: instance.workdir };
+    const subscription = await entry.client.event.subscribe({
+      url: '/event',
+      query,
+    });
+    const stream = subscription && subscription.stream;
+    if (!stream || typeof stream[Symbol.asyncIterator] !== 'function') {
+      throw new Error('sdk event stream unavailable');
+    }
+    entry.eventStream = stream;
+    if (typeof readyResolve === 'function') readyResolve();
+    queueScopeAudit(entry, instance, 'router.subscription.started', { lane: 'global' });
+
+    for await (const evt of stream) {
+      entry.eventCursor += 1;
+      const resolved = resolveSessionIdentity(evt);
+      const framed = {
+        evt,
+        resolved,
+        cursor: entry.eventCursor,
+        serverEpoch: entry.serverEpoch,
+        subscriptionEpoch: entry.subscriptionEpoch,
+      };
+
+      queueScopeAudit(entry, instance, 'router.event.ingress', {
+        lane: resolved.lane,
+        sessionId: resolved.sessionId || null,
+        type: resolved.type,
+      });
+
+      if (!resolved.sessionId) {
+        queueScopeAudit(entry, instance, 'router.event.global_lane', {
+          lane: 'global',
+          type: resolved.type,
+        });
+        continue;
+      }
+
+      pushBufferedSessionEvent(entry, resolved.sessionId, framed);
+      const observers = entry.observersBySession.get(resolved.sessionId);
+      if (!observers || observers.size === 0) {
+        queueScopeAudit(entry, instance, 'router.event.buffered', {
+          lane: 'session',
+          sessionId: resolved.sessionId,
+          type: resolved.type,
+        });
+        continue;
+      }
+
+      for (const observer of observers) {
+        observer.onEvent(framed).catch(() => {});
+      }
+      queueScopeAudit(entry, instance, 'router.event.routed', {
+        lane: 'session',
+        sessionId: resolved.sessionId,
+        observerCount: observers.size,
+        type: resolved.type,
+      });
+    }
+  })().catch((err) => {
+    queueScopeAudit(entry, instance, 'router.subscription.error', {
+      lane: 'global',
+      message: String(err && err.message ? err.message : err || ''),
+    });
+    entry.pumpPromise = null;
+    entry.pumpReadyPromise = null;
+    entry.eventStream = null;
+    if (typeof readyReject === 'function') readyReject(err);
+    throw err;
+  });
+
+  return entry.pumpReadyPromise;
 }
 
 async function getOrCreateSdkRuntime(instance) {
@@ -646,14 +849,23 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
     rateLimit: null,
     stderrSamples: [],
     finalText: '',
+    attachCursor: 0,
+    hasCurrentRunActivity: false,
   };
 
   const partMap = new Map();
   let partSeq = 0;
   let abortSession = null;
+  let detachObserver = null;
+  let boundRuntimeEntry = null;
   let eventQueue = Promise.resolve();
   let idleFinalizeTimer = null;
+  let postCompleteTimer = null;
   let idlePending = false;
+  let settlePromiseResolve = null;
+  const settlePromise = new Promise((resolve) => {
+    settlePromiseResolve = resolve;
+  });
 
   function dispatchEvent(event) {
     eventSeq += 1;
@@ -668,6 +880,14 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
     return eventQueue;
   }
 
+  async function drainEventQueue() {
+    while (true) {
+      const queued = eventQueue;
+      await queued;
+      if (eventQueue === queued) return;
+    }
+  }
+
   function clearIdleFinalizeTimer() {
     if (idleFinalizeTimer) {
       clearTimeout(idleFinalizeTimer);
@@ -675,8 +895,38 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
     }
   }
 
+  function clearPostCompleteTimer() {
+    if (postCompleteTimer) {
+      clearTimeout(postCompleteTimer);
+      postCompleteTimer = null;
+    }
+  }
+
+  function schedulePostCompleteFinalize() {
+    clearPostCompleteTimer();
+    postCompleteTimer = setTimeout(async () => {
+      if (state.done) return;
+      state.finalText = sortedFinalText();
+      trace('post_complete.finalize.firing', {
+        lingerMs: Math.max(0, SDK_POST_COMPLETE_LINGER_MS),
+        finalTextLength: state.finalText.length,
+        finalText: state.finalText,
+      });
+      try {
+        trace('post_complete.finalize.await_event_queue', {});
+        await drainEventQueue();
+        trace('post_complete.finalize.event_queue_drained', {});
+      } catch (err) {
+        fail(err instanceof Error ? err : new Error(String(err || 'event dispatch failed')));
+        return;
+      }
+      finish(0, null);
+    }, Math.max(0, SDK_POST_COMPLETE_LINGER_MS));
+  }
+
   function scheduleIdleFinalize() {
     clearIdleFinalizeTimer();
+    clearPostCompleteTimer();
     trace('idle.finalize.scheduled', {
       delayMs: Math.max(0, SDK_IDLE_DRAIN_MS),
       currentFinalLength: String(state.finalText || '').length,
@@ -690,13 +940,13 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
       });
       try {
         trace('idle.finalize.await_event_queue', {});
-        await eventQueue;
+        await drainEventQueue();
         trace('idle.finalize.event_queue_drained', {});
       } catch (err) {
         fail(err instanceof Error ? err : new Error(String(err || 'event dispatch failed')));
         return;
       }
-      finish(0, null);
+      schedulePostCompleteFinalize();
     }, Math.max(0, SDK_IDLE_DRAIN_MS));
   }
 
@@ -743,7 +993,12 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
   function finish(exitCode, timeoutMsg) {
     if (state.done) return;
     state.done = true;
+    if (typeof detachObserver === 'function') {
+      try { detachObserver(); } catch (_err) {}
+      detachObserver = null;
+    }
     clearIdleFinalizeTimer();
+    clearPostCompleteTimer();
     clearTimeout(timeout);
     trace('settle.done', {
       exitCode,
@@ -751,6 +1006,14 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
       finalTextLength: String(state.finalText || '').length,
       finalText: state.finalText,
     });
+    if (boundRuntimeEntry) {
+      queueScopeAudit(boundRuntimeEntry, instance, 'router.run.complete', {
+        lane: 'run-observer',
+        sessionId: state.sessionId,
+        exitCode,
+        timeoutMsg,
+      });
+    }
     logStream.end();
     logClosed = true;
     onDone(exitCode, timeoutMsg, {
@@ -759,12 +1022,18 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
       stderrSamples: state.stderrSamples.slice(-5),
       finalText: state.finalText,
     });
+    if (typeof settlePromiseResolve === 'function') settlePromiseResolve();
   }
 
   function fail(err) {
     if (state.done) return;
     state.done = true;
+    if (typeof detachObserver === 'function') {
+      try { detachObserver(); } catch (_err) {}
+      detachObserver = null;
+    }
     clearIdleFinalizeTimer();
+    clearPostCompleteTimer();
     clearTimeout(timeout);
     if (isRecoverableSdkTransportError(err)) {
       resetSdkRuntime(instance).catch(() => {});
@@ -776,9 +1045,17 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
     trace('settle.error', {
       message: String(err && err.message ? err.message : err || ''),
     });
+    if (boundRuntimeEntry) {
+      queueScopeAudit(boundRuntimeEntry, instance, 'router.run.error', {
+        lane: 'run-observer',
+        sessionId: state.sessionId,
+        message: String(err && err.message ? err.message : err || ''),
+      });
+    }
     logStream.end();
     logClosed = true;
     onError(err instanceof Error ? err : new Error(msg));
+    if (typeof settlePromiseResolve === 'function') settlePromiseResolve();
   }
 
   const handle = {
@@ -801,6 +1078,195 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
     finish(null, `Process timed out after ${MAX_PROCESS_SEC}s`);
   }, MAX_PROCESS_SEC * 1000);
 
+  async function processFramedEvent(framed) {
+    if (state.done) return;
+    const cursor = Number((framed && framed.cursor) || 0);
+    if (Number.isFinite(cursor) && cursor > 0 && state.attachCursor > 0 && cursor <= state.attachCursor) {
+      trace('sdk.event.drop.stale_cursor', {
+        cursor,
+        attachCursor: state.attachCursor,
+        sessionId: state.sessionId,
+      });
+      return;
+    }
+    const evt = framed && framed.evt ? framed.evt : {};
+    const resolved = framed && framed.resolved ? framed.resolved : resolveSessionIdentity(evt);
+    const type = String((resolved && resolved.type) || evt.type || '');
+    const props = (evt && evt.properties) || {};
+
+    logStream.write(`${JSON.stringify(evt)}\n`);
+    trace('sdk.event.raw', {
+      type,
+      lane: String((resolved && resolved.lane) || ''),
+      sessionId: String((resolved && resolved.sessionId) || ''),
+      event: evt,
+    });
+
+    if (String((resolved && resolved.sessionId) || '') !== state.sessionId) {
+      return;
+    }
+
+    if (type === 'session.error') {
+      const errText = JSON.stringify(props.error || props);
+      maybeCaptureRateLimit(state, errText);
+      state.stderrSamples.push(errText);
+      if (state.stderrSamples.length > 5) state.stderrSamples.shift();
+      await dispatchEvent({ type: 'raw', content: errText, sessionId: state.sessionId });
+      return;
+    }
+
+    if (type === 'session.status') {
+      const status = String((props.status && props.status.type) || '').toLowerCase();
+      if (status === 'busy') {
+        state.hasCurrentRunActivity = true;
+        await dispatchEvent({ type: 'step_start', sessionId: state.sessionId });
+      } else if (status === 'retry') {
+        const nextTs = Number((props.status && props.status.next) || 0);
+        const retryAfterSeconds = Number.isFinite(nextTs) && nextTs > 0
+          ? Math.max(0, Math.ceil((nextTs - Date.now()) / 1000))
+          : null;
+        await dispatchEvent({ type: 'wait', status: 'retry', retryAfterSeconds, sessionId: state.sessionId });
+      }
+      return;
+    }
+
+    if (type === 'session.idle') {
+      if (!state.hasCurrentRunActivity) {
+        trace('sdk.session.idle.ignored.pre_activity', {
+          sessionId: state.sessionId,
+        });
+        if (boundRuntimeEntry) {
+          queueScopeAudit(boundRuntimeEntry, instance, 'router.run.idle_ignored', {
+            lane: 'run-observer',
+            sessionId: state.sessionId,
+            reason: 'pre-activity',
+          });
+        }
+        return;
+      }
+      idlePending = true;
+      trace('sdk.session.idle', {
+        sessionId: state.sessionId,
+        finalTextLength: String(state.finalText || '').length,
+        sortedFinalLength: sortedFinalText().length,
+      });
+      scheduleIdleFinalize();
+      return;
+    }
+
+    if (type === 'message.part.delta') {
+      state.hasCurrentRunActivity = true;
+      if (idlePending) scheduleIdleFinalize();
+      const partId = String(props.partID || '').trim();
+      const field = String(props.field || '');
+      const delta = String(props.delta || '');
+      if (!partId || field !== 'text' || !delta) return;
+      const ptype = String(props.type || '').trim().toLowerCase();
+      if (ptype === 'reasoning') {
+        await dispatchEvent({
+          type: 'text',
+          content: delta,
+          textKind: 'reasoning',
+          sessionId: state.sessionId,
+          messageId: String(props.messageID || ''),
+          partId,
+        });
+        return;
+      }
+      const entry = updatePart({
+        id: partId,
+        index: Number.isFinite(Number(props.partIndex)) ? Number(props.partIndex) : undefined,
+        type: 'text',
+        text: '',
+      });
+      if (!entry) return;
+      entry.text = String(entry.text || '') + delta;
+      state.finalText = sortedFinalText();
+      await dispatchEvent({
+        type: 'text',
+        content: state.finalText || delta,
+        textKind: 'final',
+        sessionId: state.sessionId,
+        messageId: String(props.messageID || ''),
+        partId,
+      });
+      return;
+    }
+
+    if (type !== 'message.part.updated') {
+      await dispatchEvent({ type: 'raw', content: JSON.stringify(evt), sessionId: state.sessionId });
+      return;
+    }
+
+    const part = props.part || {};
+    state.hasCurrentRunActivity = true;
+    if (idlePending) scheduleIdleFinalize();
+    const ptype = String(part.type || '');
+
+    if (ptype === 'step-start') {
+      await dispatchEvent({ type: 'step_start', sessionId: state.sessionId });
+      return;
+    }
+    if (ptype === 'step-finish') {
+      await dispatchEvent({ type: 'step_finish', reason: part.reason || null, sessionId: state.sessionId });
+      return;
+    }
+    if (ptype === 'tool') {
+      const toolState = part.state || {};
+      await dispatchEvent({
+        type: 'tool_use',
+        name: part.tool || 'tool',
+        input: toolState.input || {},
+        output: toolState.output || toolState.error || '',
+        sessionId: state.sessionId,
+      });
+      return;
+    }
+    if (ptype === 'reasoning') {
+      const reasoningText = String(part.text || props.delta || '');
+      if (reasoningText) {
+        trace('sdk.reasoning.part', {
+          partId: String(part.id || ''),
+          index: Number.isFinite(Number(part.index)) ? Number(part.index) : null,
+          text: reasoningText,
+          textLength: reasoningText.length,
+        });
+        await dispatchEvent({
+          type: 'text',
+          content: reasoningText,
+          textKind: 'reasoning',
+          sessionId: state.sessionId,
+          messageId: String(part.messageID || ''),
+          partId: String(part.id || ''),
+        });
+      }
+      return;
+    }
+    if (ptype === 'text') {
+      updatePart(part);
+      state.finalText = sortedFinalText();
+      trace('sdk.text.part', {
+        partId: String(part.id || ''),
+        index: Number.isFinite(Number(part.index)) ? Number(part.index) : null,
+        partText: String(part.text || ''),
+        partTextLength: String(part.text || '').length,
+        sortedFinalLength: state.finalText.length,
+        sortedFinalText: state.finalText,
+      });
+      await dispatchEvent({
+        type: 'text',
+        content: state.finalText || String(part.text || ''),
+        textKind: 'final',
+        sessionId: state.sessionId,
+        messageId: String(part.messageID || ''),
+        partId: String(part.id || ''),
+      });
+      return;
+    }
+
+    await dispatchEvent({ type: 'raw', content: JSON.stringify(evt), sessionId: state.sessionId });
+  }
+
   (async () => {
     try {
       if (stopAllInProgress) {
@@ -808,6 +1274,7 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
       }
 
       const runtimeEntry = await getOrCreateSdkRuntime(instance);
+      boundRuntimeEntry = runtimeEntry;
       const client = runtimeEntry.client;
 
       const query = { directory: instance.workdir };
@@ -853,137 +1320,24 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
           query,
         });
       };
-
-      const subscription = await client.event.subscribe({
-        url: '/event',
-        query,
+      await ensureSdkEventPump(instance, runtimeEntry);
+      let observerQueue = Promise.resolve();
+      state.attachCursor = Number(runtimeEntry.eventCursor || 0);
+      detachObserver = addSessionObserver(runtimeEntry, state.sessionId, {
+        onEvent: (framed) => {
+          observerQueue = observerQueue.then(() => processFramedEvent(framed));
+          return observerQueue;
+        },
+      }, instance, { replayBuffered: false });
+      queueScopeAudit(runtimeEntry, instance, 'router.run.attach', {
+        lane: 'run-observer',
+        sessionId: state.sessionId,
+        attachCursor: state.attachCursor,
       });
-
-      const stream = subscription && subscription.stream;
-      if (!stream || typeof stream[Symbol.asyncIterator] !== 'function') {
-        throw new Error('sdk event stream unavailable');
-      }
-
-      const readerPromise = (async () => {
-        for await (const evt of stream) {
-          if (state.done) break;
-          const type = String((evt && evt.type) || '');
-          const props = (evt && evt.properties) || {};
-          logStream.write(`${JSON.stringify(evt)}\n`);
-          trace('sdk.event.raw', {
-            type,
-            sessionId: String(props.sessionID || (props.part && props.part.sessionID) || ''),
-            event: evt,
-          });
-
-          if (type === 'session.error') {
-            const errText = JSON.stringify(props.error || props);
-            maybeCaptureRateLimit(state, errText);
-            state.stderrSamples.push(errText);
-            if (state.stderrSamples.length > 5) state.stderrSamples.shift();
-            await dispatchEvent({ type: 'raw', content: errText, sessionId: state.sessionId });
-            continue;
-          }
-
-          if (type === 'session.status' && String(props.sessionID || '') === state.sessionId) {
-            const status = String((props.status && props.status.type) || '').toLowerCase();
-            if (status === 'busy') {
-              await dispatchEvent({ type: 'step_start', sessionId: state.sessionId });
-            } else if (status === 'retry') {
-              const nextTs = Number((props.status && props.status.next) || 0);
-              const retryAfterSeconds = Number.isFinite(nextTs) && nextTs > 0
-                ? Math.max(0, Math.ceil((nextTs - Date.now()) / 1000))
-                : null;
-              await dispatchEvent({ type: 'wait', status: 'retry', retryAfterSeconds, sessionId: state.sessionId });
-            }
-            continue;
-          }
-
-          if (type === 'session.idle' && String(props.sessionID || '') === state.sessionId) {
-            idlePending = true;
-            trace('sdk.session.idle', {
-              sessionId: state.sessionId,
-              finalTextLength: String(state.finalText || '').length,
-              sortedFinalLength: sortedFinalText().length,
-            });
-            scheduleIdleFinalize();
-            continue;
-          }
-
-          if (type !== 'message.part.updated') {
-            await dispatchEvent({ type: 'raw', content: JSON.stringify(evt), sessionId: state.sessionId });
-            continue;
-          }
-
-          const part = props.part || {};
-          if (String(part.sessionID || '') !== state.sessionId) continue;
-          if (idlePending) scheduleIdleFinalize();
-          const ptype = String(part.type || '');
-
-          if (ptype === 'step-start') {
-            await dispatchEvent({ type: 'step_start', sessionId: state.sessionId });
-            continue;
-          }
-          if (ptype === 'step-finish') {
-            await dispatchEvent({ type: 'step_finish', reason: part.reason || null, sessionId: state.sessionId });
-            continue;
-          }
-          if (ptype === 'tool') {
-            const toolState = part.state || {};
-            await dispatchEvent({
-              type: 'tool_use',
-              name: part.tool || 'tool',
-              input: toolState.input || {},
-              output: toolState.output || toolState.error || '',
-              sessionId: state.sessionId,
-            });
-            continue;
-          }
-          if (ptype === 'reasoning') {
-            const reasoningText = String(part.text || props.delta || '');
-            if (reasoningText) {
-              trace('sdk.reasoning.part', {
-                partId: String(part.id || ''),
-                index: Number.isFinite(Number(part.index)) ? Number(part.index) : null,
-                text: reasoningText,
-                textLength: reasoningText.length,
-              });
-              await dispatchEvent({
-                type: 'text',
-                content: reasoningText,
-                textKind: 'reasoning',
-                sessionId: state.sessionId,
-                messageId: String(part.messageID || ''),
-                partId: String(part.id || ''),
-              });
-            }
-            continue;
-          }
-          if (ptype === 'text') {
-            updatePart(part);
-            state.finalText = sortedFinalText();
-            trace('sdk.text.part', {
-              partId: String(part.id || ''),
-              index: Number.isFinite(Number(part.index)) ? Number(part.index) : null,
-              partText: String(part.text || ''),
-              partTextLength: String(part.text || '').length,
-              sortedFinalLength: state.finalText.length,
-              sortedFinalText: state.finalText,
-            });
-            await dispatchEvent({
-              type: 'text',
-              content: state.finalText || String(part.text || ''),
-              textKind: 'final',
-              sessionId: state.sessionId,
-              messageId: String(part.messageID || ''),
-              partId: String(part.id || ''),
-            });
-            continue;
-          }
-
-          await dispatchEvent({ type: 'raw', content: JSON.stringify(evt), sessionId: state.sessionId });
-        }
-      })();
+      queueScopeAudit(runtimeEntry, instance, 'router.observer.run_attach', {
+        lane: 'run-observer',
+        sessionId: state.sessionId,
+      });
 
       await unwrapData(await client.session.promptAsync({
         url: '/session/{id}/prompt_async',
@@ -994,11 +1348,11 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
         },
       }));
 
-      await readerPromise;
-      if (!state.done) {
-        state.finalText = sortedFinalText();
-        finish(0, null);
+      if (!idlePending && !state.done) {
+        schedulePostCompleteFinalize();
       }
+
+      await settlePromise;
     } catch (err) {
       fail(err);
     }

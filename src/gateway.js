@@ -6,6 +6,7 @@ const path = require('path');
 const fsp = require('fs/promises');
 const { pipeline } = require('stream/promises');
 const { spawn, spawnSync } = require('child_process');
+const { createHash } = require('crypto');
 const TelegramBot = require('node-telegram-bot-api');
 const { load, getEnabledRepos, addChatIdToRepo, addOrUpdateRepo, setGlobalBotToken, resetConfig, CONFIG_PATH } = require('./lib/config');
 const {
@@ -36,6 +37,7 @@ const REVERT_CONFIRM_TTL_MS = 10 * 60 * 1000;
 const REVERT_TARGET_LIMIT_PER_CHAT = 240;
 const OPENCODE_CONFIG_PATH = process.env.OMG_OPENCODE_CONFIG_PATH || path.join(process.env.HOME || '', '.config', 'opencode', 'opencode.json');
 const OMO_CONFIG_PATH = process.env.OMG_OMO_CONFIG_PATH || path.join(process.env.HOME || '', '.config', 'opencode', 'oh-my-opencode.json');
+const AUDIT_STRING_MAX = parseInt(process.env.OMG_AUDIT_STRING_MAX || '16000', 10);
 const auditLogger = makeAuditLogger(RUNTIME_DIR);
 let connectMutationQueue = Promise.resolve();
 let restartMutationQueue = Promise.resolve();
@@ -47,6 +49,18 @@ function summarizeAuditText(text) {
   const value = String(text || '').replace(/\s+/g, ' ').trim();
   if (!value) return '';
   return value.length > 500 ? `${value.slice(0, 500)}...(truncated)` : value;
+}
+
+function buildAuditContentMeta(text) {
+  const value = String(text || '');
+  const length = value.length;
+  const hash = createHash('sha256').update(value).digest('hex');
+  return {
+    contentSha256: hash,
+    contentRawLength: length,
+    auditStringMax: AUDIT_STRING_MAX,
+    willAuditTruncate: length > AUDIT_STRING_MAX,
+  };
 }
 
 function audit(kind, payload) {
@@ -1490,10 +1504,17 @@ function buildNoOutputMessage({
   rateLimit,
   stderrSamples,
   includeRawDiagnostics,
+  noOutputReason,
 }) {
   const status = exitCode === 0 ? 'done (no final text)' : `exit ${exitCode}`;
+  let headline = 'No final answer text was produced by opencode.';
+  if (noOutputReason === 'sanitized_prompt_echo') {
+    headline = 'Opencode returned output, but it was sanitized as prompt/control echo.';
+  } else if (noOutputReason === 'sanitized_control_only') {
+    headline = 'Opencode returned control output only (no user-facing final answer body).';
+  }
   const lines = [
-    'No final answer text was produced by opencode.',
+    headline,
     `status: ${status}`,
     `steps: ${stepCount}, tools: ${toolCount}`,
   ];
@@ -1685,6 +1706,12 @@ function sanitizeFinalOutputText(text, promptText) {
   return sanitizeCanonicalOutputText(text, promptText);
 }
 
+function sanitizeWithoutPromptEchoStrip(text) {
+  let out = stripSystemReminderBlocks(text || '');
+  out = stripOmoInitiatorMarkers(out);
+  return String(out || '').trim();
+}
+
 function mergeTextForFinalization(prev, next) {
   const a = String(prev || '').trim();
   const b = String(next || '').trim();
@@ -1812,17 +1839,32 @@ function resolveFinalizationOutput({
   const cleanMeta = sanitizeCanonicalOutputText(metaFinalText, promptText);
   const cleanStream = sanitizeCanonicalOutputText(streamFinalText, promptText);
   const canonicalText = selectFinalOutputText(cleanMeta, cleanStream);
+  const rawMeta = String(metaFinalText || '').trim();
+  const rawStream = String(streamFinalText || '').trim();
+  const hadRawFinal = !!(rawMeta || rawStream);
+  let emptyReason = 'no_raw_output';
+  if (!canonicalText && hadRawFinal) {
+    const unstrippedMeta = sanitizeWithoutPromptEchoStrip(metaFinalText);
+    const unstrippedStream = sanitizeWithoutPromptEchoStrip(streamFinalText);
+    const unstripped = selectFinalOutputText(unstrippedMeta, unstrippedStream);
+    emptyReason = unstripped ? 'sanitized_prompt_echo' : 'sanitized_control_only';
+  }
   const displayText = sanitizeDisplayOutputText(canonicalText);
   const outgoingText = isVersionPrompt ? appendHermuxVersion(displayText, hermuxVersion) : displayText;
   const shouldSendFinal = !!String(outgoingText || '').trim();
-  const streamCompletionText = shouldSendFinal
-    ? 'completed. final answer sent below.'
-    : 'completed (no final answer produced).';
+  let streamCompletionText = 'completed (no final answer produced).';
+  if (shouldSendFinal) {
+    streamCompletionText = 'completed. final answer sent below.';
+  } else if (hadRawFinal) {
+    streamCompletionText = 'completed (output was sanitized to empty).';
+  }
   return {
     mergedFinal: canonicalText,
     outgoingText,
     shouldSendFinal,
     streamCompletionText,
+    hadRawFinal,
+    emptyReason,
   };
 }
 
@@ -2779,6 +2821,7 @@ async function startPromptRun(bot, repo, state, runItem) {
         content: String(evt.content || ''),
         contentLength: String(evt.content || '').length,
         contentPreview: summarizeAuditText(evt.content || evt.name || ''),
+        ...buildAuditContentMeta(evt.content || ''),
       });
 
       if (type === 'step_start') {
@@ -3065,6 +3108,7 @@ async function startPromptRun(bot, repo, state, runItem) {
           rateLimit: meta && meta.rateLimit ? meta.rateLimit : null,
           stderrSamples: meta && Array.isArray(meta.stderrSamples) ? meta.stderrSamples : [],
           includeRawDiagnostics: !!state.verbose,
+          noOutputReason: finalResolution.emptyReason,
         });
         const fallback = isVersionPrompt ? appendHermuxVersion(fallbackBase, hermuxVersion) : fallbackBase;
         await safeSend(bot, chatId, fallback, undefined, {
@@ -3381,5 +3425,6 @@ module.exports = {
     parseRawEventContent,
     formatRawEventPreview,
     resolveRawDeliveryPlan,
+    buildAuditContentMeta,
   },
 };

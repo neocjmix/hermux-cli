@@ -25,7 +25,7 @@ test('audit logger writes jsonl records with kind and payload', () => {
 });
 
 test('audit logger sanitizes deep and very long payload values', () => {
-  const huge = 'x'.repeat(1200);
+  const huge = 'x'.repeat(20000);
   const sanitized = _internal.sanitizeValue({
     huge,
     nested: { a: { b: { c: { d: { e: 'z' } } } } },

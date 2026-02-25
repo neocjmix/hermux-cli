@@ -248,6 +248,7 @@ test('runOpencode sdk mode reuses provided session id when valid', async () => {
 
 test('runOpencode sdk mode reuses persistent sdk runtime for same scope', async () => {
   global.__FAKE_OPENCODE_SDK_STARTS__ = 0;
+  global.__FAKE_OPENCODE_SDK_SUBSCRIBES__ = 0;
   const { runOpencode, stopAllRuntimeExecutors } = loadRunnerWithEnv({
     OMG_MAX_PROCESS_SECONDS: 10,
     OMG_EXECUTION_TRANSPORT: 'sdk',
@@ -277,6 +278,7 @@ test('runOpencode sdk mode reuses persistent sdk runtime for same scope', async 
   assert.equal(first.exitCode, 0);
   assert.equal(second.exitCode, 0);
   assert.equal(Number(global.__FAKE_OPENCODE_SDK_STARTS__ || 0), 1);
+  assert.equal(Number(global.__FAKE_OPENCODE_SDK_SUBSCRIBES__ || 0), 1);
 });
 
 test('stopAllRuntimeExecutors closes sdk runtime and next run recreates it', async () => {
@@ -461,6 +463,72 @@ test('runOpencode sdk mode captures late text that arrives after idle', async ()
   assert.equal(done.timeoutMsg, null);
   assert.equal(done.meta.sessionId, 'sdk-idle-tail');
   assert.match(String(done.meta.finalText || ''), /chunk-3-tail/);
+});
+
+test('runOpencode sdk mode keeps handling late deltas after completion signal', async () => {
+  const { runOpencode } = loadRunnerWithEnv({
+    OMG_MAX_PROCESS_SECONDS: 10,
+    OMG_EXECUTION_TRANSPORT: 'sdk',
+    OMG_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk-idle-late-delta.js'),
+    OMG_SDK_IDLE_DRAIN_MS: 220,
+    OMG_SDK_POST_COMPLETE_LINGER_MS: 1200,
+  });
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runner-sdk-idle-late-delta-'));
+  const events = [];
+
+  const done = await new Promise((resolve, reject) => {
+    runOpencode(
+      {
+        opencodeCommand: 'opencode sdk',
+        workdir: process.cwd(),
+        logFile: path.join(tmpDir, 'runner-sdk-idle-late-delta.log'),
+      },
+      'sdk-idle-late-delta',
+      {
+        onEvent: (evt) => events.push(evt),
+        onDone: (exitCode, timeoutMsg, meta) => resolve({ exitCode, timeoutMsg, meta }),
+        onError: reject,
+        sessionId: '',
+      }
+    );
+  });
+
+  assert.equal(done.exitCode, 0);
+  assert.equal(done.timeoutMsg, null);
+  assert.match(String(done.meta.finalText || ''), /chunk-2-late-delta/);
+  assert.equal(events.some((evt) => evt.type === 'text' && /chunk-2-late-delta/.test(String(evt.content || ''))), true);
+});
+
+test('runOpencode sdk mode ignores stale buffered idle before new run activity', async () => {
+  const { runOpencode } = loadRunnerWithEnv({
+    OMG_MAX_PROCESS_SECONDS: 10,
+    OMG_EXECUTION_TRANSPORT: 'sdk',
+    OMG_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk-stale-buffer.js'),
+    OMG_SDK_IDLE_DRAIN_MS: 60,
+    OMG_SDK_POST_COMPLETE_LINGER_MS: 120,
+  });
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runner-sdk-stale-buffer-'));
+
+  const done = await new Promise((resolve, reject) => {
+    runOpencode(
+      {
+        opencodeCommand: 'opencode sdk',
+        workdir: process.cwd(),
+        logFile: path.join(tmpDir, 'runner-sdk-stale-buffer.log'),
+      },
+      'sdk-stale-buffer',
+      {
+        onEvent: () => {},
+        onDone: (exitCode, timeoutMsg, meta) => resolve({ exitCode, timeoutMsg, meta }),
+        onError: reject,
+        sessionId: 'sdk-stale',
+      }
+    );
+  });
+
+  assert.equal(done.exitCode, 0);
+  assert.equal(done.timeoutMsg, null);
+  assert.match(String(done.meta.finalText || ''), /fresh-final-output/);
 });
 
 test('runtime status reflects active sdk run and resets after completion', async () => {

@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const AUDIT_STRING_MAX = parseInt(process.env.OMG_AUDIT_STRING_MAX || '8000', 10);
+const AUDIT_STRING_MAX = parseInt(process.env.OMG_AUDIT_STRING_MAX || '16000', 10);
 
 function sanitizeValue(value, depth = 0) {
   if (depth > 4) return '[max-depth]';

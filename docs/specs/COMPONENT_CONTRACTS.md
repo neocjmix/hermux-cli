@@ -92,3 +92,11 @@ Every contract above must map to at least one test suite section.
 - Gateway runtime/UX behavior: `test/gateway-internal.test.js`, `test/gateway-main.test.js`
 - Runner runtime lifecycle: `test/runner.test.js`
 - Transform: `test/md2html.test.js`
+
+## 8) Session/Event Routing Contract
+
+Normative session-centric routing and audit invariants are defined in:
+
+- `docs/specs/SESSION_EVENT_ROUTING_SPEC.md`
+
+Component-level implementations that touch repo runtime lifecycle, event subscription fan-in, or event identity extraction MUST stay aligned with that spec.

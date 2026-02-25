@@ -11,8 +11,9 @@ This is the canonical documentation entrypoint.
 5. `docs/specs/COMPONENT_CONTRACTS.md`
 6. `docs/specs/TELEGRAM_E2E_STUB_SPEC.md`
 7. `docs/specs/EVENT_HANDLING_COMPARISON.md`
-8. `docs/ARCHITECTURE.md`
-9. `docs/DEVELOPER_GUIDE.md`
+8. `docs/specs/SESSION_EVENT_ROUTING_SPEC.md`
+9. `docs/ARCHITECTURE.md`
+10. `docs/DEVELOPER_GUIDE.md`
 
 ## Documents
 
@@ -45,6 +46,11 @@ This is the canonical documentation entrypoint.
   - Audience: implementers and architecture reviewers
   - Purpose: event-handling comparison between Hermux and reference Telegram OpenCode bots
   - Update when: event routing model, callback dispatch model, or OpenCode event adapter strategy changes
+
+- `docs/specs/SESSION_EVENT_ROUTING_SPEC.md`
+  - Audience: implementers and architecture reviewers
+  - Purpose: normative session-centric routing/lifecycle/idempotency/audit contract for repo-global OpenCode subscriptions
+  - Update when: repo runtime topology, session extraction rules, epoch fencing, or audit reconstructability guarantees change
 
 - `docs/DEVELOPER_GUIDE.md`
   - Audience: developers and agents

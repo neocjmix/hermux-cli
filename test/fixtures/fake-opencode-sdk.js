@@ -46,6 +46,7 @@ function createQueue() {
 
 async function createOpencode() {
   global.__FAKE_OPENCODE_SDK_STARTS__ = Number(global.__FAKE_OPENCODE_SDK_STARTS__ || 0) + 1;
+  global.__FAKE_OPENCODE_SDK_SUBSCRIBES__ = Number(global.__FAKE_OPENCODE_SDK_SUBSCRIBES__ || 0);
   const queue = createQueue();
   if (!global.__FAKE_OPENCODE_SDK_SESSIONS__) {
     global.__FAKE_OPENCODE_SDK_SESSIONS__ = new Map();
@@ -197,6 +198,7 @@ async function createOpencode() {
       },
       event: {
         async subscribe() {
+          global.__FAKE_OPENCODE_SDK_SUBSCRIBES__ = Number(global.__FAKE_OPENCODE_SDK_SUBSCRIBES__ || 0) + 1;
           return { stream: queue.stream };
         },
       },

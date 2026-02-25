@@ -114,3 +114,4 @@ Recovery guarantees:
 
 - user behavior contracts: `docs/specs/UX_SPEC.md`
 - interface contracts: `docs/specs/COMPONENT_CONTRACTS.md`
+- session/event routing contracts: `docs/specs/SESSION_EVENT_ROUTING_SPEC.md`
