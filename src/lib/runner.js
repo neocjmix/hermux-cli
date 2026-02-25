@@ -13,6 +13,7 @@ const SDK_PORT_RANGE_MAX = parseInt(process.env.OMG_SDK_PORT_RANGE_MAX || '43999
 const SDK_PORT_PICK_ATTEMPTS = parseInt(process.env.OMG_SDK_PORT_PICK_ATTEMPTS || '60', 10);
 const SDK_IDLE_DRAIN_MS = parseInt(process.env.OMG_SDK_IDLE_DRAIN_MS || '220', 10);
 const SDK_POST_COMPLETE_LINGER_MS = parseInt(process.env.OMG_SDK_POST_COMPLETE_LINGER_MS || '1200', 10);
+const SDK_OBSERVER_IDLE_AFTER_DONE_MS = parseInt(process.env.OMG_SDK_OBSERVER_IDLE_AFTER_DONE_MS || '45000', 10);
 
 const activeRuns = new Set();
 const runtimeStats = new Map();
@@ -845,6 +846,7 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
   }
   const state = {
     done: false,
+    completed: false,
     sessionId: String(sessionId || '').trim(),
     rateLimit: null,
     stderrSamples: [],
@@ -861,6 +863,7 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
   let eventQueue = Promise.resolve();
   let idleFinalizeTimer = null;
   let postCompleteTimer = null;
+  let observerDetachTimer = null;
   let idlePending = false;
   let settlePromiseResolve = null;
   const settlePromise = new Promise((resolve) => {
@@ -902,10 +905,55 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
     }
   }
 
+  function clearObserverDetachTimer() {
+    if (observerDetachTimer) {
+      clearTimeout(observerDetachTimer);
+      observerDetachTimer = null;
+    }
+  }
+
+  function closeRunObserver(reason) {
+    if (state.done) return;
+    state.done = true;
+    clearObserverDetachTimer();
+    clearIdleFinalizeTimer();
+    clearPostCompleteTimer();
+    clearTimeout(timeout);
+    if (typeof detachObserver === 'function') {
+      try { detachObserver(); } catch (_err) {}
+      detachObserver = null;
+    }
+    if (boundRuntimeEntry) {
+      queueScopeAudit(boundRuntimeEntry, instance, 'router.run.observer_detach', {
+        lane: 'run-observer',
+        sessionId: state.sessionId,
+        reason: String(reason || 'unknown'),
+      });
+    }
+    if (!logClosed) {
+      logStream.end();
+      logClosed = true;
+    }
+  }
+
+  function scheduleObserverDetach(reason) {
+    if (!state.completed || state.done) return;
+    clearObserverDetachTimer();
+    observerDetachTimer = setTimeout(() => {
+      if (state.done || !state.completed) return;
+      trace('observer.detach.firing', {
+        reason: String(reason || 'idle_after_done'),
+        idleMs: Math.max(0, SDK_OBSERVER_IDLE_AFTER_DONE_MS),
+        finalTextLength: String(state.finalText || '').length,
+      });
+      closeRunObserver(reason || 'idle_after_done');
+    }, Math.max(0, SDK_OBSERVER_IDLE_AFTER_DONE_MS));
+  }
+
   function schedulePostCompleteFinalize() {
     clearPostCompleteTimer();
     postCompleteTimer = setTimeout(async () => {
-      if (state.done) return;
+      if (state.done || state.completed) return;
       state.finalText = sortedFinalText();
       trace('post_complete.finalize.firing', {
         lingerMs: Math.max(0, SDK_POST_COMPLETE_LINGER_MS),
@@ -932,7 +980,7 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
       currentFinalLength: String(state.finalText || '').length,
     });
     idleFinalizeTimer = setTimeout(async () => {
-      if (state.done) return;
+      if (state.done || state.completed) return;
       state.finalText = sortedFinalText();
       trace('idle.finalize.firing', {
         finalTextLength: state.finalText.length,
@@ -991,12 +1039,8 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
   }
 
   function finish(exitCode, timeoutMsg) {
-    if (state.done) return;
-    state.done = true;
-    if (typeof detachObserver === 'function') {
-      try { detachObserver(); } catch (_err) {}
-      detachObserver = null;
-    }
+    if (state.done || state.completed) return;
+    state.completed = true;
     clearIdleFinalizeTimer();
     clearPostCompleteTimer();
     clearTimeout(timeout);
@@ -1014,27 +1058,23 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
         timeoutMsg,
       });
     }
-    logStream.end();
-    logClosed = true;
     onDone(exitCode, timeoutMsg, {
       sessionId: state.sessionId,
       rateLimit: state.rateLimit,
       stderrSamples: state.stderrSamples.slice(-5),
       finalText: state.finalText,
     });
-    if (typeof settlePromiseResolve === 'function') settlePromiseResolve();
+    if (typeof settlePromiseResolve === 'function') {
+      settlePromiseResolve();
+      settlePromiseResolve = null;
+    }
+    scheduleObserverDetach('run_complete');
   }
 
   function fail(err) {
     if (state.done) return;
-    state.done = true;
-    if (typeof detachObserver === 'function') {
-      try { detachObserver(); } catch (_err) {}
-      detachObserver = null;
-    }
-    clearIdleFinalizeTimer();
-    clearPostCompleteTimer();
-    clearTimeout(timeout);
+    state.completed = true;
+    closeRunObserver('run_error');
     if (isRecoverableSdkTransportError(err)) {
       resetSdkRuntime(instance).catch(() => {});
     }
@@ -1052,10 +1092,11 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
         message: String(err && err.message ? err.message : err || ''),
       });
     }
-    logStream.end();
-    logClosed = true;
     onError(err instanceof Error ? err : new Error(msg));
-    if (typeof settlePromiseResolve === 'function') settlePromiseResolve();
+    if (typeof settlePromiseResolve === 'function') {
+      settlePromiseResolve();
+      settlePromiseResolve = null;
+    }
   }
 
   const handle = {
@@ -1065,8 +1106,10 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
       if (typeof abortSession === 'function') {
         abortSession().catch(() => {});
       }
-      if (!state.done) {
+      if (!state.completed) {
         finish(143, null);
+      } else if (!state.done) {
+        closeRunObserver('killed_after_completion');
       }
       return true;
     },
@@ -1104,6 +1147,10 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
 
     if (String((resolved && resolved.sessionId) || '') !== state.sessionId) {
       return;
+    }
+
+    if (state.completed) {
+      scheduleObserverDetach('post_complete_activity');
     }
 
     if (type === 'session.error') {
