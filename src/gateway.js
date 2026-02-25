@@ -8,7 +8,13 @@ const { pipeline } = require('stream/promises');
 const { spawn, spawnSync } = require('child_process');
 const TelegramBot = require('node-telegram-bot-api');
 const { load, getEnabledRepos, addChatIdToRepo, addOrUpdateRepo, setGlobalBotToken, resetConfig, CONFIG_PATH } = require('./lib/config');
-const { runOpencode, stopAllRuntimeExecutors, getRuntimeStatusForInstance } = require('./lib/runner');
+const {
+  runOpencode,
+  runSessionRevert,
+  runSessionUnrevert,
+  stopAllRuntimeExecutors,
+  getRuntimeStatusForInstance,
+} = require('./lib/runner');
 const { md2html, escapeHtml } = require('./lib/md2html');
 const { getSessionId, setSessionId, clearSessionId, getSessionInfo, clearAllSessions, SESSION_MAP_PATH } = require('./lib/session-map');
 const { makeAuditLogger } = require('./lib/audit-log');
@@ -26,12 +32,16 @@ const LOG_PATH = path.join(RUNTIME_DIR, 'gateway.log');
 const RESTART_NOTICE_PATH = path.join(RUNTIME_DIR, 'restart-notice.json');
 const MERMAID_RENDER_DIR = '.opencode_mobile_gateway/mermaid';
 const STREAM_HEARTBEAT_MS = 1500;
+const REVERT_CONFIRM_TTL_MS = 10 * 60 * 1000;
+const REVERT_TARGET_LIMIT_PER_CHAT = 240;
 const OPENCODE_CONFIG_PATH = process.env.OMG_OPENCODE_CONFIG_PATH || path.join(process.env.HOME || '', '.config', 'opencode', 'opencode.json');
 const OMO_CONFIG_PATH = process.env.OMG_OMO_CONFIG_PATH || path.join(process.env.HOME || '', '.config', 'opencode', 'oh-my-opencode.json');
 const auditLogger = makeAuditLogger(RUNTIME_DIR);
 let connectMutationQueue = Promise.resolve();
 let restartMutationQueue = Promise.resolve();
 let restartInProgress = false;
+const revertTargetsByChat = new Map();
+const revertConfirmByToken = new Map();
 
 function summarizeAuditText(text) {
   const value = String(text || '').replace(/\s+/g, ' ').trim();
@@ -163,6 +173,8 @@ function getHelpText() {
     '/models - show/update opencode vs oh-my-opencode model layers',
     '/session - show current opencode session id',
     '/version - show opencode output + hermux version',
+    '/revert - reply to output and request revert (with confirm)',
+    '/unrevert - restore from current revert state if still available',
     '/test - send Telegram formatting showcase (no opencode run)',
     '/interrupt - stop current running task',
     '/restart - restart daemon process',
@@ -413,6 +425,90 @@ function buildModelPickerKeyboard(models, mode, page = 0) {
 
   rows.push([{ text: '뒤로', callback_data: 'm:bp' }]);
   return { inline_keyboard: rows };
+}
+
+function buildRevertConfirmKeyboard(token) {
+  return {
+    inline_keyboard: [[
+      { text: 'Confirm revert', callback_data: `rv:c:${token}` },
+      { text: 'Cancel', callback_data: `rv:x:${token}` },
+    ]],
+  };
+}
+
+function generateRevertToken() {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function rememberRevertTarget(chatId, telegramMessageId, target) {
+  const key = String(chatId);
+  const messageId = Number(telegramMessageId);
+  if (!Number.isInteger(messageId) || messageId <= 0) return;
+
+  let map = revertTargetsByChat.get(key);
+  if (!map) {
+    map = new Map();
+    revertTargetsByChat.set(key, map);
+  }
+  map.set(messageId, {
+    ...target,
+    chatId: key,
+    telegramMessageId: messageId,
+    createdAt: Date.now(),
+  });
+
+  if (map.size > REVERT_TARGET_LIMIT_PER_CHAT) {
+    const staleCount = map.size - REVERT_TARGET_LIMIT_PER_CHAT;
+    const keys = Array.from(map.keys()).slice(0, staleCount);
+    for (const k of keys) map.delete(k);
+  }
+}
+
+function resolveRevertReplyTarget(chatId, replyMessageId) {
+  const key = String(chatId);
+  const messageId = Number(replyMessageId);
+  if (!Number.isInteger(messageId) || messageId <= 0) return null;
+  const map = revertTargetsByChat.get(key);
+  if (!map) return null;
+  return map.get(messageId) || null;
+}
+
+function createPendingRevertConfirmation(payload) {
+  const token = generateRevertToken();
+  revertConfirmByToken.set(token, {
+    ...payload,
+    createdAt: Date.now(),
+    consumed: false,
+  });
+  return token;
+}
+
+function getPendingRevertConfirmation(token) {
+  const key = String(token || '').trim();
+  if (!key) return null;
+  const data = revertConfirmByToken.get(key);
+  if (!data) return null;
+  if (Date.now() - Number(data.createdAt || 0) > REVERT_CONFIRM_TTL_MS) {
+    revertConfirmByToken.delete(key);
+    return null;
+  }
+  return data;
+}
+
+function consumePendingRevertConfirmation(token) {
+  const key = String(token || '').trim();
+  if (!key) return null;
+  const data = getPendingRevertConfirmation(key);
+  if (!data || data.consumed) return null;
+  data.consumed = true;
+  revertConfirmByToken.set(key, data);
+  return data;
+}
+
+function clearPendingRevertConfirmation(token) {
+  const key = String(token || '').trim();
+  if (!key) return;
+  revertConfirmByToken.delete(key);
 }
 
 async function handleModelsCommand(bot, chatId, repo, state, parsed) {
@@ -2198,6 +2294,150 @@ async function handleVerboseAction(bot, chatId, state, action) {
   }
 }
 
+async function createRevertConfirmation(_bot, chatId, repo, _state, input) {
+  const target = input && input.target ? input.target : null;
+  const replyMessageId = Number(input && input.replyMessageId);
+  const userId = String((input && input.userId) || '').trim();
+  if (!target) {
+    throw new Error('missing revert target');
+  }
+
+  const token = createPendingRevertConfirmation({
+    chatId: String(chatId),
+    repoName: String(repo && repo.name || ''),
+    replyMessageId,
+    sessionId: String(target.sessionId || ''),
+    messageId: String(target.messageId || ''),
+    partId: String(target.partId || ''),
+    userId,
+  });
+
+  const targetLine = target.partId
+    ? `target: message=${target.messageId}, part=${target.partId}`
+    : `target: message=${target.messageId}`;
+  return {
+    text: [
+      'Revert confirmation required.',
+      `repo: ${repo.name}`,
+      `session: ${target.sessionId}`,
+      `reply_message_id: ${replyMessageId}`,
+      targetLine,
+      '',
+      'This will restore files/history from that point. Continue?',
+    ].join('\n'),
+    opts: {
+      reply_markup: buildRevertConfirmKeyboard(token),
+    },
+  };
+}
+
+async function executeSessionUnrevert(repo, chatId) {
+  const sessionId = getSessionId(repo.name, chatId);
+  if (!sessionId) {
+    return { text: 'No active session for this chat. Nothing to unrevert.' };
+  }
+
+  try {
+    const result = await runSessionUnrevert(repo, { sessionId });
+    if (!result.hadRevert || result.noop) {
+      return {
+        text: [
+          'No active revert state found.',
+          'Unrevert is only possible while session.revert still exists (before cleanup).',
+        ].join('\n'),
+      };
+    }
+    return {
+      text: [
+        'Unrevert applied.',
+        `repo: ${repo.name}`,
+        `session: ${sessionId}`,
+      ].join('\n'),
+    };
+  } catch (err) {
+    return {
+      text: `Unrevert failed: ${String(err && err.message ? err.message : err || '')}`,
+    };
+  }
+}
+
+async function handleRevertConfirmCallback(bot, query, chatRouter, states, token) {
+  const chat = query && query.message && query.message.chat;
+  const chatId = chat ? String(chat.id) : '';
+  const record = consumePendingRevertConfirmation(token);
+  if (!record) {
+    return { answerText: 'expired' };
+  }
+
+  if (record.chatId !== chatId) {
+    return { answerText: 'not allowed' };
+  }
+  if (record.userId) {
+    const fromId = String((query && query.from && query.from.id) || '').trim();
+    if (fromId && fromId !== record.userId) {
+      return { answerText: 'author only' };
+    }
+  }
+
+  const repo = chatRouter.get(chatId);
+  if (!repo || repo.name !== record.repoName) {
+    return { answerText: 'stale target' };
+  }
+
+  const state = states.get(repo.name);
+  if (!state) {
+    return { answerText: 'state missing' };
+  }
+
+  return withStateDispatchLock(state, async () => {
+    if (state.running) {
+      await safeSend(bot, chatId, 'Cannot revert while running. Wait for current task to finish.');
+      return { answerText: 'busy' };
+    }
+
+    const activeSessionId = getSessionId(repo.name, chatId);
+    if (!activeSessionId || activeSessionId !== record.sessionId) {
+      await safeSend(
+        bot,
+        chatId,
+        'Revert target is stale because current session changed. Reply to a recent output and run /revert again.'
+      );
+      return { answerText: 'stale session' };
+    }
+
+    try {
+      const revertResult = await runSessionRevert(repo, {
+        sessionId: record.sessionId,
+        messageId: record.messageId,
+      });
+      if (!revertResult || !revertResult.canUnrevert) {
+        await safeSend(bot, chatId, [
+          'Revert target was not found in current session timeline.',
+          'No changes were applied.',
+          'Reply to a more recent bot output and run /revert again.',
+        ].join('\n'));
+        return { answerText: 'no target' };
+      }
+      await safeSend(bot, chatId, [
+        'Revert applied.',
+        `repo: ${repo.name}`,
+        `session: ${record.sessionId}`,
+        `target_message: ${record.messageId}`,
+        'Tip: /unrevert is available until next cleanup-triggering action.',
+      ].join('\n'));
+      return { answerText: 'reverted' };
+    } catch (err) {
+      await safeSend(bot, chatId, `Revert failed: ${String(err && err.message ? err.message : err || '')}`);
+      return { answerText: 'failed' };
+    }
+  });
+}
+
+function handleRevertCancelCallback(token) {
+  clearPendingRevertConfirmation(token);
+  return { answerText: 'cancelled' };
+}
+
 function writePidAtomic(pid) {
   fs.mkdirSync(RUNTIME_DIR, { recursive: true });
   const tmp = PID_PATH + '.tmp';
@@ -2346,6 +2586,10 @@ async function startPromptRun(bot, repo, state, runItem) {
   let lastRawPreviewSentAt = 0;
   let finalUnitMessageIds = [];
   let lastFinalUnitChunks = [];
+  let lastFinalMessageRef = {
+    messageId: '',
+    partId: '',
+  };
   let textEventSeq = 0;
   let eventOrdinal = 0;
   const runStartedAt = Date.now();
@@ -2404,6 +2648,14 @@ async function startPromptRun(bot, repo, state, runItem) {
             chunkCount: chunks.length,
           });
         }
+        if (activeSessionId && lastFinalMessageRef.messageId) {
+          rememberRevertTarget(chatId, messageId, {
+            repoName: repo.name,
+            sessionId: activeSessionId,
+            messageId: lastFinalMessageRef.messageId,
+            partId: lastFinalMessageRef.partId,
+          });
+        }
         continue;
       }
 
@@ -2415,6 +2667,14 @@ async function startPromptRun(bot, repo, state, runItem) {
         chunkCount: chunks.length,
       });
       finalUnitMessageIds[i] = sent && sent.message_id ? sent.message_id : null;
+      if (activeSessionId && lastFinalMessageRef.messageId && finalUnitMessageIds[i]) {
+        rememberRevertTarget(chatId, finalUnitMessageIds[i], {
+          repoName: repo.name,
+          sessionId: activeSessionId,
+          messageId: lastFinalMessageRef.messageId,
+          partId: lastFinalMessageRef.partId,
+        });
+      }
       auditRun('run.ui.final_unit.send', {
         force: !!force,
         chunkIndex: i,
@@ -2562,6 +2822,12 @@ async function startPromptRun(bot, repo, state, runItem) {
           lastReasoningBrief = statusTriggerText;
           await refreshPanel('running', true);
         } else {
+          if (evt.messageId || evt.partId) {
+            lastFinalMessageRef = {
+              messageId: String(evt.messageId || lastFinalMessageRef.messageId || ''),
+              partId: String(evt.partId || ''),
+            };
+          }
           await refreshFinalUnitChannel(false);
         }
         if (reconciled.reminderTexts.length > 0) {
@@ -2892,6 +3158,9 @@ const handleRepoMessage = createRepoMessageHandler({
   requestInterrupt,
   buildPromptFromMessage,
   startPromptRun,
+  resolveRevertReplyTarget,
+  createRevertConfirmation,
+  executeSessionUnrevert,
 });
 
 function main() {
@@ -2979,6 +3248,8 @@ function main() {
     OPENCODE_CONFIG_PATH,
     OMO_CONFIG_PATH,
     getOmoAgentEntry,
+    handleRevertConfirmCallback,
+    handleRevertCancelCallback,
   });
 
   console.log(`polling with 1 bot for ${repos.length} repo(s), ${chatRouter.size} chat id(s)`);
@@ -2993,6 +3264,8 @@ function main() {
     { command: 'models', description: 'Manage opencode/omo model layers' },
     { command: 'session', description: 'Show current opencode session' },
     { command: 'version', description: 'Show opencode and hermux version' },
+    { command: 'revert', description: 'Reply to output and revert (confirm)' },
+    { command: 'unrevert', description: 'Undo latest revert if still available' },
     { command: 'test', description: 'Send Telegram formatting showcase' },
     { command: 'interrupt', description: 'Stop current running task' },
     { command: 'restart', description: 'Restart daemon process' },

@@ -30,6 +30,9 @@ function makeDeps(overrides = {}) {
     handleVerboseAction: async () => {},
     requestInterrupt: () => ({ ok: true, alreadyRequested: false }),
     buildPromptFromMessage: async (_bot, _repo, msg) => ({ prompt: String(msg.text || '').trim() }),
+    resolveRevertReplyTarget: () => null,
+    createRevertConfirmation: async () => ({ text: 'confirm', opts: { reply_markup: { inline_keyboard: [] } } }),
+    executeSessionUnrevert: async () => ({ text: 'unrevert ok' }),
     startPromptRun: async (_bot, repo, _state, queuedItem) => {
       started.push({ repo: repo.name, queuedItem });
     },
@@ -251,4 +254,66 @@ test('repo handler handles prompt preparation error with recovery message', asyn
 
   assert.match(sent[0].text, /Failed to read image attachment: attachment unreadable/);
   assert.equal(started.length, 0);
+});
+
+test('repo handler requires reply context for /revert', async () => {
+  const { deps, sent } = makeDeps();
+  const handler = createRepoMessageHandler(deps);
+
+  await handler({}, { name: 'demo', workdir: '/tmp/demo' }, { running: false, queue: [] }, {
+    chat: { id: '100' },
+    text: '/revert',
+  });
+
+  assert.match(sent[0].text, /Reply to a previous bot output message/);
+});
+
+test('repo handler sends revert confirmation when replied target exists', async () => {
+  let called = 0;
+  const { deps, sent } = makeDeps({
+    resolveRevertReplyTarget: () => ({
+      repoName: 'demo',
+      sessionId: 'ses-1',
+      messageId: 'msg-9',
+      partId: 'part-3',
+    }),
+    createRevertConfirmation: async (_bot, _chatId, _repo, _state, input) => {
+      called += 1;
+      assert.equal(input.replyMessageId, 777);
+      return { text: 'confirm revert', opts: { reply_markup: { inline_keyboard: [] } } };
+    },
+  });
+  const handler = createRepoMessageHandler(deps);
+
+  await handler({}, { name: 'demo', workdir: '/tmp/demo' }, { running: false, queue: [] }, {
+    chat: { id: '100' },
+    from: { id: 123 },
+    text: '/revert',
+    reply_to_message: { message_id: 777, text: 'old output' },
+  });
+
+  assert.equal(called, 1);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].text, 'confirm revert');
+});
+
+test('repo handler executes /unrevert via injected runner action', async () => {
+  let calls = 0;
+  const { deps, sent } = makeDeps({
+    executeSessionUnrevert: async (repo, chatId) => {
+      calls += 1;
+      assert.equal(repo.name, 'demo');
+      assert.equal(chatId, '100');
+      return { text: 'unrevert done' };
+    },
+  });
+  const handler = createRepoMessageHandler(deps);
+
+  await handler({}, { name: 'demo', workdir: '/tmp/demo' }, { running: false, queue: [] }, {
+    chat: { id: '100' },
+    text: '/unrevert',
+  });
+
+  assert.equal(calls, 1);
+  assert.equal(sent[0].text, 'unrevert done');
 });

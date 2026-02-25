@@ -92,7 +92,7 @@ Recovery guarantees:
 ## Command Surface (Current)
 
 - setup/mapping: `/onboard`, `/onboard cancel`, `/init`, `/init confirm`, `/repos`, `/connect <repo>`, `/whereami`, `/help`
-- runtime: `/start`, `/status`, `/models`, `/session`, `/version`, `/verbose`, `/interrupt`, `/restart`, `/reset`
+- runtime: `/start`, `/status`, `/models`, `/session`, `/version`, `/revert`, `/unrevert`, `/verbose`, `/interrupt`, `/restart`, `/reset`
 - utility: `/test`
 
 ## Data and Persistence

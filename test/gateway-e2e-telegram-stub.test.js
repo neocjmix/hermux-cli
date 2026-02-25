@@ -20,6 +20,8 @@ const EXPECTED_BOT_COMMANDS = [
   'models',
   'session',
   'version',
+  'revert',
+  'unrevert',
   'test',
   'interrupt',
   'restart',

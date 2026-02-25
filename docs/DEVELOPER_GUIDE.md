@@ -163,3 +163,7 @@ Reference: `docs/specs/TELEGRAM_E2E_STUB_SPEC.md`.
 - package name: `@hermux/cli`
 - binary: `hermux` (also `opencode-mobile-gateway` alias)
 - publish configuration: public npm package
+
+## Backlog
+
+- Validate OpenCode `session.revert` stability in real-world runs (timeline rollback vs filesystem rollback consistency), and document expected/no-op edge cases in operator-facing UX text.

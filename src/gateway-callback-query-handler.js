@@ -29,6 +29,8 @@ function createCallbackQueryHandler(deps) {
     OPENCODE_CONFIG_PATH,
     OMO_CONFIG_PATH,
     getOmoAgentEntry,
+    handleRevertConfirmCallback,
+    handleRevertCancelCallback,
     audit,
   } = deps;
 
@@ -59,6 +61,26 @@ function createCallbackQueryHandler(deps) {
     }
 
     try {
+      if (data.startsWith('rv:c:')) {
+        if (typeof audit === 'function') audit('router.callback.route', { chatId, target: 'revert_confirm', dataPreview: summarizeText(data) });
+        const token = data.slice('rv:c:'.length).trim();
+        const result = await handleRevertConfirmCallback(bot, query, chatRouter, states, token);
+        if (query.id) {
+          await bot.answerCallbackQuery(query.id, { text: (result && result.answerText) || 'done' }).catch(() => {});
+        }
+        return;
+      }
+
+      if (data.startsWith('rv:x:')) {
+        if (typeof audit === 'function') audit('router.callback.route', { chatId, target: 'revert_cancel', dataPreview: summarizeText(data) });
+        const token = data.slice('rv:x:'.length).trim();
+        const result = handleRevertCancelCallback(token);
+        if (query.id) {
+          await bot.answerCallbackQuery(query.id, { text: (result && result.answerText) || 'cancelled' }).catch(() => {});
+        }
+        return;
+      }
+
       if (data.startsWith('connect:')) {
         if (typeof audit === 'function') audit('router.callback.route', { chatId, target: 'connect', dataPreview: summarizeText(data) });
         const repoName = data.slice('connect:'.length).trim();

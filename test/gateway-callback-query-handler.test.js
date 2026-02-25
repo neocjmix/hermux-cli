@@ -57,6 +57,8 @@ function makeHarness(overrides = {}) {
       if (!cfg.agents[agent]) cfg.agents[agent] = {};
       return cfg.agents[agent];
     },
+    handleRevertConfirmCallback: async () => ({ answerText: 'reverted' }),
+    handleRevertCancelCallback: () => ({ answerText: 'cancelled' }),
     ...overrides,
   };
 
@@ -357,6 +359,39 @@ test('callback handler enters omo agent picker happy path', async () => {
   assert.equal(st.layer, 'omo');
   assert.deepEqual(st.agentNames, ['sisyphus', 'metis']);
   assert.equal(h.answerCalls[0].payload.text, 'choose agent');
+});
+
+test('callback handler routes revert confirm callback', async () => {
+  let called = 0;
+  const h = makeHarness({
+    handleRevertConfirmCallback: async (_bot, query, _chatRouter, _states, token) => {
+      called += 1;
+      assert.equal(query.id, 'q23');
+      assert.equal(token, 'tok123');
+      return { answerText: 'reverted' };
+    },
+  });
+
+  await h.handler({ id: 'q23', data: 'rv:c:tok123', message: { chat: { id: '100' } } });
+
+  assert.equal(called, 1);
+  assert.equal(h.answerCalls[0].payload.text, 'reverted');
+});
+
+test('callback handler routes revert cancel callback', async () => {
+  let called = 0;
+  const h = makeHarness({
+    handleRevertCancelCallback: (token) => {
+      called += 1;
+      assert.equal(token, 'tok987');
+      return { answerText: 'cancelled' };
+    },
+  });
+
+  await h.handler({ id: 'q24', data: 'rv:x:tok987', message: { chat: { id: '100' } } });
+
+  assert.equal(called, 1);
+  assert.equal(h.answerCalls[0].payload.text, 'cancelled');
 });
 
 test('callback handler enters provider picker from agent selection happy path', async () => {

@@ -46,7 +46,10 @@ function createQueue() {
 
 async function createOpencode() {
   const queue = createQueue();
-  const sessions = new Set();
+  if (!global.__FAKE_OPENCODE_SDK_SESSIONS__) {
+    global.__FAKE_OPENCODE_SDK_SESSIONS__ = new Map();
+  }
+  const sessions = global.__FAKE_OPENCODE_SDK_SESSIONS__;
 
   return {
     server: {
@@ -62,19 +65,22 @@ async function createOpencode() {
           if (!sessions.has(id)) {
             return { data: undefined, error: { message: 'not found' } };
           }
-          return { data: { id }, error: undefined };
+          return { data: sessions.get(id), error: undefined };
         },
         async create(options) {
           const body = (options || {}).body || {};
           const parent = String(body.parentID || '').trim();
           const id = parent || 'sdk-session';
-          sessions.add(id);
-          return { data: { id }, error: undefined };
+          const existing = sessions.get(id) || {};
+          const next = { id, ...existing, revert: existing.revert || undefined };
+          sessions.set(id, next);
+          return { data: next, error: undefined };
         },
         async promptAsync(options) {
           const path = (options || {}).path || {};
           const body = (options || {}).body || {};
           const id = String(path.id || 'sdk-session');
+          if (!sessions.has(id)) sessions.set(id, { id });
           const textPart = Array.isArray(body.parts)
             ? body.parts.find((x) => x && x.type === 'text')
             : null;
@@ -151,6 +157,41 @@ async function createOpencode() {
         },
         async abort() {
           return { data: true, error: undefined };
+        },
+        async revert(options) {
+          const id = String(((options || {}).path || {}).id || '');
+          const body = (options || {}).body || {};
+          if (!sessions.has(id)) {
+            return { data: undefined, error: { message: 'not found' } };
+          }
+          const existing = sessions.get(id) || { id };
+          const messageID = String(body.messageID || '');
+          const partID = String(body.partID || '');
+          const hasValidMessageID = messageID.startsWith('msg_') || messageID.startsWith('msg-');
+          const hasValidPartID = partID.startsWith('prt_') || partID.startsWith('prt-');
+          if (!hasValidMessageID && !hasValidPartID) {
+            return { data: existing, error: undefined };
+          }
+          const next = {
+            ...existing,
+            revert: {
+              messageID,
+              partID,
+              snapshot: 'fake-snapshot',
+            },
+          };
+          sessions.set(id, next);
+          return { data: next, error: undefined };
+        },
+        async unrevert(options) {
+          const id = String(((options || {}).path || {}).id || '');
+          if (!sessions.has(id)) {
+            return { data: undefined, error: { message: 'not found' } };
+          }
+          const existing = sessions.get(id) || { id };
+          const next = { ...existing, revert: undefined };
+          sessions.set(id, next);
+          return { data: next, error: undefined };
         },
       },
       event: {

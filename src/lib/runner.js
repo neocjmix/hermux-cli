@@ -188,6 +188,110 @@ async function loadSdkModule() {
   return sdkModulePromise;
 }
 
+async function withSdkClient(instance, fn) {
+  if (stopAllInProgress) {
+    throw new Error('runtime lifecycle is stopping; retry after restart completes');
+  }
+  const sdk = await loadSdkModule();
+  if (!sdk || typeof sdk.createOpencode !== 'function') {
+    throw new Error('failed to load sdk createOpencode');
+  }
+
+  const sdkPort = await pickRandomAvailablePortInRange();
+  const runtime = await sdk.createOpencode({
+    hostname: '127.0.0.1',
+    port: sdkPort,
+    timeout: SDK_SERVER_START_TIMEOUT_MS,
+  });
+
+  try {
+    return await fn(runtime.client, { directory: instance.workdir });
+  } finally {
+    if (runtime && runtime.server && typeof runtime.server.close === 'function') {
+      try {
+        runtime.server.close();
+      } catch (_err) {
+      }
+    }
+  }
+}
+
+async function runSessionRevert(instance, input) {
+  if (!shouldUseSdk(instance)) {
+    throw new Error('session revert requires sdk transport');
+  }
+  const sessionId = String((input && input.sessionId) || '').trim();
+  const messageId = String((input && input.messageId) || '').trim();
+  const partId = String((input && input.partId) || '').trim();
+  if (!sessionId) throw new Error('missing sessionId for revert');
+  if (!messageId && !partId) throw new Error('missing messageId/partId for revert');
+
+  return withSdkClient(instance, async (client, query) => {
+    await unwrapData(await client.session.get({
+      url: '/session/{id}',
+      path: { id: sessionId },
+      query,
+    }));
+
+    const body = partId
+      ? { messageID: messageId || partId, partID: partId }
+      : { messageID: messageId };
+
+    const result = await unwrapData(await client.session.revert({
+      url: '/session/{id}/revert',
+      path: { id: sessionId },
+      query,
+      body,
+    }));
+
+    return {
+      ok: true,
+      sessionId,
+      result,
+      canUnrevert: !!(result && result.revert),
+    };
+  });
+}
+
+async function runSessionUnrevert(instance, input) {
+  if (!shouldUseSdk(instance)) {
+    throw new Error('session unrevert requires sdk transport');
+  }
+  const sessionId = String((input && input.sessionId) || '').trim();
+  if (!sessionId) throw new Error('missing sessionId for unrevert');
+
+  return withSdkClient(instance, async (client, query) => {
+    const before = await unwrapData(await client.session.get({
+      url: '/session/{id}',
+      path: { id: sessionId },
+      query,
+    }));
+    const hadRevert = !!(before && before.revert);
+    if (!hadRevert) {
+      return {
+        ok: true,
+        sessionId,
+        hadRevert: false,
+        noop: true,
+      };
+    }
+
+    const result = await unwrapData(await client.session.unrevert({
+      url: '/session/{id}/unrevert',
+      path: { id: sessionId },
+      query,
+    }));
+
+    return {
+      ok: true,
+      sessionId,
+      hadRevert: true,
+      noop: false,
+      result,
+    };
+  });
+}
+
 function unwrapData(result) {
   if (!result || typeof result !== 'object') return result;
   if (result.error) {
@@ -773,7 +877,14 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
                 text: reasoningText,
                 textLength: reasoningText.length,
               });
-              await dispatchEvent({ type: 'text', content: reasoningText, textKind: 'reasoning', sessionId: state.sessionId });
+              await dispatchEvent({
+                type: 'text',
+                content: reasoningText,
+                textKind: 'reasoning',
+                sessionId: state.sessionId,
+                messageId: String(part.messageID || ''),
+                partId: String(part.id || ''),
+              });
             }
             continue;
           }
@@ -788,7 +899,14 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
               sortedFinalLength: state.finalText.length,
               sortedFinalText: state.finalText,
             });
-            await dispatchEvent({ type: 'text', content: state.finalText || String(part.text || ''), textKind: 'final', sessionId: state.sessionId });
+            await dispatchEvent({
+              type: 'text',
+              content: state.finalText || String(part.text || ''),
+              textKind: 'final',
+              sessionId: state.sessionId,
+              messageId: String(part.messageID || ''),
+              partId: String(part.id || ''),
+            });
             continue;
           }
 
@@ -854,6 +972,8 @@ function runOpencode(instance, prompt, handlers) {
 
 module.exports = {
   runOpencode,
+  runSessionRevert,
+  runSessionUnrevert,
   stopAllRuntimeExecutors,
   getRuntimeStatusForInstance,
   _internal: {

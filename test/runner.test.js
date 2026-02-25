@@ -246,6 +246,124 @@ test('runOpencode sdk mode reuses provided session id when valid', async () => {
   assert.equal(done.meta.sessionId, 'sdk-session');
 });
 
+test('runSessionRevert calls sdk revert with message and part ids', async () => {
+  const { runSessionRevert } = loadRunnerWithEnv({
+    OMG_EXECUTION_TRANSPORT: 'sdk',
+    OMG_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
+  });
+
+  const repo = {
+    opencodeCommand: 'opencode sdk',
+    workdir: process.cwd(),
+    logFile: path.join(os.tmpdir(), 'runner-revert.log'),
+  };
+
+  const bootstrap = loadRunnerWithEnv({
+    OMG_EXECUTION_TRANSPORT: 'sdk',
+    OMG_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
+  });
+  await new Promise((resolve, reject) => {
+    bootstrap.runOpencode(
+      repo,
+      'bootstrap',
+      {
+        onEvent: () => {},
+        onDone: () => resolve(),
+        onError: reject,
+        sessionId: '',
+      }
+    );
+  });
+
+  const out = await runSessionRevert(repo, {
+    sessionId: 'sdk-session',
+    messageId: 'msg-1',
+    partId: 'part-9',
+  });
+
+  assert.equal(out.ok, true);
+  assert.equal(out.sessionId, 'sdk-session');
+  assert.equal(out.canUnrevert, true);
+});
+
+test('runSessionRevert reports no-op when target id cannot be resolved', async () => {
+  const { runSessionRevert } = loadRunnerWithEnv({
+    OMG_EXECUTION_TRANSPORT: 'sdk',
+    OMG_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
+  });
+
+  const repo = {
+    opencodeCommand: 'opencode sdk',
+    workdir: process.cwd(),
+    logFile: path.join(os.tmpdir(), 'runner-revert-noop.log'),
+  };
+
+  const freshSessionId = 'sdk-session-noop-target';
+  const bootstrap = loadRunnerWithEnv({
+    OMG_EXECUTION_TRANSPORT: 'sdk',
+    OMG_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
+  });
+  await new Promise((resolve, reject) => {
+    bootstrap.runOpencode(
+      repo,
+      'bootstrap',
+      {
+        onEvent: () => {},
+        onDone: () => resolve(),
+        onError: reject,
+        sessionId: freshSessionId,
+      }
+    );
+  });
+
+  const out = await runSessionRevert(repo, {
+    sessionId: freshSessionId,
+    messageId: 'invalid-target',
+  });
+
+  assert.equal(out.ok, true);
+  assert.equal(out.canUnrevert, false);
+});
+
+test('runSessionUnrevert reports noop when no revert state exists', async () => {
+  const { runSessionUnrevert } = loadRunnerWithEnv({
+    OMG_EXECUTION_TRANSPORT: 'sdk',
+    OMG_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
+  });
+
+  const repo = {
+    opencodeCommand: 'opencode sdk',
+    workdir: process.cwd(),
+    logFile: path.join(os.tmpdir(), 'runner-unrevert.log'),
+  };
+
+  const freshSessionId = 'sdk-session-no-revert';
+  const bootstrap = loadRunnerWithEnv({
+    OMG_EXECUTION_TRANSPORT: 'sdk',
+    OMG_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
+  });
+  await new Promise((resolve, reject) => {
+    bootstrap.runOpencode(
+      repo,
+      'bootstrap',
+      {
+        onEvent: () => {},
+        onDone: () => resolve(),
+        onError: reject,
+        sessionId: freshSessionId,
+      }
+    );
+  });
+
+  const out = await runSessionUnrevert(repo, {
+    sessionId: freshSessionId,
+  });
+
+  assert.equal(out.ok, true);
+  assert.equal(out.noop, true);
+  assert.equal(out.hadRevert, false);
+});
+
 test('runOpencode sdk mode captures late text that arrives after idle', async () => {
   const { runOpencode } = loadRunnerWithEnv({
     OMG_MAX_PROCESS_SECONDS: 10,

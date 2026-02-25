@@ -24,6 +24,9 @@ function createRepoMessageHandler(deps) {
     requestInterrupt,
     buildPromptFromMessage,
     startPromptRun,
+    resolveRevertReplyTarget,
+    createRevertConfirmation,
+    executeSessionUnrevert,
     audit,
   } = deps;
 
@@ -53,7 +56,7 @@ function createRepoMessageHandler(deps) {
           `workdir: ${repo.workdir}`,
           '',
           `mode: ${state.verbose ? 'verbose (stream events)' : 'compact (final output only)'}`,
-          'commands: /repos, /status, /models, /session, /version, /test, /interrupt, /restart, /reset, /init, /verbose on, /verbose off, /whereami',
+          'commands: /repos, /status, /models, /session, /version, /revert, /unrevert, /test, /interrupt, /restart, /reset, /init, /verbose on, /verbose off, /whereami',
           '',
           'Send any prompt to run opencode.',
         ].join('\n')
@@ -160,6 +163,55 @@ function createRepoMessageHandler(deps) {
         return;
       }
       await safeSend(bot, chatId, req.alreadyRequested ? 'Interrupt already requested. Waiting for task shutdown...' : 'Interrupt requested. Stopping current task...');
+      return;
+    }
+
+    if (command === '/revert') {
+      if (state.running) {
+        await safeSend(bot, chatId, 'Cannot revert while running. Wait for current task to finish.');
+        return;
+      }
+
+      const replyMsgId = msg && msg.reply_to_message && Number(msg.reply_to_message.message_id);
+      if (!Number.isInteger(replyMsgId) || replyMsgId <= 0) {
+        await safeSend(bot, chatId, 'Reply to a previous bot output message, then run /revert.');
+        return;
+      }
+
+      const target = typeof resolveRevertReplyTarget === 'function'
+        ? resolveRevertReplyTarget(chatId, replyMsgId)
+        : null;
+      if (!target || target.repoName !== repo.name) {
+        await safeSend(
+          bot,
+          chatId,
+          'No revert target found for that replied message.\nThis works only for recent outputs produced in this chat.'
+        );
+        return;
+      }
+
+      const confirmation = await createRevertConfirmation(bot, chatId, repo, state, {
+        replyMessageId: replyMsgId,
+        target,
+        userId: msg && msg.from && msg.from.id ? String(msg.from.id) : '',
+      });
+      await safeSend(bot, chatId, confirmation.text, confirmation.opts);
+      return;
+    }
+
+    if (command === '/unrevert') {
+      if (state.running) {
+        await safeSend(bot, chatId, 'Cannot unrevert while running. Wait for current task to finish.');
+        return;
+      }
+
+      if (typeof executeSessionUnrevert !== 'function') {
+        await safeSend(bot, chatId, 'Unrevert is not available in this runtime mode.');
+        return;
+      }
+
+      const result = await executeSessionUnrevert(repo, chatId);
+      await safeSend(bot, chatId, result.text);
       return;
     }
 

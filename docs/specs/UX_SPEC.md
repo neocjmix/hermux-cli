@@ -55,6 +55,8 @@ Commands and expected effect:
 - `/reset`: clear chat-scoped session continuity
 - `/models`: inspect/update model-layer settings
 - `/version`: request version output path
+- `/revert`: must be executed as reply to a recent bot output message; requires callback confirmation before execution
+- `/unrevert`: restores current revert state only while `session.revert` is still present (before cleanup-triggering continuation)
 
 ## Unmapped Chat Behavior
 
