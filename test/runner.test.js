@@ -246,6 +246,73 @@ test('runOpencode sdk mode reuses provided session id when valid', async () => {
   assert.equal(done.meta.sessionId, 'sdk-session');
 });
 
+test('runOpencode sdk mode reuses persistent sdk runtime for same scope', async () => {
+  global.__FAKE_OPENCODE_SDK_STARTS__ = 0;
+  const { runOpencode, stopAllRuntimeExecutors } = loadRunnerWithEnv({
+    OMG_MAX_PROCESS_SECONDS: 10,
+    OMG_EXECUTION_TRANSPORT: 'sdk',
+    OMG_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
+  });
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runner-sdk-reuse-runtime-'));
+  const instance = {
+    name: 'demo-runtime-reuse',
+    opencodeCommand: 'opencode sdk',
+    workdir: process.cwd(),
+    logFile: path.join(tmpDir, 'runner-sdk-reuse-runtime.log'),
+  };
+
+  const runOnce = (prompt) => new Promise((resolve, reject) => {
+    runOpencode(instance, prompt, {
+      onEvent: () => {},
+      onDone: (exitCode, timeoutMsg, meta) => resolve({ exitCode, timeoutMsg, meta }),
+      onError: reject,
+      sessionId: '',
+    });
+  });
+
+  const first = await runOnce('reuse-1');
+  const second = await runOnce('reuse-2');
+  await stopAllRuntimeExecutors();
+
+  assert.equal(first.exitCode, 0);
+  assert.equal(second.exitCode, 0);
+  assert.equal(Number(global.__FAKE_OPENCODE_SDK_STARTS__ || 0), 1);
+});
+
+test('stopAllRuntimeExecutors closes sdk runtime and next run recreates it', async () => {
+  global.__FAKE_OPENCODE_SDK_STARTS__ = 0;
+  const { runOpencode, stopAllRuntimeExecutors } = loadRunnerWithEnv({
+    OMG_MAX_PROCESS_SECONDS: 10,
+    OMG_EXECUTION_TRANSPORT: 'sdk',
+    OMG_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
+  });
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runner-sdk-recreate-runtime-'));
+  const instance = {
+    name: 'demo-runtime-recreate',
+    opencodeCommand: 'opencode sdk',
+    workdir: process.cwd(),
+    logFile: path.join(tmpDir, 'runner-sdk-recreate-runtime.log'),
+  };
+
+  const runOnce = (prompt) => new Promise((resolve, reject) => {
+    runOpencode(instance, prompt, {
+      onEvent: () => {},
+      onDone: (exitCode, timeoutMsg, meta) => resolve({ exitCode, timeoutMsg, meta }),
+      onError: reject,
+      sessionId: '',
+    });
+  });
+
+  const first = await runOnce('recreate-1');
+  await stopAllRuntimeExecutors();
+  const second = await runOnce('recreate-2');
+  await stopAllRuntimeExecutors();
+
+  assert.equal(first.exitCode, 0);
+  assert.equal(second.exitCode, 0);
+  assert.equal(Number(global.__FAKE_OPENCODE_SDK_STARTS__ || 0), 2);
+});
+
 test('runSessionRevert calls sdk revert with message and part ids', async () => {
   const { runSessionRevert } = loadRunnerWithEnv({
     OMG_EXECUTION_TRANSPORT: 'sdk',

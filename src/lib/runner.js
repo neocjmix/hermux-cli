@@ -15,6 +15,8 @@ const SDK_IDLE_DRAIN_MS = parseInt(process.env.OMG_SDK_IDLE_DRAIN_MS || '220', 1
 
 const activeRuns = new Set();
 const runtimeStats = new Map();
+const sdkRuntimes = new Map();
+const sdkRuntimeOps = new Map();
 let stopAllInProgress = false;
 
 function parseRetryAfterSeconds(text) {
@@ -156,6 +158,11 @@ async function stopAllRuntimeExecutors() {
       } catch (_err) {
       }
     }
+    for (const [scopeKey, entry] of Array.from(sdkRuntimes.entries())) {
+      sdkRuntimes.delete(scopeKey);
+      // eslint-disable-next-line no-await-in-loop
+      await closeSdkRuntimeEntry(entry);
+    }
   } finally {
     stopAllInProgress = false;
   }
@@ -188,10 +195,17 @@ async function loadSdkModule() {
   return sdkModulePromise;
 }
 
-async function withSdkClient(instance, fn) {
-  if (stopAllInProgress) {
-    throw new Error('runtime lifecycle is stopping; retry after restart completes');
-  }
+function runSdkRuntimeOpExclusive(scopeKey, task) {
+  const prev = sdkRuntimeOps.get(scopeKey) || Promise.resolve();
+  const run = prev.then(task, task);
+  const marker = run.catch(() => {});
+  sdkRuntimeOps.set(scopeKey, marker);
+  return run.finally(() => {
+    if (sdkRuntimeOps.get(scopeKey) === marker) sdkRuntimeOps.delete(scopeKey);
+  });
+}
+
+async function createSdkRuntimeForScope(scopeKey) {
   const sdk = await loadSdkModule();
   if (!sdk || typeof sdk.createOpencode !== 'function') {
     throw new Error('failed to load sdk createOpencode');
@@ -203,17 +217,91 @@ async function withSdkClient(instance, fn) {
     port: sdkPort,
     timeout: SDK_SERVER_START_TIMEOUT_MS,
   });
-
-  try {
-    return await fn(runtime.client, { directory: instance.workdir });
-  } finally {
+  const client = runtime && runtime.client ? runtime.client : null;
+  if (!client) {
     if (runtime && runtime.server && typeof runtime.server.close === 'function') {
       try {
         runtime.server.close();
       } catch (_err) {
       }
     }
+    throw new Error('sdk runtime missing client');
   }
+
+  return {
+    scopeKey,
+    runtime,
+    client,
+    port: sdkPort,
+    startedAt: Date.now(),
+  };
+}
+
+async function closeSdkRuntimeEntry(entry) {
+  if (!entry) return;
+  const runtime = entry.runtime;
+  if (runtime && runtime.server && typeof runtime.server.close === 'function') {
+    try {
+      await Promise.resolve(runtime.server.close());
+    } catch (_err) {
+    }
+  }
+}
+
+async function getOrCreateSdkRuntime(instance) {
+  const scopeKey = getRuntimeScopeKey(instance);
+  if (stopAllInProgress) {
+    throw new Error('runtime lifecycle is stopping; retry after restart completes');
+  }
+
+  return runSdkRuntimeOpExclusive(scopeKey, async () => {
+    const existing = sdkRuntimes.get(scopeKey);
+    if (existing && existing.client && existing.runtime) {
+      return existing;
+    }
+    const created = await createSdkRuntimeForScope(scopeKey);
+    sdkRuntimes.set(scopeKey, created);
+    return created;
+  });
+}
+
+async function resetSdkRuntime(instance) {
+  const scopeKey = getRuntimeScopeKey(instance);
+  return runSdkRuntimeOpExclusive(scopeKey, async () => {
+    const existing = sdkRuntimes.get(scopeKey);
+    sdkRuntimes.delete(scopeKey);
+    if (existing) await closeSdkRuntimeEntry(existing);
+  });
+}
+
+function isRecoverableSdkTransportError(err) {
+  const msg = String(err && err.message ? err.message : err || '').toLowerCase();
+  if (!msg) return false;
+  return (
+    msg.includes('fetch failed')
+    || msg.includes('econnrefused')
+    || msg.includes('socket hang up')
+    || msg.includes('connection reset')
+    || msg.includes('event stream unavailable')
+    || msg.includes('network')
+  );
+}
+
+async function withSdkClient(instance, fn) {
+  let lastErr = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const entry = await getOrCreateSdkRuntime(instance);
+    try {
+      return await fn(entry.client, { directory: instance.workdir });
+    } catch (err) {
+      lastErr = err;
+      if (!isRecoverableSdkTransportError(err) || attempt > 0) {
+        throw err;
+      }
+      await resetSdkRuntime(instance);
+    }
+  }
+  throw lastErr || new Error('sdk client call failed');
 }
 
 async function runSessionRevert(instance, input) {
@@ -562,7 +650,6 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
 
   const partMap = new Map();
   let partSeq = 0;
-  let closeServer = null;
   let abortSession = null;
   let eventQueue = Promise.resolve();
   let idleFinalizeTimer = null;
@@ -658,9 +745,6 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
     state.done = true;
     clearIdleFinalizeTimer();
     clearTimeout(timeout);
-    if (typeof closeServer === 'function') {
-      try { closeServer(); } catch (_err) {}
-    }
     trace('settle.done', {
       exitCode,
       timeoutMsg,
@@ -682,8 +766,8 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
     state.done = true;
     clearIdleFinalizeTimer();
     clearTimeout(timeout);
-    if (typeof closeServer === 'function') {
-      try { closeServer(); } catch (_err) {}
+    if (isRecoverableSdkTransportError(err)) {
+      resetSdkRuntime(instance).catch(() => {});
     }
     const msg = String(err && err.message ? err.message : err || 'sdk runtime failed');
     state.stderrSamples.push(msg);
@@ -723,21 +807,8 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
         throw new Error('runtime lifecycle is stopping; retry after restart completes');
       }
 
-      const sdk = await loadSdkModule();
-      if (!sdk || typeof sdk.createOpencode !== 'function') {
-        throw new Error('failed to load sdk createOpencode');
-      }
-
-      const sdkPort = await pickRandomAvailablePortInRange();
-      const runtime = await sdk.createOpencode({
-        hostname: '127.0.0.1',
-        port: sdkPort,
-        timeout: SDK_SERVER_START_TIMEOUT_MS,
-      });
-      const client = runtime.client;
-      closeServer = runtime && runtime.server && typeof runtime.server.close === 'function'
-        ? () => runtime.server.close()
-        : null;
+      const runtimeEntry = await getOrCreateSdkRuntime(instance);
+      const client = runtimeEntry.client;
 
       const query = { directory: instance.workdir };
       if (state.sessionId) {

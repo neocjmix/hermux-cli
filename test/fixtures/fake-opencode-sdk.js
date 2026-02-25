@@ -45,6 +45,7 @@ function createQueue() {
 }
 
 async function createOpencode() {
+  global.__FAKE_OPENCODE_SDK_STARTS__ = Number(global.__FAKE_OPENCODE_SDK_STARTS__ || 0) + 1;
   const queue = createQueue();
   if (!global.__FAKE_OPENCODE_SDK_SESSIONS__) {
     global.__FAKE_OPENCODE_SDK_SESSIONS__ = new Map();
