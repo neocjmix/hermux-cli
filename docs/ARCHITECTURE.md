@@ -11,6 +11,9 @@
 - Execution boundary: one active run per repo context.
 - Backend boundary: runner executes via SDK transport or command transport.
 
+Target boundary contract (for ongoing refactor) is defined in `docs/specs/ADAPTER_STRATEGY_DI_SPEC.md`.
+Core orchestration MUST evolve toward provider/channel-agnostic interfaces (`AgentRuntimeAdapter`, `DeliveryAdapter`, `SessionRoutingPolicy`, `SessionStore`).
+
 ## Module Boundaries
 
 ```text
@@ -115,3 +118,4 @@ Recovery guarantees:
 - user behavior contracts: `docs/specs/UX_SPEC.md`
 - interface contracts: `docs/specs/COMPONENT_CONTRACTS.md`
 - session/event routing contracts: `docs/specs/SESSION_EVENT_ROUTING_SPEC.md`
+- strategy+DI adapter contracts: `docs/specs/ADAPTER_STRATEGY_DI_SPEC.md`

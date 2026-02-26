@@ -100,3 +100,11 @@ Normative session-centric routing and audit invariants are defined in:
 - `docs/specs/SESSION_EVENT_ROUTING_SPEC.md`
 
 Component-level implementations that touch repo runtime lifecycle, event subscription fan-in, or event identity extraction MUST stay aligned with that spec.
+
+## 9) Adapter Strategy + DI Contract
+
+Normative adapter and DI contracts are defined in:
+
+- `docs/specs/ADAPTER_STRATEGY_DI_SPEC.md`
+
+Component-level implementations that touch upstream runtime providers or downstream delivery channels MUST stay aligned with that spec.

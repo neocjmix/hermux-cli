@@ -12,8 +12,9 @@ This is the canonical documentation entrypoint.
 6. `docs/specs/TELEGRAM_E2E_STUB_SPEC.md`
 7. `docs/specs/EVENT_HANDLING_COMPARISON.md`
 8. `docs/specs/SESSION_EVENT_ROUTING_SPEC.md`
-9. `docs/ARCHITECTURE.md`
-10. `docs/DEVELOPER_GUIDE.md`
+9. `docs/specs/ADAPTER_STRATEGY_DI_SPEC.md`
+10. `docs/ARCHITECTURE.md`
+11. `docs/DEVELOPER_GUIDE.md`
 
 ## Documents
 
@@ -51,6 +52,11 @@ This is the canonical documentation entrypoint.
   - Audience: implementers and architecture reviewers
   - Purpose: normative session-centric routing/lifecycle/idempotency/audit contract for repo-global OpenCode subscriptions
   - Update when: repo runtime topology, session extraction rules, epoch fencing, or audit reconstructability guarantees change
+
+- `docs/specs/ADAPTER_STRATEGY_DI_SPEC.md`
+  - Audience: implementers and architecture reviewers
+  - Purpose: provider-agnostic upstream/downstream strategy + dependency injection contract
+  - Update when: adapter interfaces, canonical event model, composition root wiring, or capability matrix rules change
 
 - `docs/DEVELOPER_GUIDE.md`
   - Audience: developers and agents
