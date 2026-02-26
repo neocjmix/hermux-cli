@@ -37,6 +37,9 @@ const {
   runSessionUnrevert,
   stopAllRuntimeExecutors,
   getRuntimeStatusForInstance,
+  createRenderState,
+  applyPayload,
+  buildRunViewFromRenderState: buildRunViewFromRenderStateForOpencode,
 } = upstreamProvider;
 
 const {
@@ -44,6 +47,7 @@ const {
   createRepoMessageHandler,
   createMessageHandler,
   createCallbackQueryHandler,
+  reconcileRunViewForTelegram,
 } = downstreamProvider;
 
 const TG_MAX_LEN = 4000;
@@ -1248,6 +1252,46 @@ async function editHtml(bot, chatId, messageId, html, auditMeta) {
         meta: auditMeta || null,
       });
     }
+  }
+}
+
+async function editPlain(bot, chatId, messageId, text, auditMeta) {
+  const truncated = text.length > TG_MAX_LEN ? text.slice(0, TG_MAX_LEN - 3) + '...' : text;
+  const preview = summarizeAuditText(truncated);
+  try {
+    await bot.editMessageText(truncated, { chat_id: chatId, message_id: messageId });
+    audit('telegram.edit', {
+      ok: true,
+      stage: 'plain',
+      chatId: String(chatId),
+      messageId,
+      parseMode: '',
+      textPreview: preview,
+      meta: auditMeta || null,
+    });
+  } catch (err) {
+    if (String(err && err.message || '').includes('message is not modified')) {
+      audit('telegram.edit', {
+        ok: true,
+        stage: 'plain_not_modified',
+        chatId: String(chatId),
+        messageId,
+        parseMode: '',
+        textPreview: preview,
+        meta: auditMeta || null,
+      });
+      return;
+    }
+    audit('telegram.edit', {
+      ok: false,
+      stage: 'plain',
+      chatId: String(chatId),
+      messageId,
+      parseMode: '',
+      error: String(err && (err.code || err.message || err) || ''),
+      textPreview: preview,
+      meta: auditMeta || null,
+    });
   }
 }
 
@@ -2656,6 +2700,11 @@ async function startPromptRun(bot, repo, state, runItem) {
   let eventOrdinal = 0;
   const runStartedAt = Date.now();
   const runId = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+  state.runView = {
+    runId,
+    messageIds: [],
+    texts: [],
+  };
   const runAuditMeta = {
     runId,
     repo: repo.name,
@@ -2783,20 +2832,48 @@ async function startPromptRun(bot, repo, state, runItem) {
   });
 
   const RAW_EVENT_PASSTHROUGH = true;
-  const sendRawTelegram = async (payload, channel) => {
-    const text = String(payload == null ? '' : payload);
-    const chunks = splitByLimit(text || ' ', TG_MAX_LEN);
-    for (let i = 0; i < chunks.length; i++) {
-      await safeSend(bot, chatId, chunks[i], undefined, {
-        ...runAuditMeta,
-        channel,
-        chunkIndex: i,
-        chunkCount: chunks.length,
-      });
+  const sendRawTelegram = async () => {};
+
+  let renderSeq = Number(state.sessionRenderSeq || 0) || 0;
+  const reconcileRunView = async (nextTexts, options) => {
+    if (!state.runView || state.runView.runId !== runId) return;
+    const isFinalState = !!(options && options.isFinalState);
+    const view = state.runView;
+    const nextView = await reconcileRunViewForTelegram({
+      bot,
+      chatId,
+      runAuditMeta,
+      currentView: {
+        texts: Array.isArray(view.texts) ? view.texts : [],
+        messageIds: Array.isArray(view.messageIds) ? view.messageIds : [],
+      },
+      nextTexts: Array.isArray(nextTexts) ? nextTexts : [],
+      isFinalState,
+      sendText: safeSend,
+      editText: editPlain,
+      deleteMessage: safeDeleteMessage,
+    });
+    view.messageIds = Array.isArray(nextView && nextView.messageIds) ? nextView.messageIds : [];
+    view.texts = Array.isArray(nextView && nextView.texts) ? nextView.texts : [];
+  };
+
+  const onDeliverSessionEvent = async ({ payload, sessionId }) => {
+    const sid = String(sessionId || activeSessionId || '').trim();
+    if (!sid) return;
+    if (!(state.sessionRenderStates instanceof Map)) {
+      state.sessionRenderStates = new Map();
     }
+    renderSeq += 1;
+    state.sessionRenderSeq = renderSeq;
+    const current = state.sessionRenderStates.get(sid) || createRenderState(sid);
+    const next = applyPayload(current, payload, renderSeq);
+    state.sessionRenderStates.set(sid, next);
+    state.latestSessionRenderState = next;
+    await reconcileRunView(buildRunViewFromRenderStateForOpencode(next, splitByLimit, TG_MAX_LEN), { isFinalState: false });
   };
   const handleSessionEvent = createSessionEventHandler({
     sendRawTelegram,
+    onDeliver: onDeliverSessionEvent,
   });
 
   let sessionDeliveryMode = 'command';
@@ -2903,6 +2980,13 @@ async function startPromptRun(bot, repo, state, runItem) {
       }
 
       if (RAW_EVENT_PASSTHROUGH) {
+        const finalState = activeSessionId
+          && state.sessionRenderStates instanceof Map
+          ? state.sessionRenderStates.get(activeSessionId)
+          : state.latestSessionRenderState;
+        if (finalState) {
+          await reconcileRunView(buildRunViewFromRenderStateForOpencode(finalState, splitByLimit, TG_MAX_LEN), { isFinalState: true });
+        }
         auditRun('run.complete', {
           status: timeoutMsg ? 'timeout' : (exitCode === 0 ? 'done' : `exit ${exitCode}`),
           exitCode,
@@ -3001,6 +3085,10 @@ function main() {
     queue: [],
     panelRefresh: null,
     sessionDelivery: null,
+    sessionRenderStates: new Map(),
+    sessionRenderSeq: 0,
+    latestSessionRenderState: null,
+    runView: null,
     dispatchQueue: Promise.resolve(),
   }]));
   const onboardingSessions = new Map();

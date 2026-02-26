@@ -1,3 +1,7 @@
 'use strict';
 
-module.exports = require('./runner');
+module.exports = {
+  ...require('./runner'),
+  ...require('./render-state'),
+  ...require('./view-builder'),
+};

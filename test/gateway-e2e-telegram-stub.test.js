@@ -836,8 +836,8 @@ test('gateway e2e keeps pass-through final output behavior', async () => {
       && r.payload
       && r.payload.meta
       && (
-        r.payload.meta.channel === 'raw_event'
-        || r.payload.meta.channel === 'raw_completion'
+        r.payload.meta.channel === 'run_view_send'
+        || r.payload.meta.channel === 'run_view_edit'
       )
     ));
     assert.equal(finalOutputs.length > 0, true);
