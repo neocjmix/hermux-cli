@@ -170,9 +170,8 @@ test('runOpencode sdk mode streams events and builds final text', async () => {
   assert.equal(done.exitCode, 0);
   assert.equal(done.timeoutMsg, null);
   assert.equal(done.meta.sessionId, 'sdk-session');
-  assert.equal(done.meta.finalText, 'final:sdk-hello');
-  assert.equal(events.some((e) => e.type === 'tool_use'), true);
-  assert.equal(events.some((e) => e.type === 'text' && /final:sdk-hello/.test(String(e.content))), true);
+  assert.equal(done.meta.finalText, '');
+  assert.equal(events.some((e) => e.type === 'raw' && /final:sdk-hello/.test(String(e.content))), true);
 });
 
 test('runOpencode sdk mode drains async onEvent work before onDone', async () => {
@@ -462,7 +461,7 @@ test('runOpencode sdk mode captures late text that arrives after idle', async ()
   assert.equal(done.exitCode, 0);
   assert.equal(done.timeoutMsg, null);
   assert.equal(done.meta.sessionId, 'sdk-idle-tail');
-  assert.match(String(done.meta.finalText || ''), /chunk-3-tail/);
+  assert.equal(String(done.meta.finalText || ''), '');
 });
 
 test('runOpencode sdk mode keeps handling late deltas after completion signal', async () => {
@@ -495,8 +494,8 @@ test('runOpencode sdk mode keeps handling late deltas after completion signal', 
 
   assert.equal(done.exitCode, 0);
   assert.equal(done.timeoutMsg, null);
-  assert.match(String(done.meta.finalText || ''), /chunk-2-late-delta/);
-  assert.equal(events.some((evt) => evt.type === 'text' && /chunk-2-late-delta/.test(String(evt.content || ''))), true);
+  assert.equal(String(done.meta.finalText || ''), '');
+  assert.equal(events.some((evt) => evt.type === 'raw' && /chunk-2-late-delta/.test(String(evt.content || ''))), true);
 });
 
 test('runOpencode sdk mode ignores stale buffered idle before new run activity', async () => {
@@ -528,7 +527,7 @@ test('runOpencode sdk mode ignores stale buffered idle before new run activity',
 
   assert.equal(done.exitCode, 0);
   assert.equal(done.timeoutMsg, null);
-  assert.match(String(done.meta.finalText || ''), /fresh-final-output/);
+  assert.equal(String(done.meta.finalText || ''), '');
 });
 
 test('runtime status reflects active sdk run and resets after completion', async () => {

@@ -19,6 +19,15 @@ const {
 const { md2html, escapeHtml } = require('./lib/md2html');
 const { getSessionId, setSessionId, clearSessionId, getSessionInfo, clearAllSessions, SESSION_MAP_PATH } = require('./lib/session-map');
 const { makeAuditLogger } = require('./lib/audit-log');
+const {
+  splitByOmoInitiatorMarker,
+  extractLatestSystemReminder,
+  sanitizeCanonicalOutputText,
+  sanitizeDisplayOutputText,
+  sanitizeWithoutPromptEchoStrip,
+  sanitizeFinalOutputText,
+} = require('./lib/output-sanitizer');
+const { createSessionEventHandler } = require('./lib/session-event-handler');
 const { createRepoMessageHandler } = require('./gateway-repo-message-handler');
 const { createMessageHandler } = require('./gateway-message-handler');
 const { createCallbackQueryHandler } = require('./gateway-callback-query-handler');
@@ -1566,56 +1575,6 @@ function appendHermuxVersion(text, version) {
   return `${base}\n\n${tag}`;
 }
 
-function stripSystemReminderBlocks(text) {
-  const src = String(text || '');
-  if (!src) return '';
-  return src.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, '').trim();
-}
-
-function extractLatestSystemReminder(text) {
-  const src = String(text || '');
-  if (!src) return { text: '', reminderText: '' };
-  const regex = /<system-reminder>([\s\S]*?)<\/system-reminder>/gi;
-  let latest = '';
-  const stripped = src.replace(regex, (_m, body) => {
-    latest = String(body || '').trim();
-    return '';
-  }).trim();
-  return {
-    text: stripped,
-    reminderText: latest,
-  };
-}
-
-function extractAllSystemReminders(text) {
-  const src = String(text || '');
-  if (!src) return { text: '', reminderTexts: [] };
-  const reminderTexts = [];
-  const regex = /<system-reminder>([\s\S]*?)<\/system-reminder>/gi;
-  const stripped = src.replace(regex, (_m, body) => {
-    const reminder = String(body || '').trim();
-    if (reminder) reminderTexts.push(reminder);
-    return '';
-  }).trim();
-  return {
-    text: stripped,
-    reminderTexts,
-  };
-}
-
-function splitByOmoInitiatorMarker(text) {
-  const src = String(text || '');
-  if (!src) return [];
-  return src
-    .split(/(?:<!--\s*OMO_INTERNAL_INITIATOR\s*-->|&lt;!--\s*OMO_INTERNAL_INITIATOR\s*--&gt;)/gi)
-    .map((part) => String(part || '').trim())
-    .filter(Boolean);
-}
-
-function stripOmoInitiatorMarkers(text) {
-  const parts = splitByOmoInitiatorMarker(text);
-  return parts.join('\n\n').trim();
-}
 
 function formatSystemReminderForDisplay(text) {
   const normalized = String(text || '').replace(/\r\n/g, '\n').trim();
@@ -1669,47 +1628,74 @@ function formatSystemReminderForDisplay(text) {
   return ['```text', ...compact, '```'].join('\n');
 }
 
-function stripPromptEchoPrefix(text, promptText) {
+function stripPromptEchoSuffix(text, promptText) {
   let out = String(text || '');
   const prompt = String(promptText || '').trim();
   if (!out || !prompt) return out;
   const variants = [prompt, prompt.replace(/^\[/, '')]
     .map((v) => String(v || '').trim())
     .filter(Boolean);
-  let cutIndex = -1;
-  let cutLength = 0;
   for (const v of variants) {
-    const idx = out.lastIndexOf(v);
-    if (idx >= 0 && idx >= cutIndex) {
-      cutIndex = idx;
-      cutLength = v.length;
+    if (!v) continue;
+    if (out.endsWith(v)) {
+      out = out.slice(0, out.length - v.length).trimEnd();
+      return out;
     }
-  }
-  if (cutIndex >= 0) {
-    out = out.slice(cutIndex + cutLength).trimStart();
   }
   return out;
 }
 
-function sanitizeCanonicalOutputText(text, promptText) {
-  let out = stripSystemReminderBlocks(text || '');
-  out = stripOmoInitiatorMarkers(out);
-  out = stripPromptEchoPrefix(out, promptText);
-  return String(out || '').trim();
+function isControlLikeOutput(text) {
+  const src = String(text || '').toLowerCase();
+  if (!src) return false;
+  const markers = [
+    '<ultrawork-mode>',
+    '</ultrawork-mode>',
+    '[code red]',
+    'mandatory certainty protocol',
+    'you must say "ultrawork mode enabled!"',
+    'plan agent invocation',
+    'zero tolerance failures',
+  ];
+  return markers.some((m) => src.includes(m));
 }
 
-function sanitizeDisplayOutputText(text) {
-  return String(text || '').trim();
+function normalizeLooseText(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/[^a-z0-9 ]+/g, '')
+    .trim();
 }
 
-function sanitizeFinalOutputText(text, promptText) {
-  return sanitizeCanonicalOutputText(text, promptText);
+function isPromptEchoLike(text, promptText) {
+  const body = normalizeLooseText(text);
+  const prompt = normalizeLooseText(promptText);
+  if (!body || !prompt) return false;
+  if (body === prompt) return true;
+  if (body.startsWith(prompt) || body.endsWith(prompt)) {
+    return body.length <= prompt.length + 120;
+  }
+  return false;
 }
 
-function sanitizeWithoutPromptEchoStrip(text) {
-  let out = stripSystemReminderBlocks(text || '');
-  out = stripOmoInitiatorMarkers(out);
-  return String(out || '').trim();
+function tryRecoverFromPromptEcho({
+  metaFinalText,
+  streamFinalText,
+  promptText,
+}) {
+  const rawMeta = sanitizeWithoutPromptEchoStrip(metaFinalText);
+  const rawStream = sanitizeWithoutPromptEchoStrip(streamFinalText);
+  const ordered = [rawMeta, rawStream].filter((v) => String(v || '').trim());
+  for (const candidate of ordered) {
+    const suffixStripped = stripPromptEchoSuffix(candidate, promptText);
+    const cleaned = sanitizeDisplayOutputText(suffixStripped);
+    if (!cleaned) continue;
+    if (isControlLikeOutput(cleaned)) continue;
+    if (isPromptEchoLike(cleaned, promptText)) continue;
+    return cleaned;
+  }
+  return '';
 }
 
 function mergeTextForFinalization(prev, next) {
@@ -1750,11 +1736,8 @@ function rebuildFinalCandidateSnapshot(snapshot, {
     };
   }
 
-  let trimmed = String(rawText || '');
-  trimmed = stripPromptEchoPrefix(trimmed, promptText);
-  const extracted = extractAllSystemReminders(trimmed);
-  const cleaned = stripOmoInitiatorMarkers(extracted.text || '').trim();
-  const nextReminders = extracted.reminderTexts.slice();
+  const cleaned = sanitizeCanonicalOutputText(rawText || '', promptText);
+  const nextReminders = [];
   const remindersChanged = nextReminders.length !== snapshot.reminderTexts.length
     || nextReminders.some((v, i) => v !== snapshot.reminderTexts[i]);
   const finalChanged = cleaned !== snapshot.canonicalFinal;
@@ -1838,7 +1821,7 @@ function resolveFinalizationOutput({
 }) {
   const cleanMeta = sanitizeCanonicalOutputText(metaFinalText, promptText);
   const cleanStream = sanitizeCanonicalOutputText(streamFinalText, promptText);
-  const canonicalText = selectFinalOutputText(cleanMeta, cleanStream);
+  let canonicalText = selectFinalOutputText(cleanMeta, cleanStream);
   const rawMeta = String(metaFinalText || '').trim();
   const rawStream = String(streamFinalText || '').trim();
   const hadRawFinal = !!(rawMeta || rawStream);
@@ -1848,6 +1831,17 @@ function resolveFinalizationOutput({
     const unstrippedStream = sanitizeWithoutPromptEchoStrip(streamFinalText);
     const unstripped = selectFinalOutputText(unstrippedMeta, unstrippedStream);
     emptyReason = unstripped ? 'sanitized_prompt_echo' : 'sanitized_control_only';
+    if (emptyReason === 'sanitized_prompt_echo') {
+      const recovered = tryRecoverFromPromptEcho({
+        metaFinalText,
+        streamFinalText,
+        promptText,
+      });
+      if (recovered) {
+        canonicalText = recovered;
+        emptyReason = 'recovered_prompt_echo';
+      }
+    }
   }
   const displayText = sanitizeDisplayOutputText(canonicalText);
   const outgoingText = isVersionPrompt ? appendHermuxVersion(displayText, hermuxVersion) : displayText;
@@ -2762,60 +2756,30 @@ async function startPromptRun(bot, repo, state, runItem) {
     promptPreview: summarizeAuditText(promptText),
   });
 
-  const buildPanel = (phase) => buildLiveStatusPanelHtml({
-    repoName: repo.name,
-    runId,
-    verbose: !!state.verbose,
-    phase: phase === 'running' && waitInfo ? 'waiting' : phase,
-    stepCount,
-    toolCount,
-    queueLength: Array.isArray(state.queue) ? state.queue.length : 0,
-    sessionId: activeSessionId,
-    waitInfo,
-    lastTool: lastToolBrief,
-    lastReasoning: lastReasoningBrief,
-    lastReminder: lastReminderBrief,
-    lastStepReason,
-  });
-
-  const statusMsg = await safeSend(bot, chatId, buildPanel('running'), { parse_mode: 'HTML' }, {
-    ...runAuditMeta,
-    channel: 'status_panel',
-    phase: 'start',
-  });
-  const statusMsgId = statusMsg ? statusMsg.message_id : null;
-
-  const refreshPanel = async (phase, force) => {
-    if (!statusMsgId) return;
-    const html = buildPanel(phase);
-    if (html === lastPanelHtml) return;
-    lastPanelHtml = html;
-    await editHtml(bot, chatId, statusMsgId, html, {
-      ...runAuditMeta,
-      channel: 'status_panel',
-      phase,
-    });
+  const RAW_EVENT_PASSTHROUGH = true;
+  const sendRawTelegram = async (payload, channel) => {
+    const text = String(payload == null ? '' : payload);
+    const chunks = splitByLimit(text || ' ', TG_MAX_LEN);
+    for (let i = 0; i < chunks.length; i++) {
+      await safeSend(bot, chatId, chunks[i], undefined, {
+        ...runAuditMeta,
+        channel,
+        chunkIndex: i,
+        chunkCount: chunks.length,
+      });
+    }
   };
-
-  heartbeatTimer = setInterval(async () => {
-    if (!state.running) return;
-    const now = Date.now();
-    if (now - lastPanelHeartbeatAt < STREAM_HEARTBEAT_MS) return;
-    lastPanelHeartbeatAt = now;
-    await refreshPanel('running', false);
-  }, STREAM_HEARTBEAT_MS);
-
-  state.panelRefresh = async (force) => refreshPanel('running', !!force);
+  const handleSessionEvent = createSessionEventHandler({
+    sendRawTelegram,
+  });
 
   const proc = runOpencode(repo, promptText, {
     sessionId: activeSessionId,
     onEvent: async (evt) => {
-      const type = evt.type;
-      if (evt.sessionId) activeSessionId = evt.sessionId;
       eventOrdinal += 1;
       auditRun('run.event_received', {
         eventOrdinal,
-        type,
+        type: evt.type,
         textKind: evt.textKind || null,
         sessionId: evt.sessionId || activeSessionId || null,
         content: String(evt.content || ''),
@@ -2824,160 +2788,15 @@ async function startPromptRun(bot, repo, state, runItem) {
         ...buildAuditContentMeta(evt.content || ''),
       });
 
-      if (type === 'step_start') {
-        waitInfo = null;
-        state.waitingInfo = null;
-        stepCount++;
-        await refreshPanel('running', false);
-        audit('run.reaction', {
-          ...runAuditMeta,
-          event: 'step_start',
-          stepCount,
+      if (RAW_EVENT_PASSTHROUGH) {
+        const routedResult = await handleSessionEvent({
+          event: evt,
+          activeSessionId,
         });
-        return;
-      }
-
-      if (type === 'text') {
-        waitInfo = null;
-        state.waitingInfo = null;
-        const reconciled = reconcileOutputSnapshot(outputSnapshot, {
-          rawText: evt.content || '',
-          textKind: evt.textKind,
-          promptText,
-          authoritativeFinal: false,
-          seq: ++textEventSeq,
-        });
-        const cleaned = reconciled.cleaned;
-        auditRun('run.reconcile.snapshot', {
-          eventOrdinal,
-          textKind: reconciled.classifiedKind,
-          updated: !!reconciled.updated,
-          cleaned,
-          reasoningText: reconciled.reasoningText || '',
-          canonicalFinal: outputSnapshot.canonicalFinal,
-          rawFinalSnapshot: outputSnapshot.rawFinalSnapshot,
-          reminderTexts: reconciled.reminderTexts,
-        });
-        const statusTriggerText = reconciled.classifiedKind === 'reasoning'
-          ? String(reconciled.reasoningText || '')
-          : cleaned;
-        if (reconciled.classifiedKind === 'reasoning') {
-          lastReasoningBrief = statusTriggerText;
-          await refreshPanel('running', true);
-        } else {
-          if (evt.messageId || evt.partId) {
-            lastFinalMessageRef = {
-              messageId: String(evt.messageId || lastFinalMessageRef.messageId || ''),
-              partId: String(evt.partId || ''),
-            };
-          }
-          await refreshFinalUnitChannel(false);
-        }
-        if (reconciled.reminderTexts.length > 0) {
-          const reminderDisplay = formatSystemReminderForDisplay(reconciled.reminderTexts.join('\n\n'));
-          if (reminderDisplay && reminderDisplay !== lastReminderBrief) {
-            lastReminderBrief = reminderDisplay;
-            await refreshPanel('running', true);
-          }
-        }
-        if (statusTriggerText.trim()) {
-          if (statusMsgId && statusTriggerText !== lastStreamSnapshot) {
-            lastStreamSnapshot = statusTriggerText;
-            await refreshPanel('running', false);
-          }
-          auditRun('run.reaction', {
-            event: 'text',
-            textKind: reconciled.classifiedKind,
-            finalCandidateLength: outputSnapshot.finalCandidate.length,
-            streamLength: outputSnapshot.streamText.length,
-            statusTriggerText,
-          });
+        if (routedResult.nextSessionId) {
+          activeSessionId = routedResult.nextSessionId;
         }
         return;
-      }
-
-      if (type === 'tool_use') {
-        waitInfo = null;
-        state.waitingInfo = null;
-        toolCount++;
-        const brief = formatToolBrief(evt);
-        lastToolBrief = brief;
-        toolNames.push(brief);
-        await refreshPanel('running', false);
-        if (state.verbose && !statusMsgId) {
-          const toolMsg = `<code>${escapeHtml(brief)}</code>`;
-          await safeSend(bot, chatId, toolMsg, { parse_mode: 'HTML' }, {
-            ...runAuditMeta,
-            channel: 'verbose_tool_event',
-          });
-        }
-        auditRun('run.reaction', {
-          event: 'tool_use',
-          toolCount,
-          tool: brief,
-        });
-        return;
-      }
-
-      if (type === 'step_finish') {
-        waitInfo = null;
-        state.waitingInfo = null;
-        lastStepReason = evt.reason || lastStepReason;
-        await refreshPanel('running', false);
-        auditRun('run.reaction', {
-          event: 'step_finish',
-          reason: lastStepReason || null,
-        });
-        return;
-      }
-
-      if (type === 'wait') {
-        waitInfo = {
-          status: String(evt.status || ''),
-          retryAfterSeconds: Number(evt.retryAfterSeconds || 0) || null,
-        };
-        state.waitingInfo = waitInfo;
-        await refreshPanel('running', false);
-        auditRun('run.reaction', {
-          event: 'wait',
-          waitInfo,
-        });
-        return;
-      }
-
-      if (type === 'raw') {
-        const rawInfo = formatRawEventPreview(evt.content || '');
-        const rawPlan = resolveRawDeliveryPlan(rawInfo, !!state.verbose);
-        if (rawInfo.sample) {
-          rawSamples.push(rawInfo.sample);
-          if (rawSamples.length > 3) rawSamples.shift();
-        }
-        const now = Date.now();
-        const isSamePreview = rawInfo.preview && rawInfo.preview === lastRawPreviewSent;
-        const toastCooldownMs = rawInfo.category === 'toast' ? 1500 : 0;
-        const allowByCooldown = !isSamePreview || now - lastRawPreviewSentAt >= toastCooldownMs;
-
-        if (rawPlan.updateStream && rawInfo.preview && allowByCooldown) {
-          lastRawBrief = rawInfo.preview;
-          lastRawPreviewSent = rawInfo.preview;
-          lastRawPreviewSentAt = now;
-        }
-        if (rawPlan.sendVerboseDirect && state.verbose && !statusMsgId && rawInfo.preview && allowByCooldown) {
-          lastRawPreviewSent = rawInfo.preview;
-          lastRawPreviewSentAt = now;
-          await safeSend(bot, chatId, `<code>${escapeHtml(rawInfo.preview)}</code>`, { parse_mode: 'HTML' }, {
-            ...runAuditMeta,
-            channel: 'verbose_raw_event',
-            rawCategory: rawInfo.category,
-          });
-        }
-        auditRun('run.reaction', {
-          event: 'raw',
-          rawCategory: rawInfo.category,
-          rawPlan,
-          rawCount: rawSamples.length,
-          rawPreview: lastRawBrief,
-        });
       }
     },
 
@@ -2990,10 +2809,7 @@ async function startPromptRun(bot, repo, state, runItem) {
         outputSnapshot,
       });
       state.running = false;
-      if (heartbeatTimer) clearInterval(heartbeatTimer);
       clearInterruptEscalationTimer(state);
-      const interruptTrace = state.interruptTrace ? { ...state.interruptTrace } : null;
-      const interrupted = !!state.interruptRequested;
       state.interruptRequested = false;
       state.interruptTrace = null;
       state.waitingInfo = null;
@@ -3007,131 +2823,20 @@ async function startPromptRun(bot, repo, state, runItem) {
           console.error(`[${repo.name}] failed to persist session id:`, e.message);
         }
       }
-      const status = interrupted ? 'interrupted' : (timeoutMsg ? 'timeout' : (exitCode === 0 ? 'done' : `exit ${exitCode}`));
-      const metaFinalText = meta && typeof meta.finalText === 'string' ? meta.finalText : '';
-      const completionSnapshot = reconcileOutputSnapshot(outputSnapshot, {
-        rawText: metaFinalText || outputSnapshot.rawFinalSnapshot,
-        textKind: 'final',
-        promptText,
-        authoritativeFinal: true,
-        seq: ++textEventSeq,
-      });
-      if (completionSnapshot.reminderTexts.length > 0) {
-        const reminderDisplay = formatSystemReminderForDisplay(completionSnapshot.reminderTexts.join('\n\n'));
-        if (reminderDisplay) {
-          lastReminderBrief = reminderDisplay;
-        }
-      }
-      auditRun('run.completion.snapshot', {
-        completionSnapshot,
-        outputSnapshot,
-      });
-      const finalResolution = resolveFinalizationOutput({
-        metaFinalText,
-        streamFinalText: outputSnapshot.canonicalFinal,
-        promptText,
-        isVersionPrompt,
-        hermuxVersion,
-      });
-      const mergedFinal = finalResolution.mergedFinal;
-      await refreshFinalUnitChannel(true, outputSnapshot.canonicalFinal);
-      auditRun('run.finalization', {
-        status,
-        interrupted,
-        timeout: !!timeoutMsg,
-        shouldSendFinal: finalResolution.shouldSendFinal,
-        finalLength: String(finalResolution.outgoingText || '').length,
-        mergedFinalLength: String(mergedFinal || '').length,
-      });
 
-      if (interrupted) {
-        await safeSend(bot, chatId, 'Interrupted current task.', undefined, {
-          ...runAuditMeta,
-          channel: 'control',
-          reason: 'interrupt',
-        });
-      } else if (timeoutMsg) {
-        await safeSend(bot, chatId, `Timed out: ${timeoutMsg}`, undefined, {
-          ...runAuditMeta,
-          channel: 'control',
-          reason: 'timeout',
-        });
-      } else if (finalResolution.shouldSendFinal) {
-        const mermaidBlocks = extractMermaidBlocks(mergedFinal);
-        if (mermaidBlocks.length > 0) {
-          if (!hasMermaidRenderer()) {
-            await safeSend(
-              bot,
-              chatId,
-              'Mermaid blocks detected, but renderer is unavailable. Install mermaid-cli (`mmdc`) to receive rendered diagrams.'
-            );
-          } else {
-            const artifacts = renderMermaidArtifacts(repo, chatId, mermaidBlocks);
-            for (let i = 0; i < artifacts.length; i++) {
-              const a = artifacts[i];
-              const caption = artifacts.length > 1 ? `Mermaid diagram ${i + 1}/${artifacts.length}` : 'Mermaid diagram';
-              if (a.kind === 'svg') {
-                await safeSendDocument(bot, chatId, a.path, caption, {
-                  ...runAuditMeta,
-                  channel: 'mermaid_artifact',
-                  kind: 'svg',
-                });
-              } else if (a.kind === 'png') {
-                await safeSendPhoto(bot, chatId, a.path, caption, {
-                  ...runAuditMeta,
-                  channel: 'mermaid_artifact',
-                  kind: 'png',
-                });
-              } else if (a.kind === 'mmd') {
-                await safeSendDocument(bot, chatId, a.path, `${caption} (source, render failed)`, {
-                  ...runAuditMeta,
-                  channel: 'mermaid_artifact',
-                  kind: 'mmd',
-                });
-                await safeSend(bot, chatId, `Mermaid render failed; sent source file instead.\nreason: ${String(a.error || '').slice(0, 300)}`, undefined, {
-                  ...runAuditMeta,
-                  channel: 'mermaid_render_error',
-                });
-              }
-            }
-          }
-        }
-      } else {
-        const fallbackBase = buildNoOutputMessage({
+      if (RAW_EVENT_PASSTHROUGH) {
+        auditRun('run.complete', {
+          status: timeoutMsg ? 'timeout' : (exitCode === 0 ? 'done' : `exit ${exitCode}`),
           exitCode,
-          stepCount,
-          toolCount,
-          toolNames,
-          stepReason: lastStepReason,
-          rawSamples,
-          logFile: repo.logFile,
-          rateLimit: meta && meta.rateLimit ? meta.rateLimit : null,
-          stderrSamples: meta && Array.isArray(meta.stderrSamples) ? meta.stderrSamples : [],
-          includeRawDiagnostics: !!state.verbose,
-          noOutputReason: finalResolution.emptyReason,
+          timeout: timeoutMsg || null,
+          queueRemaining: Array.isArray(state.queue) ? state.queue.length : 0,
+          passthrough: true,
         });
-        const fallback = isVersionPrompt ? appendHermuxVersion(fallbackBase, hermuxVersion) : fallbackBase;
-        await safeSend(bot, chatId, fallback, undefined, {
-          ...runAuditMeta,
-          channel: 'no_output_fallback',
-          includeRawDiagnostics: !!state.verbose,
-        });
-      }
-
-      if (statusMsgId) {
-        await refreshPanel(status, true);
-      }
-
-      auditRun('run.complete', {
-        status,
-        exitCode,
-        timeout: timeoutMsg || null,
-        queueRemaining: Array.isArray(state.queue) ? state.queue.length : 0,
-      });
-
-      if (Array.isArray(state.queue) && state.queue.length > 0) {
-        const nextItem = state.queue.shift();
-        await startPromptRun(bot, repo, state, nextItem);
+        if (Array.isArray(state.queue) && state.queue.length > 0) {
+          const nextItem = state.queue.shift();
+          await startPromptRun(bot, repo, state, nextItem);
+        }
+        return;
       }
     },
 
@@ -3139,45 +2844,23 @@ async function startPromptRun(bot, repo, state, runItem) {
       if (completionHandled) return;
       completionHandled = true;
       state.running = false;
-      if (heartbeatTimer) clearInterval(heartbeatTimer);
       clearInterruptEscalationTimer(state);
-      const interruptTrace = state.interruptTrace ? { ...state.interruptTrace } : null;
       state.interruptRequested = false;
       state.interruptTrace = null;
       state.waitingInfo = null;
       state.currentProc = null;
       state.panelRefresh = null;
-      console.error(`[${repo.name}] error:`, err.message);
-      if (interruptTrace) {
-        const completedAt = Date.now();
-        const termLatencyMs = interruptTrace.termSentAt ? completedAt - interruptTrace.termSentAt : null;
-        const reqLatencyMs = interruptTrace.requestedAt ? completedAt - interruptTrace.requestedAt : null;
-        console.error(`[${repo.name}] interrupt trace on error: ${JSON.stringify({
-          ...interruptTrace,
-          completedAt,
-          reqLatencyMs,
-          termLatencyMs,
-          error: err.message,
-        })}`);
-      }
-      auditRun('run.error', {
-        message: String(err && err.message ? err.message : err || ''),
-        outputSnapshot,
-      });
-      await safeSend(
-        bot,
-        chatId,
-        `Error: ${err.message}\n\nCheck that opencode is installed and workdir is accessible.`,
-        undefined,
-        {
-          ...runAuditMeta,
-          channel: 'error',
-        }
-      );
 
-      if (Array.isArray(state.queue) && state.queue.length > 0) {
-        const nextItem = state.queue.shift();
-        await startPromptRun(bot, repo, state, nextItem);
+      if (RAW_EVENT_PASSTHROUGH) {
+        auditRun('run.error', {
+          message: String(err && err.message ? err.message : err || ''),
+          passthrough: true,
+        });
+        if (Array.isArray(state.queue) && state.queue.length > 0) {
+          const nextItem = state.queue.shift();
+          await startPromptRun(bot, repo, state, nextItem);
+        }
+        return;
       }
     },
   });

@@ -14,6 +14,7 @@ const SDK_PORT_PICK_ATTEMPTS = parseInt(process.env.OMG_SDK_PORT_PICK_ATTEMPTS |
 const SDK_IDLE_DRAIN_MS = parseInt(process.env.OMG_SDK_IDLE_DRAIN_MS || '220', 10);
 const SDK_POST_COMPLETE_LINGER_MS = parseInt(process.env.OMG_SDK_POST_COMPLETE_LINGER_MS || '1200', 10);
 const SDK_OBSERVER_IDLE_AFTER_DONE_MS = parseInt(process.env.OMG_SDK_OBSERVER_IDLE_AFTER_DONE_MS || '45000', 10);
+const SDK_RAW_PASSTHROUGH = true;
 
 const activeRuns = new Set();
 const runtimeStats = new Map();
@@ -1145,7 +1146,15 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
       event: evt,
     });
 
-    if (String((resolved && resolved.sessionId) || '') !== state.sessionId) {
+    await dispatchEvent({
+      type: 'raw',
+      content: JSON.stringify(evt),
+      sessionId: String((resolved && resolved.sessionId) || state.sessionId || ''),
+    });
+
+    if (SDK_RAW_PASSTHROUGH) {
+      state.hasCurrentRunActivity = true;
+      if (idlePending) scheduleIdleFinalize();
       return;
     }
 
