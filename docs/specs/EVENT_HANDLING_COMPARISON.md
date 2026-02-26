@@ -75,13 +75,13 @@ This document compares event handling across:
   - `message` -> `handleMessage`
   - `callback_query` -> `handleCallbackQuery`
   (`src/gateway.js:2325`, `src/gateway.js:2326`)
-- Message handler prioritizes setup flow (`/onboard`, `/init`, onboarding answers), then command routing, then repo-bound handling (`src/gateway-message-handler.js:29`, `src/gateway-message-handler.js:34`, `src/gateway-message-handler.js:39`, `src/gateway-message-handler.js:68`).
-- Callback handler routes by `callback_data` prefix (`connect:*`, `verbose:*`, `interrupt:now`, model-layer prefixes) (`src/gateway-callback-query-handler.js:41`, `src/gateway-callback-query-handler.js:50`, `src/gateway-callback-query-handler.js:69`, `src/gateway-callback-query-handler.js:99`).
+- Message handler prioritizes setup flow (`/onboard`, `/init`, onboarding answers), then command routing, then repo-bound handling (`src/providers/downstream/telegram/gateway-message-handler.js:29`, `src/providers/downstream/telegram/gateway-message-handler.js:34`, `src/providers/downstream/telegram/gateway-message-handler.js:39`, `src/providers/downstream/telegram/gateway-message-handler.js:68`).
+- Callback handler routes by `callback_data` prefix (`connect:*`, `verbose:*`, `interrupt:now`, model-layer prefixes) (`src/providers/downstream/telegram/gateway-callback-query-handler.js:41`, `src/providers/downstream/telegram/gateway-callback-query-handler.js:50`, `src/providers/downstream/telegram/gateway-callback-query-handler.js:69`, `src/providers/downstream/telegram/gateway-callback-query-handler.js:99`).
 
 ### Repo-level command and prompt dispatch
 
-- Repo command handler covers runtime control (`/status`, `/models`, `/session`, `/reset`, `/interrupt`, `/restart`) and prompt enqueue/start (`src/gateway-repo-message-handler.js:47`, `src/gateway-repo-message-handler.js:57`, `src/gateway-repo-message-handler.js:62`, `src/gateway-repo-message-handler.js:76`, `src/gateway-repo-message-handler.js:134`, `src/gateway-repo-message-handler.js:169`).
-- Per-repo dispatch lock serializes commands/prompts, except `/restart` and `/interrupt` which intentionally bypass lock for responsiveness (`src/gateway-message-handler.js:106`, `src/gateway-message-handler.js:111`).
+- Repo command handler covers runtime control (`/status`, `/models`, `/session`, `/reset`, `/interrupt`, `/restart`) and prompt enqueue/start (`src/providers/downstream/telegram/gateway-repo-message-handler.js:47`, `src/providers/downstream/telegram/gateway-repo-message-handler.js:57`, `src/providers/downstream/telegram/gateway-repo-message-handler.js:62`, `src/providers/downstream/telegram/gateway-repo-message-handler.js:76`, `src/providers/downstream/telegram/gateway-repo-message-handler.js:134`, `src/providers/downstream/telegram/gateway-repo-message-handler.js:169`).
+- Per-repo dispatch lock serializes commands/prompts, except `/restart` and `/interrupt` which intentionally bypass lock for responsiveness (`src/providers/downstream/telegram/gateway-message-handler.js:106`, `src/providers/downstream/telegram/gateway-message-handler.js:111`).
 
 ### OpenCode event intake
 
@@ -91,7 +91,7 @@ This document compares event handling across:
 
 ### Session and concurrency contract
 
-- One active run per repo state (`state.running`), FIFO queue for pending prompts (`state.queue`) (`src/gateway-repo-message-handler.js:160`, `src/gateway-repo-message-handler.js:169`).
+- One active run per repo state (`state.running`), FIFO queue for pending prompts (`state.queue`) (`src/providers/downstream/telegram/gateway-repo-message-handler.js:160`, `src/providers/downstream/telegram/gateway-repo-message-handler.js:169`).
 - Session continuity is `(repo, chatId) -> sessionId` via session map and persisted on completion (`src/gateway.js:1856`, `src/gateway.js:2057`).
 
 ## Comparison Summary
@@ -258,11 +258,11 @@ Why: simplifies diagnosis for queue stalls, retries, and no-output fallback path
 The following divergences are required and should remain explicit branches, not unified away:
 
 1. Model-layer bifurcation is mandatory.
-   - Hermux must preserve separate control surfaces for OpenCode core model and oh-my-opencode agent model overrides (`/models` + callback layer branches in `src/gateway.js` and `src/gateway-callback-query-handler.js`).
+- Hermux must preserve separate control surfaces for OpenCode core model and oh-my-opencode agent model overrides (`/models` + callback layer branches in `src/gateway.js` and `src/providers/downstream/telegram/gateway-callback-query-handler.js`).
    - Reason: ultrawork/plugin workflows can require agent-specific model pinning independent of base OpenCode model.
 
 2. Control-command fast path is mandatory.
-   - `/interrupt` and `/restart` must continue bypassing the normal dispatch lock (`src/gateway-message-handler.js:106`).
+- `/interrupt` and `/restart` must continue bypassing the normal dispatch lock (`src/providers/downstream/telegram/gateway-message-handler.js:106`).
    - Reason: ultrawork loops can generate long-running tasks; interruption must preempt queued work.
 
 3. Transport compatibility branch is mandatory.

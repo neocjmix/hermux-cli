@@ -2,6 +2,11 @@
 
 This is the canonical documentation entrypoint.
 
+## Critical Invariant
+
+- Event delivery acceptance is session-first.
+- Run lifecycle state MUST NOT gate acceptance for session-resolved events.
+
 ## Read Order
 
 1. `README.md`

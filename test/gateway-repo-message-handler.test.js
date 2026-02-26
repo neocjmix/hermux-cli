@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { createRepoMessageHandler } = require('../src/gateway-repo-message-handler');
+const { createRepoMessageHandler } = require('../src/providers/downstream/telegram/gateway-repo-message-handler');
 
 function makeDeps(overrides = {}) {
   const sent = [];
@@ -23,6 +23,7 @@ function makeDeps(overrides = {}) {
     getSessionInfo: () => null,
     SESSION_MAP_PATH: '/tmp/session-map.json',
     clearSessionId: () => false,
+    clearSessionDelivery: async () => {},
     handleRestartCommand: async () => {},
     getHelpText: () => 'help',
     sendTelegramFormattingShowcase: async () => {},
@@ -197,8 +198,12 @@ test('repo handler blocks /reset while running', async () => {
 });
 
 test('repo handler emits reset success text when clearSessionId succeeds', async () => {
+  let clearedDelivery = false;
   const { deps, sent } = makeDeps({
     clearSessionId: () => true,
+    clearSessionDelivery: async () => {
+      clearedDelivery = true;
+    },
   });
   const handler = createRepoMessageHandler(deps);
 
@@ -208,6 +213,7 @@ test('repo handler emits reset success text when clearSessionId succeeds', async
   });
 
   assert.match(sent[0].text, /Session reset complete for repo demo/);
+  assert.equal(clearedDelivery, true);
 });
 
 test('repo handler maps /verbose on and /verbose off actions', async () => {

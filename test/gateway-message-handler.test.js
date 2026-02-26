@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { createMessageHandler } = require('../src/gateway-message-handler');
+const { createMessageHandler } = require('../src/providers/downstream/telegram/gateway-message-handler');
 
 function makeHarness(overrides = {}) {
   const calls = {

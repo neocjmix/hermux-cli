@@ -7,15 +7,12 @@ const fsp = require('fs/promises');
 const { pipeline } = require('stream/promises');
 const { spawn, spawnSync } = require('child_process');
 const { createHash } = require('crypto');
-const TelegramBot = require('node-telegram-bot-api');
-const { load, getEnabledRepos, addChatIdToRepo, addOrUpdateRepo, setGlobalBotToken, resetConfig, CONFIG_PATH } = require('./lib/config');
 const {
-  runOpencode,
-  runSessionRevert,
-  runSessionUnrevert,
-  stopAllRuntimeExecutors,
-  getRuntimeStatusForInstance,
-} = require('./lib/runner');
+  selection: providerSelection,
+  resolveUpstreamProvider,
+  resolveDownstreamProvider,
+} = require('./providers');
+const { load, getEnabledRepos, addChatIdToRepo, addOrUpdateRepo, setGlobalBotToken, resetConfig, CONFIG_PATH } = require('./lib/config');
 const { md2html, escapeHtml } = require('./lib/md2html');
 const { getSessionId, setSessionId, clearSessionId, getSessionInfo, clearAllSessions, SESSION_MAP_PATH } = require('./lib/session-map');
 const { makeAuditLogger } = require('./lib/audit-log');
@@ -28,10 +25,26 @@ const {
   sanitizeFinalOutputText,
 } = require('./lib/output-sanitizer');
 const { createSessionEventHandler } = require('./lib/session-event-handler');
-const { createRepoMessageHandler } = require('./gateway-repo-message-handler');
-const { createMessageHandler } = require('./gateway-message-handler');
-const { createCallbackQueryHandler } = require('./gateway-callback-query-handler');
 const { version: HERMUX_VERSION } = require('../package.json');
+
+const upstreamProvider = resolveUpstreamProvider(providerSelection.upstream);
+const downstreamProvider = resolveDownstreamProvider(providerSelection.downstream);
+
+const {
+  runOpencode,
+  subscribeSessionEvents,
+  runSessionRevert,
+  runSessionUnrevert,
+  stopAllRuntimeExecutors,
+  getRuntimeStatusForInstance,
+} = upstreamProvider;
+
+const {
+  TelegramBot,
+  createRepoMessageHandler,
+  createMessageHandler,
+  createCallbackQueryHandler,
+} = downstreamProvider;
 
 const TG_MAX_LEN = 4000;
 const IMAGE_UPLOAD_DIR = '.opencode_mobile_gateway/uploads';
@@ -2588,6 +2601,19 @@ async function handleRestartCommand(bot, chatId, repo, state) {
   });
 }
 
+async function clearSessionDelivery(state, chatId) {
+  if (!state || !state.sessionDelivery) return;
+  const current = state.sessionDelivery;
+  if (chatId && String(current.chatId || '') !== String(chatId)) return;
+  state.sessionDelivery = null;
+  if (typeof current.unsubscribe === 'function') {
+    try {
+      await current.unsubscribe();
+    } catch (_err) {
+    }
+  }
+}
+
 async function startPromptRun(bot, repo, state, runItem) {
   const chatId = runItem.chatId;
   const promptText = runItem.promptText;
@@ -2773,6 +2799,48 @@ async function startPromptRun(bot, repo, state, runItem) {
     sendRawTelegram,
   });
 
+  let sessionDeliveryMode = 'command';
+  const ensureSessionDelivery = async (candidateSessionId) => {
+    const sid = String(candidateSessionId || '').trim();
+    if (!sid || !RAW_EVENT_PASSTHROUGH) return;
+    const current = state.sessionDelivery || null;
+    if (current && String(current.chatId || '') === String(chatId) && String(current.sessionId || '') === sid) {
+      sessionDeliveryMode = String(current.mode || 'command');
+      return;
+    }
+
+    await clearSessionDelivery(state);
+
+    const sub = await subscribeSessionEvents(repo, sid, {
+      onEvent: async (evt) => {
+        const routedResult = await handleSessionEvent({
+          event: evt,
+          activeSessionId,
+        });
+        if (routedResult.nextSessionId && routedResult.nextSessionId !== activeSessionId) {
+          activeSessionId = routedResult.nextSessionId;
+          await ensureSessionDelivery(activeSessionId);
+        }
+      },
+    });
+    sessionDeliveryMode = String(sub.mode || 'command');
+    state.sessionDelivery = {
+      chatId: String(chatId),
+      sessionId: sid,
+      mode: sessionDeliveryMode,
+      unsubscribe: typeof sub.unsubscribe === 'function' ? sub.unsubscribe : async () => {},
+    };
+    auditRun('run.session_delivery.attached', {
+      sessionId: sid,
+      mode: sessionDeliveryMode,
+      chatId: String(chatId),
+    });
+  };
+
+  if (activeSessionId) {
+    await ensureSessionDelivery(activeSessionId);
+  }
+
   const proc = runOpencode(repo, promptText, {
     sessionId: activeSessionId,
     onEvent: async (evt) => {
@@ -2789,12 +2857,19 @@ async function startPromptRun(bot, repo, state, runItem) {
       });
 
       if (RAW_EVENT_PASSTHROUGH) {
-        const routedResult = await handleSessionEvent({
-          event: evt,
-          activeSessionId,
-        });
-        if (routedResult.nextSessionId) {
-          activeSessionId = routedResult.nextSessionId;
+        if (evt.sessionId && String(evt.sessionId).trim() && String(evt.sessionId).trim() !== activeSessionId) {
+          activeSessionId = String(evt.sessionId).trim();
+          await ensureSessionDelivery(activeSessionId);
+        }
+        if (sessionDeliveryMode !== 'sdk') {
+          const routedResult = await handleSessionEvent({
+            event: evt,
+            activeSessionId,
+          });
+          if (routedResult.nextSessionId && routedResult.nextSessionId !== activeSessionId) {
+            activeSessionId = routedResult.nextSessionId;
+            await ensureSessionDelivery(activeSessionId);
+          }
         }
         return;
       }
@@ -2816,6 +2891,9 @@ async function startPromptRun(bot, repo, state, runItem) {
       state.currentProc = null;
       state.panelRefresh = null;
       if (meta && meta.sessionId) activeSessionId = meta.sessionId;
+      if (activeSessionId) {
+        await ensureSessionDelivery(activeSessionId);
+      }
       if (activeSessionId) {
         try {
           setSessionId(repo.name, chatId, activeSessionId);
@@ -2877,6 +2955,7 @@ const handleRepoMessage = createRepoMessageHandler({
   getSessionInfo,
   SESSION_MAP_PATH,
   clearSessionId,
+  clearSessionDelivery,
   handleRestartCommand,
   getHelpText,
   sendTelegramFormattingShowcase,
@@ -2921,6 +3000,7 @@ function main() {
     waitingInfo: null,
     queue: [],
     panelRefresh: null,
+    sessionDelivery: null,
     dispatchQueue: Promise.resolve(),
   }]));
   const onboardingSessions = new Map();

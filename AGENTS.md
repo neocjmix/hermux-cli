@@ -16,6 +16,12 @@ This file defines the always-read documentation entrypoint for agents working in
 - System structure and boundaries: `docs/ARCHITECTURE.md`
 - Development workflow and commands: `docs/DEVELOPER_GUIDE.md`
 
+## Critical Invariant (Top Priority)
+
+- Event delivery acceptance is session-first.
+- Run lifecycle state is never a routing acceptance condition for session-resolved events.
+- If code conflicts with this invariant, update code and tests to restore session-first behavior.
+
 If documentation conflicts with code, code is the factual source. Update docs in the same task.
 
 ## Required Change Loop

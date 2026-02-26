@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { createCallbackQueryHandler } = require('../src/gateway-callback-query-handler');
+const { createCallbackQueryHandler } = require('../src/providers/downstream/telegram/gateway-callback-query-handler');
 
 function makeHarness(overrides = {}) {
   const safeSendCalls = [];

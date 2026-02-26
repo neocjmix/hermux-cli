@@ -16,6 +16,11 @@ hermux start
 - One active execution per repo context (`running` lock per repo).
 - Persistent repo-scoped runtime session continuity via SDK session IDs.
 
+Critical invariant:
+
+- Event delivery/routing acceptance is session-identity-first.
+- Run lifecycle (`idle`, `completed`, no active run) MUST NOT be an acceptance gate for session-resolved events.
+
 ## User Command Surface
 
 - Setup/routing: `/onboard`, `/onboard cancel`, `/repos`, `/connect <repo>`, `/whereami`, `/help`
