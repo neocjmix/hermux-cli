@@ -62,6 +62,24 @@ function pickLatestAssistantMessage(renderState, options) {
   return null;
 }
 
+function collectAssistantMessages(renderState, options) {
+  const messages = renderState.messages && renderState.messages.byId ? renderState.messages.byId : {};
+  const minMessageTimeMs = Number(options && options.minMessageTimeMs ? options.minMessageTimeMs : 0) || 0;
+  const order = Array.isArray(renderState.messages && renderState.messages.order)
+    ? renderState.messages.order
+    : Object.keys(messages);
+  const out = [];
+  for (let i = 0; i < order.length; i += 1) {
+    const message = messages[order[i]];
+    if (!message || message.role !== 'assistant') continue;
+    if (messageTimeMs(message) < minMessageTimeMs) continue;
+    const text = toText(message.renderText).trim();
+    if (!text) continue;
+    out.push(message);
+  }
+  return out;
+}
+
 function buildRunViewFromRenderState(renderState, splitByLimit, maxLen, options) {
   if (!renderState || typeof renderState !== 'object') return [];
   if (typeof splitByLimit !== 'function') return [];
@@ -69,22 +87,28 @@ function buildRunViewFromRenderState(renderState, splitByLimit, maxLen, options)
   const out = [];
   out.push(formatStatusPane(renderState, safeMaxLen, options));
 
-  const message = pickLatestAssistantMessage(renderState, options);
-  if (!message) return out;
-  const parts = message.parts && message.parts.byId ? message.parts.byId : {};
-  const partOrder = Array.isArray(message.parts && message.parts.order)
-    ? message.parts.order
-    : Object.keys(parts);
-  for (const partId of partOrder) {
-    const part = parts[partId];
-    if (!part || part.type !== 'text') continue;
-    const text = toText(part.text);
+  const messages = collectAssistantMessages(renderState, options);
+  if (messages.length === 0) {
+    const latestOnly = pickLatestAssistantMessage(renderState, options);
+    if (!latestOnly) return out;
+    const text = toText(latestOnly.renderText).trim();
+    if (!text) return out;
+    const chunks = splitByLimit(text, safeMaxLen);
+    for (let i = 0; i < chunks.length; i++) {
+      out.push(clamp(chunks[i], safeMaxLen));
+    }
+    return out;
+  }
+
+  for (let m = 0; m < messages.length; m += 1) {
+    const text = toText(messages[m].renderText).trim();
     if (!text) continue;
     const chunks = splitByLimit(text, safeMaxLen);
     for (let i = 0; i < chunks.length; i++) {
       out.push(clamp(chunks[i], safeMaxLen));
     }
   }
+
   return out;
 }
 

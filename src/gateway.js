@@ -2663,11 +2663,15 @@ function clearRunRenderStateAtRunStart(state, sessionId) {
   if (!(state.sessionRenderStates instanceof Map)) {
     state.sessionRenderStates = new Map();
   }
+  if (!(state.sessionProjectedTexts instanceof Map)) {
+    state.sessionProjectedTexts = new Map();
+  }
 
   const sid = String(sessionId || '').trim();
   if (!sid) return;
 
   state.sessionRenderStates.delete(sid);
+  state.sessionProjectedTexts.delete(sid);
 
   const latest = state.latestSessionRenderState;
   const latestSid = String(
@@ -2813,6 +2817,13 @@ async function startPromptRun(bot, repo, state, runItem) {
     repo: repo.name,
     chatId: String(chatId),
   };
+  const isCurrentRunOwner = () => {
+    const currentContext = state.currentRunContext && typeof state.currentRunContext === 'object'
+      ? state.currentRunContext
+      : null;
+    return !!(currentContext && String(currentContext.runId || '').trim() === String(runId));
+  };
+  const getActiveSessionOwner = () => String(state.activeSessionId || activeSessionId || '').trim();
   const runMetrics = {
     upstreamEventCount: 0,
     upstreamFirstEventAtMs: null,
@@ -3078,8 +3089,19 @@ async function startPromptRun(bot, repo, state, runItem) {
         return batch;
       },
       handler: async (payloadBatch) => {
+        if (!isCurrentRunOwner()) {
+          auditRun('run.session_event.apply.skip', {
+            sid: key,
+            reason: 'stale_run_owner',
+            ownerRunId: String((state.currentRunContext && state.currentRunContext.runId) || ''),
+          });
+          return;
+        }
         if (!(state.sessionRenderStates instanceof Map)) {
           state.sessionRenderStates = new Map();
+        }
+        if (!(state.sessionProjectedTexts instanceof Map)) {
+          state.sessionProjectedTexts = new Map();
         }
         const payloads = Array.isArray(payloadBatch) ? payloadBatch : [payloadBatch];
         let snapshotState = state.sessionRenderStates.get(key) || createRunViewSnapshotState(key);
@@ -3126,9 +3148,30 @@ async function startPromptRun(bot, repo, state, runItem) {
           batchSize: payloads.length,
           highestPriority: payloads.reduce((acc, item) => Math.max(acc, payloadThrottleRank(item)), 0),
         });
+        const ownerSessionId = getActiveSessionOwner();
+        if (!ownerSessionId || ownerSessionId !== key) {
+          auditRun('run.session_event.apply.skip', {
+            sid: key,
+            ownerSessionId,
+            reason: ownerSessionId ? 'stale_session_owner' : 'missing_active_session_owner',
+            batchSize: payloads.length,
+          });
+          return;
+        }
         const snapshot = snapshotState && snapshotState.snapshot ? snapshotState.snapshot : null;
+        const snapshotMessages = snapshot && Array.isArray(snapshot.messages) ? snapshot.messages : [];
+        const previousProjected = state.sessionProjectedTexts.get(key) || [];
+        if (areTextArraysEqual(previousProjected, snapshotMessages)) {
+          auditRun('run.session_event.apply.skip', {
+            sid: key,
+            reason: 'snapshot_not_changed',
+            batchSize: payloads.length,
+          });
+          return;
+        }
+        state.sessionProjectedTexts.set(key, snapshotMessages.slice());
         await reconcileRunView(
-          snapshot && Array.isArray(snapshot.messages) ? snapshot.messages : [],
+          snapshotMessages,
           { isFinalState: false }
         );
       },
@@ -3138,6 +3181,15 @@ async function startPromptRun(bot, repo, state, runItem) {
   };
 
   const onDeliverSessionEvent = async ({ payload, sessionId }) => {
+    if (!isCurrentRunOwner()) {
+      auditRun('run.session_event.skip', {
+        reason: 'stale_run_owner',
+        sid: String(sessionId || ''),
+        activeSessionId: getActiveSessionOwner(),
+        ownerRunId: String((state.currentRunContext && state.currentRunContext.runId) || ''),
+      });
+      return;
+    }
     const sid = String(sessionId || state.activeSessionId || activeSessionId || '').trim();
     if (!sid) {
       auditRun('run.session_event.skip', {
@@ -3160,7 +3212,12 @@ async function startPromptRun(bot, repo, state, runItem) {
     const sid = String(candidateSessionId || '').trim();
     if (!sid || !RAW_EVENT_PASSTHROUGH) return;
     const current = state.sessionDelivery || null;
-    if (current && String(current.chatId || '') === String(chatId) && String(current.sessionId || '') === sid) {
+    if (
+      current
+      && String(current.chatId || '') === String(chatId)
+      && String(current.sessionId || '') === sid
+      && String(current.ownerRunId || '') === String(runId)
+    ) {
       sessionDeliveryMode = String(current.mode || 'command');
       auditRun('run.session_delivery.reused', {
         sessionId: sid,
@@ -3174,6 +3231,14 @@ async function startPromptRun(bot, repo, state, runItem) {
 
     const sub = await subscribeSessionEvents(repo, sid, {
       onEvent: async (evt) => {
+        if (!isCurrentRunOwner()) {
+          auditRun('run.session_event.skip', {
+            reason: 'stale_run_owner',
+            activeSessionId: getActiveSessionOwner(),
+            eventSessionId: String((evt && evt.sessionId) || ''),
+          });
+          return;
+        }
         const routedResult = await handleSessionEvent({
           event: evt,
           activeSessionId: String(state.activeSessionId || activeSessionId || ''),
@@ -3196,6 +3261,7 @@ async function startPromptRun(bot, repo, state, runItem) {
     state.sessionDelivery = {
       chatId: String(chatId),
       sessionId: sid,
+      ownerRunId: String(runId),
       mode: sessionDeliveryMode,
       unsubscribe: typeof sub.unsubscribe === 'function' ? sub.unsubscribe : async () => {},
     };
@@ -3213,6 +3279,14 @@ async function startPromptRun(bot, repo, state, runItem) {
   const proc = runOpencode(repo, promptText, {
     sessionId: activeSessionId,
     onEvent: async (evt) => {
+      if (!isCurrentRunOwner()) {
+        auditRun('run.event_ignored', {
+          reason: 'stale_run_owner',
+          eventSessionId: evt && evt.sessionId ? String(evt.sessionId) : null,
+          ownerRunId: String((state.currentRunContext && state.currentRunContext.runId) || ''),
+        });
+        return;
+      }
       eventOrdinal += 1;
       auditRun('run.event_received', {
         eventOrdinal,
@@ -3266,6 +3340,14 @@ async function startPromptRun(bot, repo, state, runItem) {
     },
 
     onDone: async (exitCode, timeoutMsg, meta) => {
+      if (!isCurrentRunOwner()) {
+        auditRun('run.completion.skip', {
+          reason: 'stale_run_owner',
+          exitCode,
+          timeout: timeoutMsg || null,
+        });
+        return;
+      }
       if (completionHandled) return;
       completionHandled = true;
       auditRun('run.completion.begin', {
@@ -3354,6 +3436,13 @@ async function startPromptRun(bot, repo, state, runItem) {
     },
 
     onError: async (err) => {
+      if (!isCurrentRunOwner()) {
+        auditRun('run.error.skip', {
+          reason: 'stale_run_owner',
+          message: String(err && err.message ? err.message : err || ''),
+        });
+        return;
+      }
       if (completionHandled) return;
       completionHandled = true;
       state.running = false;
@@ -3442,6 +3531,7 @@ function main() {
     activeSessionId: '',
     currentRunContext: null,
     runView: null,
+    sessionProjectedTexts: new Map(),
     dispatchQueue: Promise.resolve(),
   }]));
   const onboardingSessions = new Map();

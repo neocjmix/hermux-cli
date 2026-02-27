@@ -1509,3 +1509,109 @@ test('gateway e2e should reproduce missing second response when assistant text l
     restoreFile(config.CONFIG_PATH, cfgSnapshot);
   }
 });
+
+test('gateway e2e should surface new in-progress assistant text before completion event', async () => {
+  const cfgSnapshot = backupFile(config.CONFIG_PATH);
+  const token = 'test-token';
+  const telegram = createTelegramMockServer();
+  const started = await telegram.start(0);
+  const fixturePath = path.resolve(__dirname, 'fixtures', 'fake-opencode-sdk-inprogress-newer-message.js');
+
+  config.save({
+    global: { telegramBotToken: token },
+    repos: [{
+      name: 'demo',
+      enabled: true,
+      workdir: '/tmp/demo',
+      chatIds: ['100'],
+      opencodeCommand: 'opencode sdk',
+      logFile: './logs/demo.log',
+    }],
+  });
+
+  const runtime = startGateway({
+    OMG_TELEGRAM_BASE_API_URL: started.baseApiUrl,
+    OMG_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
+    OMG_OPENCODE_SDK_SHIM: fixturePath,
+  });
+
+  let stopped = false;
+  try {
+    await waitForBootstrapAndClearRequests(started.controlUrl);
+
+    await httpJson({
+      method: 'POST',
+      url: `${started.controlUrl}/updates`,
+      body: {
+        token,
+        update: {
+          update_id: 71,
+          message: {
+            message_id: 71,
+            date: Math.floor(Date.now() / 1000),
+            text: 'inprogress-marker-test',
+            chat: { id: 100, type: 'private' },
+            from: { id: 200, is_bot: false, first_name: 'Tester' },
+          },
+        },
+      },
+    });
+
+    const auditPath = path.join(runtime.runtimeDir, 'audit-events.jsonl');
+    const records = await waitFor(() => {
+      const rows = readJsonlRecords(auditPath);
+      const hasCompletionEvent = rows.some((r) => {
+        if (r.kind !== 'run.event_received') return false;
+        const content = String((r.payload && r.payload.content) || '');
+        return content.includes('"type":"message.updated"')
+          && content.includes('"id":"msg-new-inprogress"')
+          && content.includes('"completed"');
+      });
+      const hasRunViewMarker = rows.some((r) => (
+        (r.kind === 'telegram.send' || r.kind === 'telegram.edit')
+        && r.payload
+        && r.payload.meta
+        && (r.payload.meta.channel === 'run_view_send' || r.payload.meta.channel === 'run_view_edit')
+        && String(r.payload.textPreview || '').includes('new-live-marker')
+      ));
+      return hasCompletionEvent && hasRunViewMarker ? rows : null;
+    }, { timeoutMs: 30000, stepMs: 120 });
+
+    const runStart = records.find((r) => r.kind === 'run.start');
+    assert.ok(runStart);
+    const runId = String(runStart && runStart.payload && runStart.payload.runId || '');
+    assert.ok(runId);
+
+    const completionIdx = records.findIndex((r) => {
+      if (r.kind !== 'run.event_received') return false;
+      const payloadRunId = String((r.payload && r.payload.runId) || '');
+      if (payloadRunId !== runId) return false;
+      const content = String((r.payload && r.payload.content) || '');
+      return content.includes('"type":"message.updated"')
+        && content.includes('"id":"msg-new-inprogress"')
+        && content.includes('"completed"');
+    });
+
+    const runViewMarkerIdx = records.findIndex((r) => {
+      if (!(r.kind === 'telegram.send' || r.kind === 'telegram.edit')) return false;
+      const meta = r.payload && r.payload.meta ? r.payload.meta : null;
+      if (!meta) return false;
+      if (String(meta.runId || '') !== runId) return false;
+      if (!(meta.channel === 'run_view_send' || meta.channel === 'run_view_edit')) return false;
+      return String(r.payload && r.payload.textPreview || '').includes('new-live-marker');
+    });
+
+    assert.ok(completionIdx >= 0);
+    assert.ok(runViewMarkerIdx >= 0);
+    assert.ok(runViewMarkerIdx < completionIdx, 'expected run_view update with marker before completion event');
+
+    await stopGateway(runtime, { controlUrl: started.controlUrl, testName: 'inprogress-before-completion', status: 'ok' });
+    stopped = true;
+  } finally {
+    if (!stopped) {
+      await stopGateway(runtime, { controlUrl: started.controlUrl, testName: 'inprogress-before-completion', status: 'teardown' });
+    }
+    await telegram.stop();
+    restoreFile(config.CONFIG_PATH, cfgSnapshot);
+  }
+});

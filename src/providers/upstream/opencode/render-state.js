@@ -87,6 +87,8 @@ function ensureMessage(state, messageId) {
       parts: { order: [], byId: {} },
       renderText: '',
       renderReasoningEncrypted: null,
+      lastEventSeq: 0,
+      lastTextSeq: 0,
     };
   }
   return state.messages.byId[mid];
@@ -132,24 +134,46 @@ function updateMessageRender(message) {
 }
 
 function updateGlobalRender(state) {
+  const isBetterMessage = (candidate, best, candidateIndex, bestIndex) => {
+    const candidateHasText = String(candidate && candidate.renderText || '').trim().length > 0 ? 1 : 0;
+    const bestHasText = String(best && best.renderText || '').trim().length > 0 ? 1 : 0;
+    if (candidateHasText !== bestHasText) return candidateHasText > bestHasText;
+
+    const candidateTextSeq = Number(candidate && candidate.lastTextSeq ? candidate.lastTextSeq : 0);
+    const bestTextSeq = Number(best && best.lastTextSeq ? best.lastTextSeq : 0);
+    if (candidateTextSeq !== bestTextSeq) return candidateTextSeq > bestTextSeq;
+
+    const candidateEventSeq = Number(candidate && candidate.lastEventSeq ? candidate.lastEventSeq : 0);
+    const bestEventSeq = Number(best && best.lastEventSeq ? best.lastEventSeq : 0);
+    if (candidateEventSeq !== bestEventSeq) return candidateEventSeq > bestEventSeq;
+
+    const candidateCompleted = Number(candidate && candidate.time && candidate.time.completed ? candidate.time.completed : 0);
+    const bestCompleted = Number(best && best.time && best.time.completed ? best.time.completed : 0);
+    const candidateCreated = Number(candidate && candidate.time && candidate.time.created ? candidate.time.created : 0);
+    const bestCreated = Number(best && best.time && best.time.created ? best.time.created : 0);
+    const candidateActivityTime = Math.max(candidateCreated, candidateCompleted, 0);
+    const bestActivityTime = Math.max(bestCreated, bestCompleted, 0);
+    if (candidateActivityTime !== bestActivityTime) return candidateActivityTime > bestActivityTime;
+    if (candidateCompleted !== bestCompleted) return candidateCompleted > bestCompleted;
+    if (candidateCreated !== bestCreated) return candidateCreated > bestCreated;
+
+    return candidateIndex > bestIndex;
+  };
+
   let best = null;
-  for (const mid of state.messages.order) {
+  let bestIndex = -1;
+  for (let i = 0; i < state.messages.order.length; i += 1) {
+    const mid = state.messages.order[i];
     const msg = state.messages.byId[mid];
     if (!msg || msg.role !== 'assistant') continue;
     if (!best) {
       best = msg;
+      bestIndex = i;
       continue;
     }
-    const bestCompleted = Number(best.time && best.time.completed ? best.time.completed : 0);
-    const currCompleted = Number(msg.time && msg.time.completed ? msg.time.completed : 0);
-    if (currCompleted > bestCompleted) {
+    if (isBetterMessage(msg, best, i, bestIndex)) {
       best = msg;
-      continue;
-    }
-    if (currCompleted === bestCompleted) {
-      const bestCreated = Number(best.time && best.time.created ? best.time.created : 0);
-      const currCreated = Number(msg.time && msg.time.created ? msg.time.created : 0);
-      if (currCreated > bestCreated) best = msg;
+      bestIndex = i;
     }
   }
 
@@ -158,7 +182,7 @@ function updateGlobalRender(state) {
   state.render.busy = state.session.status === 'busy';
 }
 
-function mergeMessageUpdated(state, event) {
+function mergeMessageUpdated(state, event, seq) {
   const info = event && event.properties && event.properties.info;
   if (!info) return;
   const message = ensureMessage(state, info.id);
@@ -196,10 +220,15 @@ function mergeMessageUpdated(state, event) {
   if (Object.prototype.hasOwnProperty.call(info, 'finish')) message.finish = info.finish;
   if (info.summary && typeof info.summary === 'object') message.summary = deepMerge(message.summary, info.summary);
 
+  const eventSeq = Number(seq || 0) || 0;
+  if (eventSeq > 0) {
+    message.lastEventSeq = Math.max(Number(message.lastEventSeq || 0), eventSeq);
+  }
+
   updateMessageRender(message);
 }
 
-function mergePartUpdated(state, event) {
+function mergePartUpdated(state, event, seq) {
   const part = event && event.properties && event.properties.part;
   if (!part) return;
   const message = ensureMessage(state, part.messageID);
@@ -225,10 +254,18 @@ function mergePartUpdated(state, event) {
     message.cost = entry.cost;
   }
 
+  const eventSeq = Number(seq || 0) || 0;
+  if (eventSeq > 0) {
+    message.lastEventSeq = Math.max(Number(message.lastEventSeq || 0), eventSeq);
+    if (entry.type === 'text' && Object.prototype.hasOwnProperty.call(part, 'text')) {
+      message.lastTextSeq = Math.max(Number(message.lastTextSeq || 0), eventSeq);
+    }
+  }
+
   updateMessageRender(message);
 }
 
-function mergePartDelta(state, event) {
+function mergePartDelta(state, event, seq) {
   const props = event && event.properties;
   if (!props) return;
   const field = toText(props.field).trim();
@@ -240,9 +277,18 @@ function mergePartDelta(state, event) {
   if (field === 'text') {
     entry.type = entry.type || 'text';
     entry.text = `${toText(entry.text)}${toText(props.delta)}`;
+    const textSeq = Number(seq || 0) || 0;
+    if (textSeq > 0) {
+      message.lastTextSeq = Math.max(Number(message.lastTextSeq || 0), textSeq);
+    }
   } else if (field) {
     const prev = toText(entry[field]);
     entry[field] = `${prev}${toText(props.delta)}`;
+  }
+
+  const eventSeq = Number(seq || 0) || 0;
+  if (eventSeq > 0) {
+    message.lastEventSeq = Math.max(Number(message.lastEventSeq || 0), eventSeq);
   }
 
   updateMessageRender(message);
@@ -291,9 +337,9 @@ function applyEvent(renderState, event, seq) {
   }
 
   const kind = toText(evt.type).trim();
-  if (kind === 'message.updated') mergeMessageUpdated(state, evt);
-  else if (kind === 'message.part.updated') mergePartUpdated(state, evt);
-  else if (kind === 'message.part.delta') mergePartDelta(state, evt);
+  if (kind === 'message.updated') mergeMessageUpdated(state, evt, seq);
+  else if (kind === 'message.part.updated') mergePartUpdated(state, evt, seq);
+  else if (kind === 'message.part.delta') mergePartDelta(state, evt, seq);
   else if (kind === 'session.updated') mergeSessionUpdated(state, evt);
   else if (kind === 'session.status') mergeSessionStatus(state, evt);
   else if (kind === 'session.idle') mergeSessionIdle(state, evt);

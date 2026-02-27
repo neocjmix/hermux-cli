@@ -74,7 +74,7 @@ test('opencode view builder emits status pane first and assistant text after', (
   assert.equal(view[1], 'hello');
 });
 
-test('opencode view builder only includes latest assistant message text', () => {
+test('opencode view builder includes all assistant messages in order', () => {
   let state = createRenderState('ses-a');
 
   state = applyEvent(state, {
@@ -153,7 +153,7 @@ test('opencode view builder only includes latest assistant message text', () => 
   }, 6);
 
   const view = buildRunViewFromRenderState(state, splitByLimit, 4000);
-  assert.equal(view[1], 'latest answer');
-  assert.equal(view.includes('old answer'), false);
+  assert.equal(view[1], 'old answer');
+  assert.equal(view[2], 'latest answer');
   assert.equal(view.includes('user prompt'), false);
 });
