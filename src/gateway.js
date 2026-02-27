@@ -64,6 +64,7 @@ const REVERT_TARGET_LIMIT_PER_CHAT = 240;
 const OPENCODE_CONFIG_PATH = process.env.OMG_OPENCODE_CONFIG_PATH || path.join(process.env.HOME || '', '.config', 'opencode', 'opencode.json');
 const OMO_CONFIG_PATH = process.env.OMG_OMO_CONFIG_PATH || path.join(process.env.HOME || '', '.config', 'opencode', 'oh-my-opencode.json');
 const AUDIT_STRING_MAX = parseInt(process.env.OMG_AUDIT_STRING_MAX || '16000', 10);
+const APPLY_PAYLOAD_THROTTLE_MS = parseInt(process.env.OMG_APPLY_PAYLOAD_THROTTLE_MS || '1000', 10);
 const auditLogger = makeAuditLogger(RUNTIME_DIR);
 let connectMutationQueue = Promise.resolve();
 let restartMutationQueue = Promise.resolve();
@@ -2658,6 +2659,94 @@ async function clearSessionDelivery(state, chatId) {
   }
 }
 
+function clearRunRenderStateAtRunStart(state, sessionId) {
+  if (!state || typeof state !== 'object') return;
+  if (!(state.sessionRenderStates instanceof Map)) {
+    state.sessionRenderStates = new Map();
+  }
+
+  const sid = String(sessionId || '').trim();
+  if (!sid) return;
+
+  state.sessionRenderStates.delete(sid);
+
+  const latest = state.latestSessionRenderState;
+  const latestSid = String(latest && latest.sessionId ? latest.sessionId : '').trim();
+  if (latestSid === sid) {
+    state.latestSessionRenderState = null;
+  }
+}
+
+function createTrailingThrottleProcessor({ intervalMs, handler, selectPending }) {
+  const waitMs = Number(intervalMs || 0);
+  if (typeof handler !== 'function') throw new Error('handler is required');
+
+  let timer = null;
+  let inFlight = false;
+  let hasPending = false;
+  let pendingValue;
+  let lastStartAt = 0;
+
+  const schedule = (ms, invoke) => {
+    if (timer) return;
+    timer = setTimeout(() => {
+      timer = null;
+      if (!hasPending) return;
+      const value = pendingValue;
+      hasPending = false;
+      pendingValue = undefined;
+      void invoke(value);
+    }, Math.max(1, Number(ms || 0)));
+  };
+
+  const invoke = async (value) => {
+    inFlight = true;
+    lastStartAt = Date.now();
+    try {
+      await Promise.resolve(handler(value));
+    } finally {
+      inFlight = false;
+      if (hasPending && waitMs > 0) {
+        const now = Date.now();
+        const nextAllowedAt = lastStartAt + waitMs;
+        const delay = Math.max(0, nextAllowedAt - now);
+        if (delay <= 0) {
+          const nextValue = pendingValue;
+          hasPending = false;
+          pendingValue = undefined;
+          void invoke(nextValue);
+          return;
+        }
+        schedule(delay, invoke);
+      }
+    }
+  };
+
+  return async function enqueue(value) {
+    if (waitMs <= 0) {
+      await invoke(value);
+      return;
+    }
+
+    const now = Date.now();
+    const elapsed = lastStartAt > 0 ? now - lastStartAt : Number.MAX_SAFE_INTEGER;
+    const canLead = !inFlight && !timer && elapsed >= waitMs;
+    if (canLead) {
+      await invoke(value);
+      return;
+    }
+
+    hasPending = true;
+    pendingValue = typeof selectPending === 'function'
+      ? selectPending(pendingValue, value)
+      : value;
+    if (inFlight) return;
+    if (timer) return;
+    const delay = lastStartAt > 0 ? (waitMs - elapsed) : waitMs;
+    schedule(delay, invoke);
+  };
+}
+
 async function startPromptRun(bot, repo, state, runItem) {
   const chatId = runItem.chatId;
   const promptText = runItem.promptText;
@@ -2677,6 +2766,8 @@ async function startPromptRun(bot, repo, state, runItem) {
   const rawSamples = [];
   let lastStepReason = null;
   let activeSessionId = getSessionId(repo.name, chatId);
+  state.activeSessionId = activeSessionId;
+  clearRunRenderStateAtRunStart(state, activeSessionId);
   const hermuxVersion = String(HERMUX_VERSION || '').trim() || '0.0.0';
   let lastPanelHeartbeatAt = 0;
   let lastStreamSnapshot = '';
@@ -2700,8 +2791,16 @@ async function startPromptRun(bot, repo, state, runItem) {
   let eventOrdinal = 0;
   const runStartedAt = Date.now();
   const runId = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+  const runStartedAtMs = Date.now();
+  state.currentRunContext = {
+    runId,
+    chatId: String(chatId),
+    startedAtMs: runStartedAtMs,
+    sessionId: String(activeSessionId || '').trim(),
+  };
   state.runView = {
     runId,
+    chatId: String(chatId),
     messageIds: [],
     texts: [],
   };
@@ -2709,6 +2808,19 @@ async function startPromptRun(bot, repo, state, runItem) {
     runId,
     repo: repo.name,
     chatId: String(chatId),
+  };
+  const runMetrics = {
+    upstreamEventCount: 0,
+    upstreamFirstEventAtMs: null,
+    upstreamLastEventAtMs: null,
+    downstreamApplyRequested: 0,
+    downstreamApplyExecuted: 0,
+    downstreamFirstApplyAtMs: null,
+    downstreamLastApplyAtMs: null,
+    downstreamCommandCount: 0,
+    downstreamSendCount: 0,
+    downstreamEditCount: 0,
+    downstreamDeleteCount: 0,
   };
 
   const auditRun = (kind, payload) => {
@@ -2835,41 +2947,199 @@ async function startPromptRun(bot, repo, state, runItem) {
   const sendRawTelegram = async () => {};
 
   let renderSeq = Number(state.sessionRenderSeq || 0) || 0;
-  const reconcileRunView = async (nextTexts, options) => {
-    if (!state.runView || state.runView.runId !== runId) return;
+  const applyRunViewSnapshot = async (nextTexts, options) => {
+    if (!state.runView) {
+      auditRun('run.view.skip', {
+        reason: 'missing_run_view_state',
+        isFinalState: !!(options && options.isFinalState),
+        expectedRunId: runId,
+      });
+      return;
+    }
     const isFinalState = !!(options && options.isFinalState);
     const view = state.runView;
+    const targetRunId = String(view.runId || runId);
+    const targetChatId = String(view.chatId || chatId);
+    const currentContext = state.currentRunContext && typeof state.currentRunContext === 'object'
+      ? state.currentRunContext
+      : null;
+    const targetAuditMeta = {
+      ...runAuditMeta,
+      runId: targetRunId,
+      chatId: targetChatId,
+    };
+    const safeNextTexts = Array.isArray(nextTexts) ? nextTexts : [];
+    runMetrics.downstreamApplyExecuted += 1;
+    const applyStartAtMs = Date.now() - runStartedAt;
+    if (runMetrics.downstreamFirstApplyAtMs === null) {
+      runMetrics.downstreamFirstApplyAtMs = applyStartAtMs;
+    }
+    auditRun('run.view.apply.begin', {
+      isFinalState,
+      expectedRunId: targetRunId,
+      currentRunId: view.runId,
+      currentTextCount: Array.isArray(view.texts) ? view.texts.length : 0,
+      nextTextCount: safeNextTexts.length,
+      nextPreview: safeNextTexts.slice(0, 2),
+    });
     const nextView = await reconcileRunViewForTelegram({
       bot,
-      chatId,
-      runAuditMeta,
+      chatId: targetChatId,
+      runAuditMeta: targetAuditMeta,
       currentView: {
         texts: Array.isArray(view.texts) ? view.texts : [],
         messageIds: Array.isArray(view.messageIds) ? view.messageIds : [],
       },
-      nextTexts: Array.isArray(nextTexts) ? nextTexts : [],
+      nextTexts: safeNextTexts,
       isFinalState,
       sendText: safeSend,
       editText: editPlain,
       deleteMessage: safeDeleteMessage,
     });
+    const nextMessageIds = Array.isArray(nextView && nextView.messageIds) ? nextView.messageIds : [];
+    const nextStoredTexts = Array.isArray(nextView && nextView.texts) ? nextView.texts : [];
+    const stats = nextView && nextView.stats ? nextView.stats : null;
+    if (stats) {
+      runMetrics.downstreamCommandCount += Number(stats.commandCount || 0) || 0;
+      runMetrics.downstreamSendCount += Number(stats.sendCount || 0) || 0;
+      runMetrics.downstreamEditCount += Number(stats.editCount || 0) || 0;
+      runMetrics.downstreamDeleteCount += Number(stats.deleteCount || 0) || 0;
+    }
+    const applyEndAtMs = Date.now() - runStartedAt;
+    runMetrics.downstreamLastApplyAtMs = applyEndAtMs;
+    auditRun('run.view.apply.end', {
+      isFinalState,
+      expectedRunId: targetRunId,
+      currentRunId: view.runId,
+      messageIdCount: nextMessageIds.length,
+      textCount: nextStoredTexts.length,
+      messageIds: nextMessageIds.slice(),
+      textPreview: nextStoredTexts.slice(0, 2),
+      contextRunId: currentContext && currentContext.runId ? String(currentContext.runId) : '',
+      commandCount: stats ? Number(stats.commandCount || 0) || 0 : 0,
+      sendCount: stats ? Number(stats.sendCount || 0) || 0 : 0,
+      editCount: stats ? Number(stats.editCount || 0) || 0 : 0,
+      deleteCount: stats ? Number(stats.deleteCount || 0) || 0 : 0,
+    });
     view.messageIds = Array.isArray(nextView && nextView.messageIds) ? nextView.messageIds : [];
     view.texts = Array.isArray(nextView && nextView.texts) ? nextView.texts : [];
   };
 
-  const onDeliverSessionEvent = async ({ payload, sessionId }) => {
-    const sid = String(sessionId || activeSessionId || '').trim();
-    if (!sid) return;
-    if (!(state.sessionRenderStates instanceof Map)) {
-      state.sessionRenderStates = new Map();
+  const areTextArraysEqual = (a, b) => {
+    if (!Array.isArray(a) || !Array.isArray(b)) return false;
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i += 1) {
+      if (String(a[i] || '') !== String(b[i] || '')) return false;
     }
-    renderSeq += 1;
-    state.sessionRenderSeq = renderSeq;
-    const current = state.sessionRenderStates.get(sid) || createRenderState(sid);
-    const next = applyPayload(current, payload, renderSeq);
-    state.sessionRenderStates.set(sid, next);
-    state.latestSessionRenderState = next;
-    await reconcileRunView(buildRunViewFromRenderStateForOpencode(next, splitByLimit, TG_MAX_LEN), { isFinalState: false });
+    return true;
+  };
+  const reconcileRunView = async (nextTexts, options) => {
+    const normalizedNextTexts = Array.isArray(nextTexts) ? nextTexts.slice() : [];
+    const requestedFinalState = !!(options && options.isFinalState);
+    const currentViewTexts = state.runView && Array.isArray(state.runView.texts) ? state.runView.texts : [];
+
+    if (!requestedFinalState && areTextArraysEqual(currentViewTexts, normalizedNextTexts)) {
+      return Promise.resolve();
+    }
+
+    runMetrics.downstreamApplyRequested += 1;
+    return applyRunViewSnapshot(normalizedNextTexts, { isFinalState: requestedFinalState });
+  };
+
+  const sessionApplyProcessors = new Map();
+  const payloadThrottleRank = (payload) => {
+    const raw = String(payload || '').trim();
+    if (!raw) return 0;
+    try {
+      const parsed = JSON.parse(raw);
+      const type = String(parsed && parsed.type ? parsed.type : '');
+      if (type === 'message.part.delta' || type === 'message.part.updated') return 4;
+      if (type === 'message.updated') return 3;
+      if (type === 'session.status' || type === 'session.idle' || type === 'session.diff') return 1;
+      return 2;
+    } catch (_err) {
+      return 2;
+    }
+  };
+  const getSessionApplyProcessor = (sid) => {
+    const key = String(sid || '').trim();
+    if (!key) return null;
+    const current = sessionApplyProcessors.get(key);
+    if (typeof current === 'function') return current;
+    const created = createTrailingThrottleProcessor({
+      intervalMs: APPLY_PAYLOAD_THROTTLE_MS,
+      selectPending: (prev, next) => {
+        const batch = Array.isArray(prev) ? prev.slice() : (typeof prev === 'undefined' ? [] : [prev]);
+        batch.push(next);
+        return batch;
+      },
+      handler: async (payloadBatch) => {
+        if (!(state.sessionRenderStates instanceof Map)) {
+          state.sessionRenderStates = new Map();
+        }
+        const payloads = Array.isArray(payloadBatch) ? payloadBatch : [payloadBatch];
+        let next = state.sessionRenderStates.get(key) || createRenderState(key);
+        auditRun('run.session_event.apply.batch.begin', {
+          sid: key,
+          batchSize: payloads.length,
+        });
+        for (const payload of payloads) {
+          renderSeq += 1;
+          state.sessionRenderSeq = renderSeq;
+          next = applyPayload(next, payload, renderSeq);
+        }
+        state.sessionRenderStates.set(key, next);
+        state.latestSessionRenderState = next;
+        auditRun('run.session_event.apply.begin', {
+          sid: key,
+          renderSeq,
+          hasExistingState: true,
+          payloadType: payloads.length > 1 ? 'batch' : typeof payloads[0],
+        });
+        auditRun('run.session_event.apply.end', {
+          sid: key,
+          renderSeq,
+          messageCount: Array.isArray(next.messages && next.messages.order) ? next.messages.order.length : 0,
+          latestAssistantMessageId: next.render && next.render.latestAssistantMessageId
+            ? next.render.latestAssistantMessageId
+            : '',
+          latestAssistantTextLength: String(next.render && next.render.latestAssistantText || '').length,
+        });
+        auditRun('run.session_event.apply.batch.end', {
+          sid: key,
+          batchSize: payloads.length,
+          highestPriority: payloads.reduce((acc, item) => Math.max(acc, payloadThrottleRank(item)), 0),
+        });
+        const currentContext = state.currentRunContext && typeof state.currentRunContext === 'object'
+          ? state.currentRunContext
+          : null;
+        const runViewRunId = state.runView && state.runView.runId ? String(state.runView.runId) : String(runId);
+        const minMessageTimeMs = Number(currentContext && currentContext.startedAtMs ? currentContext.startedAtMs : 0) || 0;
+        await reconcileRunView(
+          buildRunViewFromRenderStateForOpencode(next, splitByLimit, TG_MAX_LEN, {
+            runId: runViewRunId,
+            minMessageTimeMs,
+          }),
+          { isFinalState: false }
+        );
+      },
+    });
+    sessionApplyProcessors.set(key, created);
+    return created;
+  };
+
+  const onDeliverSessionEvent = async ({ payload, sessionId }) => {
+    const sid = String(sessionId || state.activeSessionId || activeSessionId || '').trim();
+    if (!sid) {
+      auditRun('run.session_event.skip', {
+        reason: 'missing_session_id',
+        activeSessionId: String(activeSessionId || ''),
+      });
+      return;
+    }
+    const processor = getSessionApplyProcessor(sid);
+    if (!processor) return;
+    await processor(payload);
   };
   const handleSessionEvent = createSessionEventHandler({
     sendRawTelegram,
@@ -2883,6 +3153,11 @@ async function startPromptRun(bot, repo, state, runItem) {
     const current = state.sessionDelivery || null;
     if (current && String(current.chatId || '') === String(chatId) && String(current.sessionId || '') === sid) {
       sessionDeliveryMode = String(current.mode || 'command');
+      auditRun('run.session_delivery.reused', {
+        sessionId: sid,
+        mode: sessionDeliveryMode,
+        chatId: String(chatId),
+      });
       return;
     }
 
@@ -2892,10 +3167,18 @@ async function startPromptRun(bot, repo, state, runItem) {
       onEvent: async (evt) => {
         const routedResult = await handleSessionEvent({
           event: evt,
-          activeSessionId,
+          activeSessionId: String(state.activeSessionId || activeSessionId || ''),
         });
+        if (!routedResult.delivered) {
+          auditRun('run.session_event.skip', {
+            reason: routedResult.dropReason || 'router_rejected',
+            activeSessionId: String(state.activeSessionId || activeSessionId || ''),
+            eventSessionId: String((evt && evt.sessionId) || ''),
+          });
+        }
         if (routedResult.nextSessionId && routedResult.nextSessionId !== activeSessionId) {
           activeSessionId = routedResult.nextSessionId;
+          state.activeSessionId = activeSessionId;
           await ensureSessionDelivery(activeSessionId);
         }
       },
@@ -2932,19 +3215,40 @@ async function startPromptRun(bot, repo, state, runItem) {
         contentPreview: summarizeAuditText(evt.content || evt.name || ''),
         ...buildAuditContentMeta(evt.content || ''),
       });
+      runMetrics.upstreamEventCount += 1;
+      const eventAtMs = Date.now() - runStartedAt;
+      if (runMetrics.upstreamFirstEventAtMs === null) {
+        runMetrics.upstreamFirstEventAtMs = eventAtMs;
+      }
+      runMetrics.upstreamLastEventAtMs = eventAtMs;
 
       if (RAW_EVENT_PASSTHROUGH) {
         if (evt.sessionId && String(evt.sessionId).trim() && String(evt.sessionId).trim() !== activeSessionId) {
           activeSessionId = String(evt.sessionId).trim();
+          state.activeSessionId = activeSessionId;
+          if (state.currentRunContext && typeof state.currentRunContext === 'object') {
+            state.currentRunContext.sessionId = activeSessionId;
+          }
           await ensureSessionDelivery(activeSessionId);
         }
         if (sessionDeliveryMode !== 'sdk') {
           const routedResult = await handleSessionEvent({
             event: evt,
-            activeSessionId,
+            activeSessionId: String(state.activeSessionId || activeSessionId || ''),
           });
+          if (!routedResult.delivered) {
+            auditRun('run.session_event.skip', {
+              reason: routedResult.dropReason || 'router_rejected',
+              activeSessionId: String(state.activeSessionId || activeSessionId || ''),
+              eventSessionId: String((evt && evt.sessionId) || ''),
+            });
+          }
           if (routedResult.nextSessionId && routedResult.nextSessionId !== activeSessionId) {
             activeSessionId = routedResult.nextSessionId;
+            state.activeSessionId = activeSessionId;
+            if (state.currentRunContext && typeof state.currentRunContext === 'object') {
+              state.currentRunContext.sessionId = activeSessionId;
+            }
             await ensureSessionDelivery(activeSessionId);
           }
         }
@@ -2968,6 +3272,10 @@ async function startPromptRun(bot, repo, state, runItem) {
       state.currentProc = null;
       state.panelRefresh = null;
       if (meta && meta.sessionId) activeSessionId = meta.sessionId;
+      state.activeSessionId = activeSessionId;
+      if (state.currentRunContext && typeof state.currentRunContext === 'object') {
+        state.currentRunContext.sessionId = String(activeSessionId || '').trim();
+      }
       if (activeSessionId) {
         await ensureSessionDelivery(activeSessionId);
       }
@@ -2985,7 +3293,18 @@ async function startPromptRun(bot, repo, state, runItem) {
           ? state.sessionRenderStates.get(activeSessionId)
           : state.latestSessionRenderState;
         if (finalState) {
-          await reconcileRunView(buildRunViewFromRenderStateForOpencode(finalState, splitByLimit, TG_MAX_LEN), { isFinalState: true });
+          const currentContext = state.currentRunContext && typeof state.currentRunContext === 'object'
+            ? state.currentRunContext
+            : null;
+          const runViewRunId = state.runView && state.runView.runId ? String(state.runView.runId) : String(runId);
+          const minMessageTimeMs = Number(currentContext && currentContext.startedAtMs ? currentContext.startedAtMs : 0) || 0;
+          await reconcileRunView(
+            buildRunViewFromRenderStateForOpencode(finalState, splitByLimit, TG_MAX_LEN, {
+              runId: runViewRunId,
+              minMessageTimeMs,
+            }),
+            { isFinalState: true }
+          );
         }
         auditRun('run.complete', {
           status: timeoutMsg ? 'timeout' : (exitCode === 0 ? 'done' : `exit ${exitCode}`),
@@ -2993,6 +3312,34 @@ async function startPromptRun(bot, repo, state, runItem) {
           timeout: timeoutMsg || null,
           queueRemaining: Array.isArray(state.queue) ? state.queue.length : 0,
           passthrough: true,
+        });
+        const completedAtMs = Date.now() - runStartedAt;
+        const upstreamLastAtMs = runMetrics.upstreamLastEventAtMs;
+        const downstreamLastAtMs = runMetrics.downstreamLastApplyAtMs;
+        auditRun('run.metrics.summary', {
+          runStartedAtMs,
+          runCompletedAtMs: Date.now(),
+          runDurationMs: completedAtMs,
+          upstreamEventCount: runMetrics.upstreamEventCount,
+          upstreamFirstEventAtMs: runMetrics.upstreamFirstEventAtMs,
+          upstreamLastEventAtMs: upstreamLastAtMs,
+          downstreamApplyRequested: runMetrics.downstreamApplyRequested,
+          downstreamApplyExecuted: runMetrics.downstreamApplyExecuted,
+          downstreamFirstApplyAtMs: runMetrics.downstreamFirstApplyAtMs,
+          downstreamLastApplyAtMs: downstreamLastAtMs,
+          downstreamCommandCount: runMetrics.downstreamCommandCount,
+          downstreamSendCount: runMetrics.downstreamSendCount,
+          downstreamEditCount: runMetrics.downstreamEditCount,
+          downstreamDeleteCount: runMetrics.downstreamDeleteCount,
+          upstreamToDownstreamFirstMs: runMetrics.upstreamFirstEventAtMs === null || runMetrics.downstreamFirstApplyAtMs === null
+            ? null
+            : runMetrics.downstreamFirstApplyAtMs - runMetrics.upstreamFirstEventAtMs,
+          upstreamToDownstreamLastMs: upstreamLastAtMs === null || downstreamLastAtMs === null
+            ? null
+            : downstreamLastAtMs - upstreamLastAtMs,
+          downstreamWindowMs: runMetrics.downstreamFirstApplyAtMs === null || downstreamLastAtMs === null
+            ? null
+            : downstreamLastAtMs - runMetrics.downstreamFirstApplyAtMs,
         });
         if (Array.isArray(state.queue) && state.queue.length > 0) {
           const nextItem = state.queue.shift();
@@ -3088,6 +3435,8 @@ function main() {
     sessionRenderStates: new Map(),
     sessionRenderSeq: 0,
     latestSessionRenderState: null,
+    activeSessionId: '',
+    currentRunContext: null,
     runView: null,
     dispatchQueue: Promise.resolve(),
   }]));
@@ -3276,6 +3625,8 @@ module.exports = {
     parseRawEventContent,
     formatRawEventPreview,
     resolveRawDeliveryPlan,
+    clearRunRenderStateAtRunStart,
+    createTrailingThrottleProcessor,
     buildAuditContentMeta,
   },
 };

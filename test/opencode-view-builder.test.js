@@ -17,7 +17,7 @@ function splitByLimit(text, maxLen) {
   return out;
 }
 
-test('opencode view builder emits status pane first and text vectors after', () => {
+test('opencode view builder emits status pane first and assistant text after', () => {
   let state = createRenderState('ses-a');
 
   state = applyEvent(state, {
@@ -63,20 +63,97 @@ test('opencode view builder emits status pane first and text vectors after', () 
     },
   }, 4);
 
-  const view = buildRunViewFromRenderState(state, splitByLimit, 4000);
+  const view = buildRunViewFromRenderState(state, splitByLimit, 4000, { runId: 'run-123' });
   assert.equal(view.length >= 2, true);
+  assert.match(view[0], /Status Pane/);
+  assert.match(view[0], /run_id:\s*`run-123`/i);
+  assert.match(view[0], /session:\s*`ses-a`/i);
+  assert.match(view[0], /status:\s*`busy`/i);
+  assert.match(view[0], /idle:\s*`no`/i);
+  assert.match(view[0], /assistant_message:\s*`msg-a`/i);
+  assert.equal(view[1], 'hello');
+});
 
-  const first = JSON.parse(view[0]);
-  assert.equal(first.kind, 'status-pane');
+test('opencode view builder only includes latest assistant message text', () => {
+  let state = createRenderState('ses-a');
 
-  const second = JSON.parse(view[1]);
-  assert.equal(second.kind, 'text-vector');
-  assert.equal(second.partId, 'prt-text');
-  assert.equal(second.textChunk, 'hello');
+  state = applyEvent(state, {
+    type: 'message.updated',
+    properties: {
+      info: {
+        id: 'msg-user',
+        sessionID: 'ses-a',
+        role: 'user',
+        time: { created: 1 },
+      },
+    },
+  }, 1);
 
-  const hasStepPart = view.some((line) => {
-    const parsed = JSON.parse(line);
-    return parsed.partId === 'prt-step';
-  });
-  assert.equal(hasStepPart, false);
+  state = applyEvent(state, {
+    type: 'message.part.updated',
+    properties: {
+      part: {
+        id: 'prt-user',
+        sessionID: 'ses-a',
+        messageID: 'msg-user',
+        type: 'text',
+        text: 'user prompt',
+      },
+    },
+  }, 2);
+
+  state = applyEvent(state, {
+    type: 'message.updated',
+    properties: {
+      info: {
+        id: 'msg-assistant-1',
+        sessionID: 'ses-a',
+        role: 'assistant',
+        time: { created: 3, completed: 4 },
+      },
+    },
+  }, 3);
+
+  state = applyEvent(state, {
+    type: 'message.part.updated',
+    properties: {
+      part: {
+        id: 'prt-a1',
+        sessionID: 'ses-a',
+        messageID: 'msg-assistant-1',
+        type: 'text',
+        text: 'old answer',
+      },
+    },
+  }, 4);
+
+  state = applyEvent(state, {
+    type: 'message.updated',
+    properties: {
+      info: {
+        id: 'msg-assistant-2',
+        sessionID: 'ses-a',
+        role: 'assistant',
+        time: { created: 5, completed: 6 },
+      },
+    },
+  }, 5);
+
+  state = applyEvent(state, {
+    type: 'message.part.updated',
+    properties: {
+      part: {
+        id: 'prt-a2',
+        sessionID: 'ses-a',
+        messageID: 'msg-assistant-2',
+        type: 'text',
+        text: 'latest answer',
+      },
+    },
+  }, 6);
+
+  const view = buildRunViewFromRenderState(state, splitByLimit, 4000);
+  assert.equal(view[1], 'latest answer');
+  assert.equal(view.includes('old answer'), false);
+  assert.equal(view.includes('user prompt'), false);
 });

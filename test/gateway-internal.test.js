@@ -3,6 +3,10 @@ const assert = require('node:assert/strict');
 
 const { _internal } = require('../src/gateway');
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 test('parseCommand handles bot mention and args', () => {
   const parsed = _internal.parseCommand('/connect@my_bot repo-name');
   assert.equal(parsed.command, '/connect');
@@ -14,6 +18,132 @@ test('splitByLimit splits long text near newline', () => {
   const out = _internal.splitByLimit(input, 9);
   assert.equal(out.length >= 2, true);
   assert.equal(out.join(''), input);
+});
+
+test('clearRunRenderStateAtRunStart clears only active session render cache', () => {
+  const state = {
+    sessionRenderStates: new Map([
+      ['ses-a', { sessionId: 'ses-a', value: 1 }],
+      ['ses-b', { sessionId: 'ses-b', value: 2 }],
+    ]),
+    latestSessionRenderState: { sessionId: 'ses-a', value: 1 },
+  };
+
+  _internal.clearRunRenderStateAtRunStart(state, 'ses-a');
+
+  assert.equal(state.sessionRenderStates.has('ses-a'), false);
+  assert.equal(state.sessionRenderStates.has('ses-b'), true);
+  assert.equal(state.latestSessionRenderState, null);
+});
+
+test('clearRunRenderStateAtRunStart is no-op for empty session id', () => {
+  const state = {
+    sessionRenderStates: new Map([
+      ['ses-a', { sessionId: 'ses-a', value: 1 }],
+    ]),
+    latestSessionRenderState: { sessionId: 'ses-a', value: 1 },
+  };
+
+  _internal.clearRunRenderStateAtRunStart(state, '');
+
+  assert.equal(state.sessionRenderStates.has('ses-a'), true);
+  assert.deepEqual(state.latestSessionRenderState, { sessionId: 'ses-a', value: 1 });
+});
+
+test('createTrailingThrottleProcessor applies leading then trailing latest value', async () => {
+  const seen = [];
+  const throttled = _internal.createTrailingThrottleProcessor({
+    intervalMs: 80,
+    handler: async (value) => {
+      seen.push(value);
+    },
+  });
+
+  await throttled('a');
+  await throttled('b');
+  await throttled('c');
+  await sleep(120);
+
+  assert.deepEqual(seen, ['a', 'c']);
+});
+
+test('createTrailingThrottleProcessor with interval 0 applies all events immediately', async () => {
+  const seen = [];
+  const throttled = _internal.createTrailingThrottleProcessor({
+    intervalMs: 0,
+    handler: async (value) => {
+      seen.push(value);
+    },
+  });
+
+  await throttled('x');
+  await throttled('y');
+
+  assert.deepEqual(seen, ['x', 'y']);
+});
+
+test('createTrailingThrottleProcessor supports selectPending merge policy', async () => {
+  const seen = [];
+  const throttled = _internal.createTrailingThrottleProcessor({
+    intervalMs: 80,
+    selectPending: (prev, next) => {
+      if (!prev) return next;
+      return String(next).length >= String(prev).length ? next : prev;
+    },
+    handler: async (value) => {
+      seen.push(value);
+    },
+  });
+
+  await throttled('a');
+  await throttled('bb');
+  await throttled('c');
+  await sleep(120);
+
+  assert.deepEqual(seen, ['a', 'bb']);
+});
+
+test('createTrailingThrottleProcessor gates by start time, not completion time', async () => {
+  const starts = [];
+  const throttled = _internal.createTrailingThrottleProcessor({
+    intervalMs: 80,
+    handler: async (value) => {
+      starts.push({ value, at: Date.now() });
+      await sleep(120);
+    },
+  });
+
+  const p1 = throttled('first');
+  await sleep(10);
+  await throttled('second');
+  await p1;
+  await sleep(30);
+
+  assert.equal(starts.length, 2);
+  const delta = starts[1].at - starts[0].at;
+  assert.equal(delta < 170, true);
+});
+
+test('createTrailingThrottleProcessor resolves queued calls immediately', async () => {
+  const seen = [];
+  const throttled = _internal.createTrailingThrottleProcessor({
+    intervalMs: 80,
+    handler: async (value) => {
+      seen.push(value);
+      await sleep(120);
+    },
+  });
+
+  const p1 = throttled('first');
+  await sleep(10);
+  const queuedStart = Date.now();
+  await throttled('queued');
+  const queuedElapsed = Date.now() - queuedStart;
+  await p1;
+  await sleep(30);
+
+  assert.equal(queuedElapsed < 40, true);
+  assert.deepEqual(seen, ['first', 'queued']);
 });
 
 test('normalizeImageExt enforces safe extension format', () => {
@@ -526,7 +656,7 @@ test('buildModelApplyMessage includes restart and session semantics', () => {
   assert.match(text, /scheduled_after_current_run/);
 });
 
-test('sanitizeFinalOutputText removes system reminder blocks and prompt echo', () => {
+test('sanitizeFinalOutputText currently behaves as pass-through trim', () => {
   const prompt = 'Analyze this system';
   const raw = [
     '<system-reminder>ignore me</system-reminder>',
@@ -536,10 +666,10 @@ test('sanitizeFinalOutputText removes system reminder blocks and prompt echo', (
   ].join('\n');
 
   const cleaned = _internal.sanitizeFinalOutputText(raw, prompt);
-  assert.equal(cleaned, 'Final **answer** block');
+  assert.equal(cleaned, raw);
 });
 
-test('sanitizeFinalOutputText aggressively drops everything before last prompt occurrence', () => {
+test('sanitizeFinalOutputText keeps prompt/context content intact', () => {
   const prompt = 'Analyze this system';
   const raw = [
     'ultrawork header',
@@ -552,10 +682,10 @@ test('sanitizeFinalOutputText aggressively drops everything before last prompt o
   ].join('\n');
 
   const cleaned = _internal.sanitizeFinalOutputText(raw, prompt);
-  assert.equal(cleaned, 'actual final answer');
+  assert.equal(cleaned, raw);
 });
 
-test('sanitizeFinalOutputText drops legacy wrapper when prompt appears later in text', () => {
+test('sanitizeFinalOutputText preserves legacy wrapper text', () => {
   const prompt = 'diagnose this';
   const raw = [
     '<ultrawork-mode>',
@@ -568,11 +698,11 @@ test('sanitizeFinalOutputText drops legacy wrapper when prompt appears later in 
   ].join('\n');
 
   const cleaned = _internal.sanitizeFinalOutputText(raw, prompt);
-  assert.equal(cleaned.includes('<ultrawork-mode>'), false);
+  assert.equal(cleaned.includes('<ultrawork-mode>'), true);
   assert.match(cleaned, /Canonical final answer body/);
 });
 
-test('sanitizeFinalOutputText strips OMO initiator markers (raw and escaped)', () => {
+test('sanitizeFinalOutputText preserves OMO initiator markers', () => {
   const prompt = 'diag';
   const raw = [
     prompt,
@@ -584,7 +714,7 @@ test('sanitizeFinalOutputText strips OMO initiator markers (raw and escaped)', (
     'gamma',
   ].join('\n');
   const cleaned = _internal.sanitizeFinalOutputText(raw, prompt);
-  assert.equal(/OMO_INTERNAL_INITIATOR/.test(cleaned), false);
+  assert.equal(/OMO_INTERNAL_INITIATOR/.test(cleaned), true);
   assert.match(cleaned, /alpha/);
   assert.match(cleaned, /beta/);
   assert.match(cleaned, /gamma/);
@@ -640,9 +770,9 @@ test('reconcileOutputSnapshot applies stream and final text in one shared flow',
     promptText: prompt,
     authoritativeFinal: false,
   });
-  assert.equal(streamPass.cleaned, 'intermediate answer');
-  assert.equal(snapshot.streamText, 'intermediate answer');
-  assert.equal(snapshot.finalCandidate, 'intermediate answer');
+  assert.equal(streamPass.cleaned, `${prompt}\n\nintermediate answer`);
+  assert.equal(snapshot.streamText, `${prompt}\n\nintermediate answer`);
+  assert.equal(snapshot.finalCandidate, `${prompt}\n\nintermediate answer`);
 
   const finalPass = _internal.reconcileOutputSnapshot(snapshot, {
     rawText: 'final answer',
@@ -655,7 +785,7 @@ test('reconcileOutputSnapshot applies stream and final text in one shared flow',
   assert.match(snapshot.finalCandidate, /final answer/);
 });
 
-test('reconcileOutputSnapshot extracts reminder and strips it from cleaned output', () => {
+test('reconcileOutputSnapshot does not extract reminder under pass-through sanitizer', () => {
   const snapshot = _internal.createOutputSnapshot();
   const out = _internal.reconcileOutputSnapshot(snapshot, {
     rawText: '<system-reminder>keep queueing</system-reminder>\n\nbody text',
@@ -664,9 +794,9 @@ test('reconcileOutputSnapshot extracts reminder and strips it from cleaned outpu
     authoritativeFinal: false,
   });
 
-  assert.equal(out.reminderText, 'keep queueing');
-  assert.equal(out.cleaned, 'body text');
-  assert.equal(snapshot.streamText, 'body text');
+  assert.equal(out.reminderText, '');
+  assert.match(out.cleaned, /<system-reminder>keep queueing<\/system-reminder>/);
+  assert.match(snapshot.streamText, /body text/);
 });
 
 test('reconcileOutputSnapshot returns reasoning text without mutating final candidate', () => {
@@ -747,7 +877,7 @@ test('resolveFinalizationOutput reports no-answer completion when both sources a
   assert.equal(resolved.emptyReason, 'no_raw_output');
 });
 
-test('resolveFinalizationOutput classifies sanitized-empty when raw output exists', () => {
+test('resolveFinalizationOutput keeps raw ultrawork payload when sanitizer is pass-through', () => {
   const prompt = 'run this exact prompt';
   const resolved = _internal.resolveFinalizationOutput({
     metaFinalText: `<ultrawork-mode>\n${prompt}`,
@@ -757,8 +887,76 @@ test('resolveFinalizationOutput classifies sanitized-empty when raw output exist
     hermuxVersion: '0.0.0',
   });
 
-  assert.equal(resolved.shouldSendFinal, false);
+  assert.equal(resolved.shouldSendFinal, true);
   assert.equal(resolved.hadRawFinal, true);
-  assert.equal(resolved.emptyReason, 'sanitized_prompt_echo');
-  assert.equal(resolved.streamCompletionText, 'completed (output was sanitized to empty).');
+  assert.equal(resolved.emptyReason, 'no_raw_output');
+  assert.equal(resolved.streamCompletionText, 'completed. final answer sent below.');
+});
+
+test('resolveFinalizationOutput does not need recovery when sanitizer is pass-through', () => {
+  const prompt = 'run this exact prompt';
+  const resolved = _internal.resolveFinalizationOutput({
+    metaFinalText: `Execution notes\n\nFinal answer body\n${prompt}`,
+    streamFinalText: '',
+    promptText: prompt,
+    isVersionPrompt: false,
+    hermuxVersion: '0.0.0',
+  });
+
+  assert.equal(resolved.shouldSendFinal, true);
+  assert.equal(resolved.emptyReason, 'no_raw_output');
+  assert.match(resolved.outgoingText, /Final answer body/);
+});
+
+test('resolveFinalizationOutput forwards control-only payload under pass-through sanitizer', () => {
+  const resolved = _internal.resolveFinalizationOutput({
+    metaFinalText: '<system-reminder>internal only</system-reminder>',
+    streamFinalText: '',
+    promptText: 'anything',
+    isVersionPrompt: false,
+    hermuxVersion: '0.0.0',
+  });
+
+  assert.equal(resolved.shouldSendFinal, true);
+  assert.equal(resolved.emptyReason, 'no_raw_output');
+});
+
+test('resolveFinalizationOutput keeps prompt suffix under pass-through sanitizer', () => {
+  const prompt = 'run this exact prompt';
+  const resolved = _internal.resolveFinalizationOutput({
+    metaFinalText: [
+      'Here is the actual final answer body.',
+      '',
+      prompt,
+    ].join('\n'),
+    streamFinalText: '',
+    promptText: prompt,
+    isVersionPrompt: false,
+    hermuxVersion: '0.0.0',
+  });
+
+  assert.equal(resolved.shouldSendFinal, true);
+  assert.equal(resolved.emptyReason, 'no_raw_output');
+  assert.match(resolved.outgoingText, /actual final answer body/);
+});
+
+test('resolveFinalizationOutput forwards ultrawork control block under pass-through sanitizer', () => {
+  const prompt = 'run this exact prompt';
+  const resolved = _internal.resolveFinalizationOutput({
+    metaFinalText: [
+      '<ultrawork-mode>',
+      '**MANDATORY**: You MUST say "ULTRAWORK MODE ENABLED!"',
+      '[CODE RED] Maximum precision required.',
+      '### **MANDATORY CERTAINTY PROTOCOL**',
+      '</ultrawork-mode>',
+      prompt,
+    ].join('\n'),
+    streamFinalText: '',
+    promptText: prompt,
+    isVersionPrompt: false,
+    hermuxVersion: '0.0.0',
+  });
+
+  assert.equal(resolved.shouldSendFinal, true);
+  assert.equal(resolved.emptyReason, 'no_raw_output');
 });

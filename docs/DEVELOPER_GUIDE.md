@@ -87,7 +87,7 @@ Legacy `instances[]` configs are normalized during load.
 - `OMG_SDK_PORT_PICK_ATTEMPTS`
 - `OMG_EXECUTION_TRANSPORT` (`sdk` or `command`)
 - `OMG_OPENCODE_SDK_SHIM` (test shim path override)
-- `OMG_SDK_POST_COMPLETE_LINGER_MS` (keep SDK event handling alive after idle completion signal)
+- `OMG_SDK_POST_COMPLETE_LINGER_MS` (UX pacing window only; MUST NOT be required for session-event acceptance correctness)
 
 ## Test Profile Isolation
 

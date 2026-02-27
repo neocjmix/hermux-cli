@@ -116,32 +116,107 @@ async function waitForBootstrapAndClearRequests(controlUrl) {
 }
 
 function startGateway(env) {
+  const testName = String((env && env.HERMUX_E2E_TEST_NAME) || 'gateway-e2e').trim() || 'gateway-e2e';
+  const safeTestName = testName.replace(/[^a-zA-Z0-9._-]+/g, '-').slice(0, 80);
+  const stamp = `${new Date().toISOString().replace(/[:.]/g, '-')}-${Math.random().toString(16).slice(2, 8)}`;
+  const artifactDir = path.resolve(__dirname, '..', '.tmp', 'e2e-artifacts', `${safeTestName}-${stamp}`);
+  const runtimeDir = path.join(artifactDir, 'runtime');
+  fs.mkdirSync(runtimeDir, { recursive: true });
+
   const child = spawn(process.execPath, ['src/gateway.js'], {
     cwd: path.resolve(__dirname, '..'),
     env: {
       ...process.env,
       ...env,
+      OMG_RUNTIME_DIR: String((env && env.OMG_RUNTIME_DIR) || runtimeDir),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let stdout = '';
   let stderr = '';
+  const stdoutPath = path.join(artifactDir, 'gateway.stdout.log');
+  const stderrPath = path.join(artifactDir, 'gateway.stderr.log');
+  const startedAt = new Date().toISOString();
   child.stdout.on('data', (chunk) => {
-    stdout += chunk.toString('utf8');
+    const text = chunk.toString('utf8');
+    stdout += text;
+    try {
+      fs.appendFileSync(stdoutPath, text, 'utf8');
+    } catch (_err) {
+    }
   });
   child.stderr.on('data', (chunk) => {
-    stderr += chunk.toString('utf8');
+    const text = chunk.toString('utf8');
+    stderr += text;
+    try {
+      fs.appendFileSync(stderrPath, text, 'utf8');
+    } catch (_err) {
+    }
   });
-  return { child, getOutput: () => ({ stdout, stderr }) };
+  return {
+    child,
+    runtimeDir,
+    artifactDir,
+    stdoutPath,
+    stderrPath,
+    startedAt,
+    getOutput: () => ({ stdout, stderr }),
+  };
 }
 
-async function stopGateway(child) {
-  if (child.killed || child.exitCode !== null) return;
-  child.kill('SIGTERM');
-  await new Promise((resolve) => {
-    child.once('exit', () => resolve());
-    setTimeout(resolve, 4000);
-  });
+async function writeE2eArtifacts(runtime, options = {}) {
+  if (!runtime || !runtime.artifactDir) return;
+  const controlUrl = String(options.controlUrl || '').trim();
+  let requests = [];
+  if (controlUrl) {
+    try {
+      const reqs = await httpJson({ method: 'GET', url: `${controlUrl}/requests` });
+      requests = Array.isArray(reqs && reqs.body && reqs.body.requests) ? reqs.body.requests : [];
+    } catch (_err) {
+    }
+  }
+
+  const runtimeDir = String(runtime.runtimeDir || '').trim();
+  const auditPath = runtimeDir ? path.join(runtimeDir, 'audit-events.jsonl') : '';
+  const manifest = {
+    testName: String(options.testName || ''),
+    status: String(options.status || 'unknown'),
+    finishedAt: new Date().toISOString(),
+    startedAt: runtime.startedAt || null,
+    runtimeDir,
+    artifactDir: runtime.artifactDir,
+    stdoutPath: runtime.stdoutPath,
+    stderrPath: runtime.stderrPath,
+    auditPath,
+    auditExists: !!(auditPath && fs.existsSync(auditPath)),
+    gatewayExitCode: runtime.child && Number.isInteger(runtime.child.exitCode) ? runtime.child.exitCode : runtime.child ? runtime.child.exitCode : null,
+    requestsCount: requests.length,
+  };
+
+  try {
+    fs.mkdirSync(runtime.artifactDir, { recursive: true });
+    fs.writeFileSync(path.join(runtime.artifactDir, 'telegram-requests.json'), JSON.stringify(requests, null, 2), 'utf8');
+    fs.writeFileSync(path.join(runtime.artifactDir, 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf8');
+  } catch (_err) {
+  }
+}
+
+async function stopGateway(runtimeOrChild, options = {}) {
+  const runtime = runtimeOrChild && runtimeOrChild.child ? runtimeOrChild : null;
+  const child = runtime ? runtime.child : runtimeOrChild;
+  if (!child) return;
+
+  if (!child.killed && child.exitCode === null) {
+    child.kill('SIGTERM');
+    await new Promise((resolve) => {
+      child.once('exit', () => resolve());
+      setTimeout(resolve, 4000);
+    });
+  }
+
+  if (runtime) {
+    await writeE2eArtifacts(runtime, options);
+  }
 }
 
 test('gateway e2e uses telegram stub for mapped /start command flow', async () => {
@@ -205,7 +280,80 @@ test('gateway e2e uses telegram stub for mapped /start command flow', async () =
     assert.match(String(sendReq.params.text || ''), /opencode gateway \[demo\]/);
     assert.match(String(sendReq.params.text || ''), /Send any prompt to run opencode/);
   } finally {
-    await stopGateway(runtime.child);
+    await stopGateway(runtime, { controlUrl: started.controlUrl });
+    await telegram.stop();
+    restoreFile(config.CONFIG_PATH, cfgSnapshot);
+  }
+});
+
+test('gateway e2e persists reproducible artifact bundle on shutdown', async () => {
+  const cfgSnapshot = backupFile(config.CONFIG_PATH);
+  const token = 'test-token';
+  const telegram = createTelegramMockServer();
+  const started = await telegram.start(0);
+
+  config.save({
+    global: { telegramBotToken: token },
+    repos: [{
+      name: 'demo',
+      enabled: true,
+      workdir: '/tmp/demo',
+      chatIds: ['100'],
+      opencodeCommand: 'opencode sdk',
+      logFile: './logs/demo.log',
+    }],
+  });
+
+  const runtime = startGateway({
+    OMG_TELEGRAM_BASE_API_URL: started.baseApiUrl,
+    OMG_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
+  });
+
+  let stopped = false;
+  try {
+    await waitForBootstrapAndClearRequests(started.controlUrl);
+
+    await httpJson({
+      method: 'POST',
+      url: `${started.controlUrl}/updates`,
+      body: {
+        token,
+        update: {
+          update_id: 999,
+          message: {
+            message_id: 999,
+            date: Math.floor(Date.now() / 1000),
+            text: '/start',
+            chat: { id: 100, type: 'private' },
+            from: { id: 200, is_bot: false, first_name: 'Tester' },
+          },
+        },
+      },
+    });
+
+    await waitFor(async () => {
+      const reqs = await httpJson({ method: 'GET', url: `${started.controlUrl}/requests?method=sendMessage` });
+      return reqs.body.requests.find((r) => String(r.params.chat_id || '') === '100') || null;
+    });
+
+    await stopGateway(runtime, { controlUrl: started.controlUrl, testName: 'persist-artifacts', status: 'ok' });
+    stopped = true;
+
+    const manifestPath = path.join(runtime.artifactDir, 'manifest.json');
+    const requestsPath = path.join(runtime.artifactDir, 'telegram-requests.json');
+    const stdoutPath = path.join(runtime.artifactDir, 'gateway.stdout.log');
+
+    assert.equal(fs.existsSync(manifestPath), true);
+    assert.equal(fs.existsSync(requestsPath), true);
+    assert.equal(fs.existsSync(stdoutPath), true);
+
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    assert.equal(String(manifest.runtimeDir || '').length > 0, true);
+    assert.equal(Number(manifest.requestsCount || 0) > 0, true);
+  } finally {
+    if (!stopped) {
+      await stopGateway(runtime, { controlUrl: started.controlUrl, testName: 'persist-artifacts', status: 'teardown' });
+    }
     await telegram.stop();
     restoreFile(config.CONFIG_PATH, cfgSnapshot);
   }
@@ -273,7 +421,7 @@ test('gateway e2e uses telegram stub for callback_query interrupt idle contract'
     });
     assert.match(String(sendReq.params.text || ''), /No running task to interrupt/);
   } finally {
-    await stopGateway(runtime.child);
+    await stopGateway(runtime, { controlUrl: started.controlUrl });
     await telegram.stop();
     restoreFile(config.CONFIG_PATH, cfgSnapshot);
   }
@@ -320,7 +468,7 @@ test('gateway e2e logs polling conflict detail when webhook is active', async ()
       return /polling error detail/.test(out.stderr) && /"tgErrorCode":409/.test(out.stderr);
     });
   } finally {
-    await stopGateway(runtime.child);
+    await stopGateway(runtime, { controlUrl: started.controlUrl });
     await telegram.stop();
     restoreFile(config.CONFIG_PATH, cfgSnapshot);
   }
@@ -393,7 +541,7 @@ test('gateway e2e remains alive when scenario forces sendMessage API error', asy
     assert.match(String(failedSend.response.description || ''), /retry later/i);
     assert.equal(runtime.child.exitCode, null);
   } finally {
-    await stopGateway(runtime.child);
+    await stopGateway(runtime, { controlUrl: started.controlUrl });
     await telegram.stop();
     restoreFile(config.CONFIG_PATH, cfgSnapshot);
   }
@@ -472,7 +620,7 @@ test('gateway e2e recovers polling after webhook deletion and processes /start',
     assert.match(String(sendReq.params.text || ''), /opencode gateway \[demo\]/);
     assert.equal(runtime.child.exitCode, null);
   } finally {
-    await stopGateway(runtime.child);
+    await stopGateway(runtime, { controlUrl: started.controlUrl });
     await telegram.stop();
     restoreFile(config.CONFIG_PATH, cfgSnapshot);
   }
@@ -582,7 +730,7 @@ test('gateway e2e survives answerCallbackQuery failure and keeps idle interrupt 
     assert.match(String(sendReq.params.text || ''), /No running task to interrupt/);
     assert.equal(runtime.child.exitCode, null);
   } finally {
-    await stopGateway(runtime.child);
+    await stopGateway(runtime, { controlUrl: started.controlUrl });
     await telegram.stop();
     restoreFile(config.CONFIG_PATH, cfgSnapshot);
   }
@@ -658,7 +806,7 @@ test('gateway e2e retries sendMessage without parse_mode after HTML send failure
     assert.ok(plainRetry);
     assert.equal(runtime.child.exitCode, null);
   } finally {
-    await stopGateway(runtime.child);
+    await stopGateway(runtime, { controlUrl: started.controlUrl });
     await telegram.stop();
     restoreFile(config.CONFIG_PATH, cfgSnapshot);
   }
@@ -742,10 +890,9 @@ test('gateway e2e does not send final-unit messages after run.finalization', asy
 
     assert.equal(lateFinalUnitSends.length, 0);
   } finally {
-    await stopGateway(runtime.child);
+    await stopGateway(runtime, { controlUrl: started.controlUrl });
     await telegram.stop();
     restoreFile(config.CONFIG_PATH, cfgSnapshot);
-    fs.rmSync(runtimeDir, { recursive: true, force: true });
   }
 });
 
@@ -844,9 +991,521 @@ test('gateway e2e keeps pass-through final output behavior', async () => {
     const leakedMarker = finalOutputs.some((r) => /OMO_INTERNAL_INITIATOR/.test(String(r.payload && r.payload.textPreview || '')));
     assert.equal(typeof leakedMarker, 'boolean');
   } finally {
-    await stopGateway(runtime.child);
+    await stopGateway(runtime, { controlUrl: started.controlUrl });
     await telegram.stop();
     restoreFile(config.CONFIG_PATH, cfgSnapshot);
-    fs.rmSync(runtimeDir, { recursive: true, force: true });
+  }
+});
+
+test('gateway e2e renders distinct outputs for two consecutive prompts in same session', async () => {
+  const cfgSnapshot = backupFile(config.CONFIG_PATH);
+  const token = 'test-token';
+  const telegram = createTelegramMockServer();
+  const started = await telegram.start(0);
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runtime-two-runs-'));
+  const fixturePath = path.resolve(__dirname, 'fixtures', 'fake-opencode-sdk-two-runs.js');
+
+  config.save({
+    global: { telegramBotToken: token },
+    repos: [{
+      name: 'demo',
+      enabled: true,
+      workdir: '/tmp/demo',
+      chatIds: ['100'],
+      opencodeCommand: 'opencode sdk',
+      logFile: './logs/demo.log',
+    }],
+  });
+
+  const runtime = startGateway({
+    OMG_TELEGRAM_BASE_API_URL: started.baseApiUrl,
+    OMG_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
+    OMG_OPENCODE_SDK_SHIM: fixturePath,
+    OMG_RUNTIME_DIR: runtimeDir,
+  });
+
+  try {
+    await waitForBootstrapAndClearRequests(started.controlUrl);
+
+    await httpJson({
+      method: 'POST',
+      url: `${started.controlUrl}/updates`,
+      body: {
+        token,
+        update: {
+          update_id: 30,
+          message: {
+            message_id: 30,
+            date: Math.floor(Date.now() / 1000),
+            text: 'question-one-marker',
+            chat: { id: 100, type: 'private' },
+            from: { id: 200, is_bot: false, first_name: 'Tester' },
+          },
+        },
+      },
+    });
+
+    await httpJson({
+      method: 'POST',
+      url: `${started.controlUrl}/updates`,
+      body: {
+        token,
+        update: {
+          update_id: 31,
+          message: {
+            message_id: 31,
+            date: Math.floor(Date.now() / 1000),
+            text: 'question-two-marker',
+            chat: { id: 100, type: 'private' },
+            from: { id: 200, is_bot: false, first_name: 'Tester' },
+          },
+        },
+      },
+    });
+
+    const auditPath = path.join(runtimeDir, 'audit-events.jsonl');
+    const records = await waitFor(() => {
+      const rows = readJsonlRecords(auditPath);
+      const completed = rows.filter((r) => r.kind === 'run.complete');
+      return completed.length >= 2 ? rows : null;
+    }, { timeoutMs: 25000, stepMs: 120 });
+
+    const runStarts = records.filter((r) => r.kind === 'run.start');
+    assert.equal(runStarts.length >= 2, true);
+
+    const firstRunId = String(runStarts[0] && runStarts[0].payload && runStarts[0].payload.runId || '');
+    const secondRunId = String(runStarts[1] && runStarts[1].payload && runStarts[1].payload.runId || '');
+    assert.ok(firstRunId);
+    assert.ok(secondRunId);
+    assert.notEqual(firstRunId, secondRunId);
+
+    const runRowsById = (runId) => records.filter((r) => {
+      const payloadRunId = r && r.payload && r.payload.runId ? String(r.payload.runId) : '';
+      const metaRunId = r && r.payload && r.payload.meta && r.payload.meta.runId ? String(r.payload.meta.runId) : '';
+      return payloadRunId === runId || metaRunId === runId;
+    });
+
+    const firstRunRows = runRowsById(firstRunId);
+    const secondRunRows = runRowsById(secondRunId);
+
+    const collectRunViewText = (rows) => rows
+      .filter((r) => (
+        (r.kind === 'telegram.send' || r.kind === 'telegram.edit')
+        && r.payload
+        && r.payload.meta
+        && (r.payload.meta.channel === 'run_view_send' || r.payload.meta.channel === 'run_view_edit')
+      ))
+      .map((r) => String(r.payload && r.payload.textPreview || ''));
+
+    const firstTexts = collectRunViewText(firstRunRows).join('\n');
+    const secondTexts = collectRunViewText(secondRunRows).join('\n');
+
+    assert.match(firstTexts, /first-answer-only/);
+    assert.doesNotMatch(firstTexts, /second-answer-only/);
+
+    assert.match(secondTexts, /second-answer-only/);
+    assert.doesNotMatch(secondTexts, /first-answer-only/);
+  } finally {
+    await stopGateway(runtime, { controlUrl: started.controlUrl });
+    await telegram.stop();
+    restoreFile(config.CONFIG_PATH, cfgSnapshot);
+  }
+});
+
+test('gateway e2e should render second run assistant output even when it arrives late', async () => {
+  const cfgSnapshot = backupFile(config.CONFIG_PATH);
+  const token = 'test-token';
+  const telegram = createTelegramMockServer();
+  const started = await telegram.start(0);
+  const fixturePath = path.resolve(__dirname, 'fixtures', 'fake-opencode-sdk-two-runs-second-late.js');
+
+  config.save({
+    global: { telegramBotToken: token },
+    repos: [{
+      name: 'demo',
+      enabled: true,
+      workdir: '/tmp/demo',
+      chatIds: ['100'],
+      opencodeCommand: 'opencode sdk',
+      logFile: './logs/demo.log',
+    }],
+  });
+
+  const runtime = startGateway({
+    OMG_TELEGRAM_BASE_API_URL: started.baseApiUrl,
+    OMG_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
+    OMG_SDK_POST_COMPLETE_LINGER_MS: '0',
+    OMG_OPENCODE_SDK_SHIM: fixturePath,
+  });
+
+  let stopped = false;
+  try {
+    await waitForBootstrapAndClearRequests(started.controlUrl);
+
+    await httpJson({
+      method: 'POST',
+      url: `${started.controlUrl}/updates`,
+      body: {
+        token,
+        update: {
+          update_id: 41,
+          message: {
+            message_id: 41,
+            date: Math.floor(Date.now() / 1000),
+            text: 'first-prompt-late-case',
+            chat: { id: 100, type: 'private' },
+            from: { id: 200, is_bot: false, first_name: 'Tester' },
+          },
+        },
+      },
+    });
+
+    await httpJson({
+      method: 'POST',
+      url: `${started.controlUrl}/updates`,
+      body: {
+        token,
+        update: {
+          update_id: 42,
+          message: {
+            message_id: 42,
+            date: Math.floor(Date.now() / 1000),
+            text: 'second-prompt-late-case',
+            chat: { id: 100, type: 'private' },
+            from: { id: 200, is_bot: false, first_name: 'Tester' },
+          },
+        },
+      },
+    });
+
+    const auditPath = path.join(runtime.runtimeDir, 'audit-events.jsonl');
+    const records = await waitFor(() => {
+      const rows = readJsonlRecords(auditPath);
+      const completed = rows.filter((r) => r.kind === 'run.complete');
+      const hasLateSecond = rows.some((r) => {
+        if (r.kind !== 'run.event_received') return false;
+        const content = String((r.payload && r.payload.content) || '');
+        return content.includes('second-late-answer');
+      });
+      const hasRunViewSecond = rows.some((r) => (
+        (r.kind === 'telegram.send' || r.kind === 'telegram.edit')
+        && r.payload
+        && r.payload.meta
+        && (r.payload.meta.channel === 'run_view_send' || r.payload.meta.channel === 'run_view_edit')
+        && String(r.payload.textPreview || '').includes('second-late-answer')
+      ));
+      return completed.length >= 2 && hasLateSecond && hasRunViewSecond ? rows : null;
+    }, { timeoutMs: 25000, stepMs: 120 });
+
+    const runStarts = records.filter((r) => r.kind === 'run.start');
+    assert.equal(runStarts.length >= 2, true);
+    const secondRunId = String(runStarts[1] && runStarts[1].payload && runStarts[1].payload.runId || '');
+    assert.ok(secondRunId);
+
+    const secondRunRows = records.filter((r) => {
+      const payloadRunId = r && r.payload && r.payload.runId ? String(r.payload.runId) : '';
+      const metaRunId = r && r.payload && r.payload.meta && r.payload.meta.runId ? String(r.payload.meta.runId) : '';
+      return payloadRunId === secondRunId || metaRunId === secondRunId;
+    });
+
+    const secondRunText = secondRunRows
+      .filter((r) => (
+        (r.kind === 'telegram.send' || r.kind === 'telegram.edit')
+        && r.payload
+        && r.payload.meta
+        && (r.payload.meta.channel === 'run_view_send' || r.payload.meta.channel === 'run_view_edit')
+      ))
+      .map((r) => String(r.payload && r.payload.textPreview || ''))
+      .join('\n');
+
+    assert.match(secondRunText, /second-late-answer/);
+
+    await stopGateway(runtime, { controlUrl: started.controlUrl, testName: 'second-run-late-output', status: 'ok' });
+    stopped = true;
+  } finally {
+    if (!stopped) {
+      await stopGateway(runtime, { controlUrl: started.controlUrl, testName: 'second-run-late-output', status: 'teardown' });
+    }
+    await telegram.stop();
+    restoreFile(config.CONFIG_PATH, cfgSnapshot);
+  }
+});
+
+test('gateway e2e incident replay should deliver second run text despite post-complete late events', async () => {
+  const cfgSnapshot = backupFile(config.CONFIG_PATH);
+  const token = 'test-token';
+  const telegram = createTelegramMockServer();
+  const started = await telegram.start(0);
+  const fixturePath = path.resolve(__dirname, 'fixtures', 'fake-opencode-sdk-two-runs-incident-replay.js');
+
+  config.save({
+    global: { telegramBotToken: token },
+    repos: [{
+      name: 'demo',
+      enabled: true,
+      workdir: '/tmp/demo',
+      chatIds: ['100'],
+      opencodeCommand: 'opencode sdk',
+      logFile: './logs/demo.log',
+    }],
+  });
+
+  const runtime = startGateway({
+    OMG_TELEGRAM_BASE_API_URL: started.baseApiUrl,
+    OMG_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
+    OMG_OPENCODE_SDK_SHIM: fixturePath,
+  });
+
+  let stopped = false;
+  try {
+    await waitForBootstrapAndClearRequests(started.controlUrl);
+
+    await httpJson({
+      method: 'POST',
+      url: `${started.controlUrl}/updates`,
+      body: {
+        token,
+        update: {
+          update_id: 51,
+          message: {
+            message_id: 51,
+            date: Math.floor(Date.now() / 1000),
+            text: 'incident-replay-first',
+            chat: { id: 100, type: 'private' },
+            from: { id: 200, is_bot: false, first_name: 'Tester' },
+          },
+        },
+      },
+    });
+
+    await httpJson({
+      method: 'POST',
+      url: `${started.controlUrl}/updates`,
+      body: {
+        token,
+        update: {
+          update_id: 52,
+          message: {
+            message_id: 52,
+            date: Math.floor(Date.now() / 1000),
+            text: 'incident-replay-second',
+            chat: { id: 100, type: 'private' },
+            from: { id: 200, is_bot: false, first_name: 'Tester' },
+          },
+        },
+      },
+    });
+
+    const auditPath = path.join(runtime.runtimeDir, 'audit-events.jsonl');
+    const records = await waitFor(() => {
+      const rows = readJsonlRecords(auditPath);
+      const completed = rows.filter((r) => r.kind === 'run.complete');
+      const hasLateSecond = rows.some((r) => {
+        if (r.kind !== 'run.event_received') return false;
+        const payload = r.payload || {};
+        const content = String(payload.content || '');
+        return content.includes('second-incident-answer') || content.includes('part-second-late-text-base');
+      });
+      const hasRunViewSecond = rows.some((r) => (
+        (r.kind === 'telegram.send' || r.kind === 'telegram.edit')
+        && r.payload
+        && r.payload.meta
+        && (r.payload.meta.channel === 'run_view_send' || r.payload.meta.channel === 'run_view_edit')
+        && String(r.payload.textPreview || '').includes('second-incident-answer')
+      ));
+      return completed.length >= 2 && hasLateSecond && hasRunViewSecond ? rows : null;
+    }, { timeoutMs: 30000, stepMs: 120 });
+
+    const runStarts = records.filter((r) => r.kind === 'run.start');
+    assert.equal(runStarts.length >= 2, true);
+    const firstRunId = String(runStarts[0] && runStarts[0].payload && runStarts[0].payload.runId || '');
+    const secondRunId = String(runStarts[1] && runStarts[1].payload && runStarts[1].payload.runId || '');
+    assert.ok(firstRunId);
+    assert.ok(secondRunId);
+    assert.notEqual(firstRunId, secondRunId);
+
+    const rowsByRun = (runId) => records.filter((r) => {
+      const payloadRunId = r && r.payload && r.payload.runId ? String(r.payload.runId) : '';
+      const metaRunId = r && r.payload && r.payload.meta && r.payload.meta.runId ? String(r.payload.meta.runId) : '';
+      return payloadRunId === runId || metaRunId === runId;
+    });
+
+    const firstRows = rowsByRun(firstRunId);
+    const secondRows = rowsByRun(secondRunId);
+
+    const collectRunViewText = (rows) => rows
+      .filter((r) => (
+        (r.kind === 'telegram.send' || r.kind === 'telegram.edit')
+        && r.payload
+        && r.payload.meta
+        && (r.payload.meta.channel === 'run_view_send' || r.payload.meta.channel === 'run_view_edit')
+      ))
+      .map((r) => String(r.payload && r.payload.textPreview || ''));
+
+    const firstText = collectRunViewText(firstRows).join('\n');
+    const secondText = collectRunViewText(secondRows).join('\n');
+
+    assert.match(firstText, /first-incident-answer/);
+    assert.doesNotMatch(firstText, /second-incident-answer/);
+
+    assert.match(secondText, /second-incident-answer/);
+    assert.doesNotMatch(secondText, /first-incident-answer/);
+
+    const secondAssistantTextEvents = secondRows.filter((r) => {
+      if (r.kind !== 'run.event_received') return false;
+      const content = String((r.payload && r.payload.content) || '');
+      return content.includes('second-incident-answer') || content.includes('part-second-late-text-base');
+    });
+    assert.ok(secondAssistantTextEvents.length > 0);
+
+    const secondRunViewSends = secondRows.filter((r) => (
+      (r.kind === 'telegram.send' || r.kind === 'telegram.edit')
+      && r.payload
+      && r.payload.meta
+      && (r.payload.meta.channel === 'run_view_send' || r.payload.meta.channel === 'run_view_edit')
+      && String(r.payload.textPreview || '').includes('second-incident-answer')
+    ));
+    assert.ok(secondRunViewSends.length > 0);
+
+    const runIdMismatchSkips = records.filter((r) => (
+      r.kind === 'run.view.skip'
+      && r.payload
+      && String(r.payload.reason || '') === 'run_id_mismatch'
+    ));
+    assert.equal(runIdMismatchSkips.length, 0);
+
+    await stopGateway(runtime, { controlUrl: started.controlUrl, testName: 'incident-replay-second-run-late', status: 'ok' });
+    stopped = true;
+  } finally {
+    if (!stopped) {
+      await stopGateway(runtime, { controlUrl: started.controlUrl, testName: 'incident-replay-second-run-late', status: 'teardown' });
+    }
+    await telegram.stop();
+    restoreFile(config.CONFIG_PATH, cfgSnapshot);
+  }
+});
+
+test('gateway e2e should reproduce missing second response when assistant text lands post-complete', async () => {
+  const cfgSnapshot = backupFile(config.CONFIG_PATH);
+  const token = 'test-token';
+  const telegram = createTelegramMockServer();
+  const started = await telegram.start(0);
+  const fixturePath = path.resolve(__dirname, 'fixtures', 'fake-opencode-sdk-two-runs-post-complete-late-text.js');
+
+  config.save({
+    global: { telegramBotToken: token },
+    repos: [{
+      name: 'demo',
+      enabled: true,
+      workdir: '/tmp/demo',
+      chatIds: ['100'],
+      opencodeCommand: 'opencode sdk',
+      logFile: './logs/demo.log',
+    }],
+  });
+
+  const runtime = startGateway({
+    OMG_TELEGRAM_BASE_API_URL: started.baseApiUrl,
+    OMG_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
+    OMG_OPENCODE_SDK_SHIM: fixturePath,
+  });
+
+  let stopped = false;
+  try {
+    await waitForBootstrapAndClearRequests(started.controlUrl);
+
+    await httpJson({
+      method: 'POST',
+      url: `${started.controlUrl}/updates`,
+      body: {
+        token,
+        update: {
+          update_id: 61,
+          message: {
+            message_id: 61,
+            date: Math.floor(Date.now() / 1000),
+            text: 'pc-first',
+            chat: { id: 100, type: 'private' },
+            from: { id: 200, is_bot: false, first_name: 'Tester' },
+          },
+        },
+      },
+    });
+
+    await httpJson({
+      method: 'POST',
+      url: `${started.controlUrl}/updates`,
+      body: {
+        token,
+        update: {
+          update_id: 62,
+          message: {
+            message_id: 62,
+            date: Math.floor(Date.now() / 1000),
+            text: 'pc-second',
+            chat: { id: 100, type: 'private' },
+            from: { id: 200, is_bot: false, first_name: 'Tester' },
+          },
+        },
+      },
+    });
+
+    const auditPath = path.join(runtime.runtimeDir, 'audit-events.jsonl');
+    const records = await waitFor(() => {
+      const rows = readJsonlRecords(auditPath);
+      const completed = rows.filter((r) => r.kind === 'run.complete');
+      const hasPostCompleteTextEvent = rows.some((r) => {
+        if (r.kind !== 'run.event_received') return false;
+        const content = String((r.payload && r.payload.content) || '');
+        return content.includes('second-post-complete:pc-second');
+      });
+      const hasRunViewSecond = rows.some((r) => (
+        (r.kind === 'telegram.send' || r.kind === 'telegram.edit')
+        && r.payload
+        && r.payload.meta
+        && (r.payload.meta.channel === 'run_view_send' || r.payload.meta.channel === 'run_view_edit')
+        && String(r.payload.textPreview || '').includes('second-post-complete:pc-second')
+      ));
+      return completed.length >= 2 && hasPostCompleteTextEvent && hasRunViewSecond ? rows : null;
+    }, { timeoutMs: 30000, stepMs: 120 });
+
+    const runStarts = records.filter((r) => r.kind === 'run.start');
+    assert.equal(runStarts.length >= 2, true);
+    const secondRunId = String(runStarts[1] && runStarts[1].payload && runStarts[1].payload.runId || '');
+    assert.ok(secondRunId);
+
+    const secondRows = records.filter((r) => {
+      const payloadRunId = r && r.payload && r.payload.runId ? String(r.payload.runId) : '';
+      const metaRunId = r && r.payload && r.payload.meta && r.payload.meta.runId ? String(r.payload.meta.runId) : '';
+      return payloadRunId === secondRunId || metaRunId === secondRunId;
+    });
+
+    const secondAssistantTextEvents = secondRows.filter((r) => {
+      if (r.kind !== 'run.event_received') return false;
+      const content = String((r.payload && r.payload.content) || '');
+      return content.includes('second-post-complete:pc-second');
+    });
+    assert.ok(secondAssistantTextEvents.length > 0);
+
+    const secondRunViewText = secondRows
+      .filter((r) => (
+        (r.kind === 'telegram.send' || r.kind === 'telegram.edit')
+        && r.payload
+        && r.payload.meta
+        && (r.payload.meta.channel === 'run_view_send' || r.payload.meta.channel === 'run_view_edit')
+      ))
+      .map((r) => String(r.payload && r.payload.textPreview || ''))
+      .join('\n');
+
+    assert.match(secondRunViewText, /second-post-complete:pc-second/);
+
+    await stopGateway(runtime, { controlUrl: started.controlUrl, testName: 'post-complete-late-text-repro', status: 'ok' });
+    stopped = true;
+  } finally {
+    if (!stopped) {
+      await stopGateway(runtime, { controlUrl: started.controlUrl, testName: 'post-complete-late-text-repro', status: 'teardown' });
+    }
+    await telegram.stop();
+    restoreFile(config.CONFIG_PATH, cfgSnapshot);
   }
 });

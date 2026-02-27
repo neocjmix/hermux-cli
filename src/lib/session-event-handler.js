@@ -32,6 +32,8 @@ function createSessionEventHandler({ sendRawTelegram, onDeliver }) {
       if (!ctx.routed || !ctx.routed.deliver) {
         return {
           ...ctx,
+          delivered: false,
+          dropReason: String((ctx.routed && ctx.routed.reason) || 'router_rejected'),
           handled: true,
         };
       }
@@ -48,6 +50,8 @@ function createSessionEventHandler({ sendRawTelegram, onDeliver }) {
       await sendRawTelegram(ctx.routed.payload, 'raw_event');
       return {
         ...ctx,
+        delivered: true,
+        dropReason: '',
         handled: true,
       };
     },
@@ -59,12 +63,16 @@ function createSessionEventHandler({ sendRawTelegram, onDeliver }) {
       activeSessionId: String(activeSessionId || ''),
       routed: null,
       nextSessionId: String(activeSessionId || ''),
+      delivered: false,
+      dropReason: '',
       handled: false,
     });
 
     return {
       handled: !!(result && result.handled),
       nextSessionId: String((result && result.nextSessionId) || ''),
+      delivered: !!(result && result.delivered),
+      dropReason: String((result && result.dropReason) || ''),
     };
   };
 }

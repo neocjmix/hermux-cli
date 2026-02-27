@@ -28,16 +28,53 @@ function unwrapRawContent(evt) {
   return normalizeJsonString(JSON.stringify(evt || {}));
 }
 
+function parseJson(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch (_err) {
+    return null;
+  }
+}
+
+function extractSessionIdsFromRawEvent(rawEvent) {
+  const evt = rawEvent && typeof rawEvent === 'object' ? rawEvent : null;
+  if (!evt) return [];
+  const props = evt.properties && typeof evt.properties === 'object' ? evt.properties : {};
+  const ids = [];
+  ids.push(toSessionId(props.sessionID));
+  ids.push(toSessionId(props.part && props.part.sessionID));
+  ids.push(toSessionId(props.info && props.info.sessionID));
+  return ids.filter(Boolean);
+}
+
 function routeEventBySession({ event, activeSessionId }) {
   const currentSessionId = toSessionId(activeSessionId);
   const eventSessionId = toSessionId(event && event.sessionId);
-  const resolvedSessionId = currentSessionId || eventSessionId;
+  const parsed = parseJson(event && event.content);
+  const payloadSessionIds = extractSessionIdsFromRawEvent(parsed);
 
-  if (currentSessionId && eventSessionId && currentSessionId !== eventSessionId) {
+  if (eventSessionId && payloadSessionIds.length > 0) {
+    const hasConflict = payloadSessionIds.some((sid) => sid !== eventSessionId);
+    if (hasConflict) {
+      return {
+        deliver: false,
+        sessionId: eventSessionId,
+        payload: '',
+        reason: 'conflicting_session_identity',
+      };
+    }
+  }
+
+  const resolvedSessionId = eventSessionId || currentSessionId;
+
+  if (!resolvedSessionId) {
     return {
       deliver: false,
-      sessionId: currentSessionId,
+      sessionId: '',
       payload: '',
+      reason: 'missing_session_identity',
     };
   }
 

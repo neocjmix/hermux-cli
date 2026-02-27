@@ -116,6 +116,7 @@ Extraction rule:
 - Router MUST process session events regardless of run active/idle state.
 - Router MUST NOT require `runId` to accept session events.
 - Router MUST NOT drop session events solely due turn mismatch or run terminal state.
+- Router MUST NOT drop a session event only because it differs from currently active session binding; it MUST route by extracted event session identity.
 
 ### 7.2 Global Lane Contract
 
@@ -234,3 +235,4 @@ Revised session-reuse rule:
 6. Audit timeline can reconstruct event accept/drop order for a repo/session incident.
 7. Events are never dropped solely due run lifecycle state (`idle`, `completed`, or no active run).
 8. Within same session, out-of-order events are tolerated and audited without cross-session leakage.
+9. Session-resolved late events MUST still be accepted and rendered when `OMG_SDK_POST_COMPLETE_LINGER_MS=0`.

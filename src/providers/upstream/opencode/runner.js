@@ -12,7 +12,7 @@ const SDK_PORT_RANGE_MIN = parseInt(process.env.OMG_SDK_PORT_RANGE_MIN || '43100
 const SDK_PORT_RANGE_MAX = parseInt(process.env.OMG_SDK_PORT_RANGE_MAX || '43999', 10);
 const SDK_PORT_PICK_ATTEMPTS = parseInt(process.env.OMG_SDK_PORT_PICK_ATTEMPTS || '60', 10);
 const SDK_IDLE_DRAIN_MS = parseInt(process.env.OMG_SDK_IDLE_DRAIN_MS || '220', 10);
-const SDK_POST_COMPLETE_LINGER_MS = parseInt(process.env.OMG_SDK_POST_COMPLETE_LINGER_MS || '1200', 10);
+const SDK_POST_COMPLETE_LINGER_MS = parseInt(process.env.OMG_SDK_POST_COMPLETE_LINGER_MS || '2200', 10);
 const SDK_OBSERVER_IDLE_AFTER_DONE_MS = parseInt(process.env.OMG_SDK_OBSERVER_IDLE_AFTER_DONE_MS || '45000', 10);
 const SDK_RAW_PASSTHROUGH = true;
 
