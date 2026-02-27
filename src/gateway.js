@@ -37,9 +37,8 @@ const {
   runSessionUnrevert,
   stopAllRuntimeExecutors,
   getRuntimeStatusForInstance,
-  createRenderState,
-  applyPayload,
-  buildRunViewFromRenderState: buildRunViewFromRenderStateForOpencode,
+  createRunViewSnapshotState,
+  applyPayloadToRunViewSnapshot,
 } = upstreamProvider;
 
 const {
@@ -64,7 +63,7 @@ const REVERT_TARGET_LIMIT_PER_CHAT = 240;
 const OPENCODE_CONFIG_PATH = process.env.OMG_OPENCODE_CONFIG_PATH || path.join(process.env.HOME || '', '.config', 'opencode', 'opencode.json');
 const OMO_CONFIG_PATH = process.env.OMG_OMO_CONFIG_PATH || path.join(process.env.HOME || '', '.config', 'opencode', 'oh-my-opencode.json');
 const AUDIT_STRING_MAX = parseInt(process.env.OMG_AUDIT_STRING_MAX || '16000', 10);
-const APPLY_PAYLOAD_THROTTLE_MS = parseInt(process.env.OMG_APPLY_PAYLOAD_THROTTLE_MS || '1000', 10);
+const APPLY_PAYLOAD_THROTTLE_MS = parseInt(process.env.OMG_APPLY_PAYLOAD_THROTTLE_MS || '10', 10);
 const auditLogger = makeAuditLogger(RUNTIME_DIR);
 let connectMutationQueue = Promise.resolve();
 let restartMutationQueue = Promise.resolve();
@@ -2671,7 +2670,12 @@ function clearRunRenderStateAtRunStart(state, sessionId) {
   state.sessionRenderStates.delete(sid);
 
   const latest = state.latestSessionRenderState;
-  const latestSid = String(latest && latest.sessionId ? latest.sessionId : '').trim();
+  const latestSid = String(
+    (latest && latest.snapshot && latest.snapshot.sessionId)
+    || (latest && latest.renderState && latest.renderState.sessionId)
+    || (latest && latest.sessionId)
+    || ''
+  ).trim();
   if (latestSid === sid) {
     state.latestSessionRenderState = null;
   }
@@ -3078,7 +3082,7 @@ async function startPromptRun(bot, repo, state, runItem) {
           state.sessionRenderStates = new Map();
         }
         const payloads = Array.isArray(payloadBatch) ? payloadBatch : [payloadBatch];
-        let next = state.sessionRenderStates.get(key) || createRenderState(key);
+        let snapshotState = state.sessionRenderStates.get(key) || createRunViewSnapshotState(key);
         auditRun('run.session_event.apply.batch.begin', {
           sid: key,
           batchSize: payloads.length,
@@ -3086,10 +3090,22 @@ async function startPromptRun(bot, repo, state, runItem) {
         for (const payload of payloads) {
           renderSeq += 1;
           state.sessionRenderSeq = renderSeq;
-          next = applyPayload(next, payload, renderSeq);
+          const currentContext = state.currentRunContext && typeof state.currentRunContext === 'object'
+            ? state.currentRunContext
+            : null;
+          const runViewRunId = state.runView && state.runView.runId ? String(state.runView.runId) : String(runId);
+          const minMessageTimeMs = Number(currentContext && currentContext.startedAtMs ? currentContext.startedAtMs : 0) || 0;
+          snapshotState = applyPayloadToRunViewSnapshot(snapshotState, payload, renderSeq, {
+            splitByLimit,
+            maxLen: TG_MAX_LEN,
+            runId: runViewRunId,
+            minMessageTimeMs,
+            isFinal: false,
+          });
         }
-        state.sessionRenderStates.set(key, next);
-        state.latestSessionRenderState = next;
+        const next = snapshotState && snapshotState.renderState ? snapshotState.renderState : null;
+        state.sessionRenderStates.set(key, snapshotState);
+        state.latestSessionRenderState = snapshotState;
         auditRun('run.session_event.apply.begin', {
           sid: key,
           renderSeq,
@@ -3099,27 +3115,20 @@ async function startPromptRun(bot, repo, state, runItem) {
         auditRun('run.session_event.apply.end', {
           sid: key,
           renderSeq,
-          messageCount: Array.isArray(next.messages && next.messages.order) ? next.messages.order.length : 0,
-          latestAssistantMessageId: next.render && next.render.latestAssistantMessageId
+          messageCount: Array.isArray(next && next.messages && next.messages.order) ? next.messages.order.length : 0,
+          latestAssistantMessageId: next && next.render && next.render.latestAssistantMessageId
             ? next.render.latestAssistantMessageId
             : '',
-          latestAssistantTextLength: String(next.render && next.render.latestAssistantText || '').length,
+          latestAssistantTextLength: String(next && next.render && next.render.latestAssistantText || '').length,
         });
         auditRun('run.session_event.apply.batch.end', {
           sid: key,
           batchSize: payloads.length,
           highestPriority: payloads.reduce((acc, item) => Math.max(acc, payloadThrottleRank(item)), 0),
         });
-        const currentContext = state.currentRunContext && typeof state.currentRunContext === 'object'
-          ? state.currentRunContext
-          : null;
-        const runViewRunId = state.runView && state.runView.runId ? String(state.runView.runId) : String(runId);
-        const minMessageTimeMs = Number(currentContext && currentContext.startedAtMs ? currentContext.startedAtMs : 0) || 0;
+        const snapshot = snapshotState && snapshotState.snapshot ? snapshotState.snapshot : null;
         await reconcileRunView(
-          buildRunViewFromRenderStateForOpencode(next, splitByLimit, TG_MAX_LEN, {
-            runId: runViewRunId,
-            minMessageTimeMs,
-          }),
+          snapshot && Array.isArray(snapshot.messages) ? snapshot.messages : [],
           { isFinalState: false }
         );
       },
@@ -3288,21 +3297,16 @@ async function startPromptRun(bot, repo, state, runItem) {
       }
 
       if (RAW_EVENT_PASSTHROUGH) {
-        const finalState = activeSessionId
+        const finalSnapshotState = activeSessionId
           && state.sessionRenderStates instanceof Map
           ? state.sessionRenderStates.get(activeSessionId)
           : state.latestSessionRenderState;
-        if (finalState) {
-          const currentContext = state.currentRunContext && typeof state.currentRunContext === 'object'
-            ? state.currentRunContext
+        if (finalSnapshotState) {
+          const finalSnapshot = finalSnapshotState.snapshot && typeof finalSnapshotState.snapshot === 'object'
+            ? finalSnapshotState.snapshot
             : null;
-          const runViewRunId = state.runView && state.runView.runId ? String(state.runView.runId) : String(runId);
-          const minMessageTimeMs = Number(currentContext && currentContext.startedAtMs ? currentContext.startedAtMs : 0) || 0;
           await reconcileRunView(
-            buildRunViewFromRenderStateForOpencode(finalState, splitByLimit, TG_MAX_LEN, {
-              runId: runViewRunId,
-              minMessageTimeMs,
-            }),
+            finalSnapshot && Array.isArray(finalSnapshot.messages) ? finalSnapshot.messages : [],
             { isFinalState: true }
           );
         }

@@ -40,7 +40,7 @@ This is the canonical documentation entrypoint.
 
 - `docs/specs/COMPONENT_CONTRACTS.md`
   - Audience: implementers and testers
-  - Purpose: interface-level contracts (CLI, config, routing, runner, transforms)
+  - Purpose: interface-level contracts (CLI, config, routing, runner, transforms, run-view snapshot boundary)
   - Update when: function-level/public module contract changes
 
 - `docs/specs/TELEGRAM_E2E_STUB_SPEC.md`

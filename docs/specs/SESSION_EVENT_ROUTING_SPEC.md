@@ -236,3 +236,4 @@ Revised session-reuse rule:
 7. Events are never dropped solely due run lifecycle state (`idle`, `completed`, or no active run).
 8. Within same session, out-of-order events are tolerated and audited without cross-session leakage.
 9. Session-resolved late events MUST still be accepted and rendered when `OMG_SDK_POST_COMPLETE_LINGER_MS=0`.
+10. Downstream delivery path MUST receive materialized run-view snapshots and MUST NOT require provider-specific raw event field knowledge.

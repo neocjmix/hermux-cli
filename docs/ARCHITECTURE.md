@@ -50,6 +50,25 @@ Event ingress is unified at Telegram update level and then split into command/ca
 - Runtime event adapter: `runOpencode` in `src/lib/runner.js` normalizes SDK and command transports into internal event primitives (`step_start`, `text`, `tool_use`, `wait`, `raw`).
 - Finalization path: `startPromptRun` in `src/gateway.js` merges stream/meta final text, persists session mapping, updates status panels, and dequeues next prompt FIFO.
 
+### Run View Snapshot Boundary
+
+The canonical upstream->downstream rendering boundary is `RunViewSnapshot`.
+
+- Upstream responsibility: parse provider-specific raw events and materialize snapshot state.
+- Downstream responsibility: consume snapshot text blocks and apply channel diff/send/edit/delete.
+
+Current module mapping:
+
+- Snapshot materializer: `src/providers/upstream/opencode/run-view-snapshot.js`
+- Upstream event state projection: `src/providers/upstream/opencode/render-state.js`
+- Snapshot text building: `src/providers/upstream/opencode/view-builder.js`
+- Downstream reconcile execution: `src/providers/downstream/telegram/view-reconciler.js`
+
+Boundary rule:
+
+- Downstream modules MUST NOT depend on OpenCode raw event fields (`message.part.delta`, `session.status`, etc.).
+- Gateway orchestrates snapshot flow and MUST pass provider-agnostic snapshot messages into downstream reconcile.
+
 ### Event Concurrency Contract
 
 - Per-repo serialization uses `withStateDispatchLock` in `src/gateway.js` and `src/providers/downstream/telegram/gateway-message-handler.js`.

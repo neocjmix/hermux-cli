@@ -82,6 +82,29 @@ Unsupported optional operations MUST fail with explicit capability errors.
 
 Delivery adapters MUST NOT mutate canonical event meaning. Presentation formatting MAY be applied per channel.
 
+### 3.2.1 Run View Snapshot Boundary (Normative)
+
+For streaming answer delivery, upstream logic MUST emit a provider-agnostic `RunViewSnapshot` before downstream delivery.
+
+Required shape:
+
+- `runId: string`
+- `sessionId: string`
+- `messages: string[]` (ordered raw text blocks ready for channel diff/send)
+- `isFinal: boolean`
+
+Optional metadata:
+
+- `updatedAtMs: number`
+- `meta: object`
+
+Rules:
+
+- Downstream adapters MUST consume only `RunViewSnapshot` (or commands derived only from snapshot diff).
+- Downstream adapters MUST NOT parse provider-specific raw event schemas (for example OpenCode `message.part.delta`, `session.status`, etc.).
+- Provider/event-specific parsing MUST remain in upstream adapter/normalizer layer.
+- Last-snapshot application MUST be safe because snapshot is already materialized view state.
+
 ### 3.3 SessionRoutingPolicy
 
 Routing policy MUST provide deterministic functions:
@@ -121,8 +144,9 @@ Execution lifecycle MUST follow:
 2. start upstream run with adapter
 3. normalize incoming events
 4. apply session routing policy
-5. deliver canonical events via downstream adapter
-6. update session binding when required by policy
+5. materialize `RunViewSnapshot` in upstream boundary
+6. deliver snapshot via downstream adapter
+7. update session binding when required by policy
 
 Run completion MUST NOT imply adapter-specific event reinterpretation.
 

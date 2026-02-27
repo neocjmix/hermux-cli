@@ -108,3 +108,27 @@ Normative adapter and DI contracts are defined in:
 - `docs/specs/ADAPTER_STRATEGY_DI_SPEC.md`
 
 Component-level implementations that touch upstream runtime providers or downstream delivery channels MUST stay aligned with that spec.
+
+## 10) RunView Snapshot Contract
+
+Interface-level boundary for rendering flow:
+
+- Upstream emits a materialized `RunViewSnapshot` with:
+  - `runId: string`
+  - `sessionId: string`
+  - `messages: string[]`
+  - `isFinal: boolean`
+- Downstream consumes `messages` (or commands derived from message diff) only.
+
+Contract rules:
+
+- Downstream components MUST NOT parse provider raw event schemas.
+- Upstream components own provider event parsing and state projection.
+- Snapshot emission must allow last-snapshot application without semantic loss at downstream boundary.
+
+Current implementation anchors:
+
+- `src/providers/upstream/opencode/run-view-snapshot.js`
+- `src/providers/upstream/opencode/render-state.js`
+- `src/providers/upstream/opencode/view-builder.js`
+- `src/providers/downstream/telegram/view-reconciler.js`
