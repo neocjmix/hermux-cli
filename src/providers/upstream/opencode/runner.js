@@ -1,6 +1,5 @@
 'use strict';
 
-const { spawn } = require('child_process');
 const fs = require('fs');
 const net = require('net');
 const path = require('path');
@@ -174,14 +173,10 @@ async function stopAllRuntimeExecutors() {
 
 function shouldUseSdk(instance) {
   const forced = String(process.env.HERMUX_EXECUTION_TRANSPORT || '').trim().toLowerCase();
-  if (forced === 'command') return false;
-  if (forced === 'sdk') return true;
-
-  const cmd = String(instance.opencodeCommand || '').trim();
-  if (!cmd) return true;
-  const parts = cmd.split(/\s+/).filter(Boolean);
-  const bin = String(parts[0] || '');
-  return /^(.+\/)?opencode$/.test(bin);
+  if (forced === 'command') {
+    throw new Error('command transport was removed; use sdk transport only');
+  }
+  return true;
 }
 
 let sdkModulePromise = null;
@@ -358,11 +353,18 @@ function addSessionObserver(entry, sessionId, observer, instance, options) {
     const cur = entry.observersBySession.get(sid);
     if (!cur) return;
     cur.delete(observer);
-    if (cur.size === 0) entry.observersBySession.delete(sid);
+    let droppedBuffered = 0;
+    if (cur.size === 0) {
+      entry.observersBySession.delete(sid);
+      const buffered = entry.sessionBuffers.get(sid);
+      droppedBuffered = Array.isArray(buffered) ? buffered.length : 0;
+      entry.sessionBuffers.delete(sid);
+    }
     queueScopeAudit(entry, instance, 'router.observer.detach', {
       lane: 'session',
       sessionId: sid,
       observerCount: cur.size,
+      droppedBuffered,
     });
   };
 }
@@ -594,233 +596,6 @@ function unwrapData(result) {
   }
   if (Object.prototype.hasOwnProperty.call(result, 'data')) return result.data;
   return result;
-}
-
-function runViaCommand(instance, prompt, { onEvent, onDone, onError, sessionId }) {
-  const cmdParts = String(instance.opencodeCommand || '').trim().split(/\s+/).filter(Boolean);
-  const cmd = cmdParts[0] || 'opencode';
-  const cmdArgs = [...cmdParts.slice(1), '--format', 'json'];
-  if (sessionId) cmdArgs.push('--session', sessionId);
-  cmdArgs.push(prompt);
-
-  const { logStream } = setupLogStream(instance, prompt);
-  const startedAt = Date.now();
-  let eventSeq = 0;
-  let logClosed = false;
-  logStream.on('error', () => {});
-
-  function trace(kind, payload) {
-    const rec = {
-      ts: new Date().toISOString(),
-      tMs: Date.now() - startedAt,
-      transport: 'command',
-      kind,
-      eventSeq,
-      payload: payload || {},
-    };
-    try {
-      if (logClosed || logStream.destroyed || logStream.writableEnded) return;
-      logStream.write(`[trace] ${JSON.stringify(rec)}\n`);
-    } catch (_err) {
-    }
-  }
-
-  const proc = spawn(cmd, cmdArgs, {
-    cwd: instance.workdir,
-    env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' },
-    detached: process.platform !== 'win32',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-
-  let lineBuf = '';
-  let stderrBuf = '';
-  let killed = false;
-  let settled = false;
-  let latestSessionId = sessionId || '';
-  let latestFinalText = '';
-  const stderrSamples = [];
-  const state = { rateLimit: null };
-  let eventQueue = Promise.resolve();
-
-  function dispatchEvent(event) {
-    eventSeq += 1;
-    trace('dispatch.enqueue', {
-      type: event && event.type ? event.type : 'unknown',
-      textKind: event && event.textKind ? event.textKind : null,
-      sessionId: event && event.sessionId ? event.sessionId : null,
-      content: event && typeof event.content === 'string' ? event.content : '',
-      contentLength: event && typeof event.content === 'string' ? event.content.length : 0,
-    });
-    eventQueue = eventQueue.then(() => Promise.resolve(onEvent(event)));
-    return eventQueue;
-  }
-
-  function settleDone(exitCode, timeoutMsg, meta) {
-    if (settled) return;
-    settled = true;
-    trace('settle.done', {
-      exitCode,
-      timeoutMsg,
-      meta,
-    });
-    onDone(exitCode, timeoutMsg, meta);
-  }
-
-  function settleError(err) {
-    if (settled) return;
-    settled = true;
-    trace('settle.error', {
-      message: String(err && err.message ? err.message : err || ''),
-    });
-    onError(err);
-  }
-
-  function mergeTextChunks(prev, next) {
-    const a = String(prev || '');
-    const b = String(next || '');
-    if (!a) return b;
-    if (!b) return a;
-    if (b.includes(a)) return b;
-    if (a.includes(b)) return a;
-    return `${a}\n${b}`;
-  }
-
-  function parseStderrChunk(chunk) {
-    stderrBuf += chunk;
-    const lines = stderrBuf.split('\n');
-    stderrBuf = lines.pop();
-    lines.forEach((line) => {
-      const trimmed = String(line || '').trim();
-      if (!trimmed) return;
-      stderrSamples.push(trimmed);
-      if (stderrSamples.length > 5) stderrSamples.shift();
-      maybeCaptureRateLimit(state, trimmed);
-    });
-  }
-
-  function parseLine(line) {
-    const trimmed = line.trim();
-    if (!trimmed) return;
-    try {
-      const evt = JSON.parse(trimmed);
-      const part = evt.part || {};
-      const evtSessionId = String(evt.sessionID || part.sessionID || '').trim();
-      if (evtSessionId) latestSessionId = evtSessionId;
-
-      if (evt.type === 'step_start') {
-        dispatchEvent({ type: 'step_start', sessionId: latestSessionId });
-        return;
-      }
-      if (evt.type === 'step_finish') {
-        dispatchEvent({ type: 'step_finish', reason: part.reason || null, sessionId: latestSessionId });
-        return;
-      }
-      if (evt.type === 'text') {
-        const text = String(part.text || '');
-        if (text.trim()) latestFinalText = mergeTextChunks(latestFinalText, text);
-        trace('command.text.parsed', {
-          text,
-          textLength: text.length,
-          latestFinalLength: latestFinalText.length,
-        });
-        dispatchEvent({ type: 'text', content: text, textKind: 'stream', sessionId: latestSessionId });
-        return;
-      }
-      if (evt.type === 'tool_use') {
-        const toolState = part.state || {};
-        dispatchEvent({
-          type: 'tool_use',
-          name: part.tool || 'tool',
-          input: toolState.input || {},
-          output: toolState.output || '',
-          sessionId: latestSessionId,
-        });
-        return;
-      }
-      dispatchEvent({ type: 'raw', content: trimmed, sessionId: latestSessionId });
-    } catch {
-      dispatchEvent({ type: 'raw', content: trimmed, sessionId: latestSessionId });
-    }
-  }
-
-  proc.stdout.on('data', (data) => {
-    const str = data.toString();
-    logStream.write(str);
-    lineBuf += str;
-    const lines = lineBuf.split('\n');
-    lineBuf = lines.pop();
-    lines.forEach(parseLine);
-  });
-
-  proc.stderr.on('data', (data) => {
-    const str = data.toString();
-    logStream.write(str);
-    parseStderrChunk(str);
-  });
-
-  const timeout = setTimeout(() => {
-    if (!proc.killed) {
-      killed = true;
-      proc.kill('SIGTERM');
-      setTimeout(() => {
-        if (!proc.killed) {
-          proc.kill('SIGKILL');
-          try {
-            if (proc.stdout && !proc.stdout.destroyed) proc.stdout.destroy();
-            if (proc.stderr && !proc.stderr.destroyed) proc.stderr.destroy();
-          } catch (_err) {
-          }
-        }
-      }, 5000);
-    }
-  }, MAX_PROCESS_SEC * 1000);
-
-  proc.on('close', async (code) => {
-    clearTimeout(timeout);
-    if (lineBuf.trim()) parseLine(lineBuf);
-    if (stderrBuf.trim()) {
-      const tail = stderrBuf.trim();
-      stderrSamples.push(tail);
-      if (stderrSamples.length > 5) stderrSamples.shift();
-      maybeCaptureRateLimit(state, tail);
-    }
-    logStream.end();
-    logClosed = true;
-
-    const meta = {
-      sessionId: latestSessionId,
-      rateLimit: state.rateLimit,
-      stderrSamples: stderrSamples.slice(),
-      finalText: latestFinalText,
-    };
-    try {
-      trace('command.close.await_event_queue', {
-        code,
-        killed,
-      });
-      await eventQueue;
-      trace('command.close.event_queue_drained', {
-        finalTextLength: latestFinalText.length,
-      });
-    } catch (err) {
-      settleError(err instanceof Error ? err : new Error(String(err || 'event dispatch failed')));
-      return;
-    }
-    if (killed) {
-      settleDone(null, `Process timed out after ${MAX_PROCESS_SEC}s`, meta);
-    } else {
-      settleDone(code, null, meta);
-    }
-  });
-
-  proc.on('error', (err) => {
-    clearTimeout(timeout);
-    logStream.end();
-    logClosed = true;
-    settleError(err);
-  });
-
-  return proc;
 }
 
 function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
@@ -1418,24 +1193,8 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
 }
 
 function runOpencode(instance, prompt, handlers) {
-  if (shouldUseSdk(instance)) {
-    const handle = runViaSdk(instance, prompt, {
-      onEvent: handlers.onEvent,
-      onDone: (...args) => {
-        endRuntimeRun(instance, handle);
-        handlers.onDone(...args);
-      },
-      onError: (err) => {
-        endRuntimeRun(instance, handle);
-        handlers.onError(err);
-      },
-      sessionId: handlers.sessionId,
-    });
-    beginRuntimeRun(instance, 'sdk', handle);
-    return handle;
-  }
-
-  const handle = runViaCommand(instance, prompt, {
+  shouldUseSdk(instance);
+  const handle = runViaSdk(instance, prompt, {
     onEvent: handlers.onEvent,
     onDone: (...args) => {
       endRuntimeRun(instance, handle);
@@ -1447,7 +1206,7 @@ function runOpencode(instance, prompt, handlers) {
     },
     sessionId: handlers.sessionId,
   });
-  beginRuntimeRun(instance, 'command', handle);
+  beginRuntimeRun(instance, 'sdk', handle);
   return handle;
 }
 
@@ -1458,13 +1217,7 @@ async function subscribeSessionEvents(instance, sessionId, handlers) {
     throw new Error('handlers.onEvent is required');
   }
 
-  if (!shouldUseSdk(instance)) {
-    return {
-      sessionId: sid,
-      mode: 'command',
-      unsubscribe: async () => {},
-    };
-  }
+  shouldUseSdk(instance);
 
   const runtimeEntry = await getOrCreateSdkRuntime(instance);
   await ensureSdkEventPump(instance, runtimeEntry);
