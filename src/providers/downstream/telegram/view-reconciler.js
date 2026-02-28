@@ -1,5 +1,11 @@
 'use strict';
 
+const { md2html } = require('../../../lib/md2html');
+
+function formatRunViewTextForTelegram(text) {
+  return md2html(String(text == null ? '' : text));
+}
+
 function buildRunViewReconcileCommands(currentTexts, currentMessageIds, nextTexts, isFinalState) {
   const commands = [];
   const common = Math.min(currentTexts.length, nextTexts.length);
@@ -49,7 +55,9 @@ async function reconcileRunViewForTelegram(params) {
 
   const currentTexts = Array.isArray(currentView && currentView.texts) ? currentView.texts : [];
   const messageIds = Array.isArray(currentView && currentView.messageIds) ? currentView.messageIds.slice() : [];
-  const targetTexts = Array.isArray(nextTexts) ? nextTexts : [];
+  const targetTexts = Array.isArray(nextTexts)
+    ? nextTexts.map((text) => formatRunViewTextForTelegram(text))
+    : [];
   const commands = buildRunViewReconcileCommands(currentTexts, messageIds, targetTexts, isFinalState);
   const stats = {
     commandCount: commands.length,
@@ -70,7 +78,7 @@ async function reconcileRunViewForTelegram(params) {
       });
     } else if (command.op === 'send') {
       stats.sendCount += 1;
-      const sent = await sendText(bot, chatId, command.text, undefined, {
+      const sent = await sendText(bot, chatId, command.text, { parse_mode: 'HTML' }, {
         ...runAuditMeta,
         channel: 'run_view_send',
         index: command.index,

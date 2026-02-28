@@ -1442,10 +1442,11 @@ function extractMermaidBlocks(text) {
   const src = String(text || '');
   const out = [];
   const re = /```mermaid\s*([\s\S]*?)```/gi;
-  let m = null;
-  while ((m = re.exec(src)) !== null) {
+  let m = re.exec(src);
+  while (m !== null) {
     const body = String(m[1] || '').trim();
     if (body) out.push(body);
+    m = re.exec(src);
   }
   return out;
 }
@@ -2788,9 +2789,9 @@ function createTrailingThrottleProcessor({ intervalMs, handler, selectPending })
           hasPending = false;
           pendingValue = undefined;
           void invoke(nextValue);
-          return;
+        } else {
+          schedule(delay, invoke);
         }
-        schedule(delay, invoke);
       }
     }
   };
@@ -3073,7 +3074,7 @@ async function startPromptRun(bot, repo, state, runItem) {
       nextTexts: safeNextTexts,
       isFinalState,
       sendText: safeSend,
-      editText: editPlain,
+      editText: editHtml,
       deleteMessage: safeDeleteMessage,
     });
     const nextMessageIds = Array.isArray(nextView && nextView.messageIds) ? nextView.messageIds : [];
