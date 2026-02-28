@@ -199,6 +199,25 @@ function serializePollingError(err) {
   };
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getTelegramRetryAfterSeconds(err) {
+  const body = err && err.response && err.response.body && typeof err.response.body === 'object'
+    ? err.response.body
+    : null;
+  const params = body && body.parameters && typeof body.parameters === 'object'
+    ? body.parameters
+    : null;
+  const raw = params && params.retry_after != null ? Number(params.retry_after) : NaN;
+  return Number.isFinite(raw) && raw > 0 ? raw : 0;
+}
+
+function isMessageNotModifiedError(err) {
+  return String(err && err.message || '').includes('message is not modified');
+}
+
 function getHelpText() {
   return [
     'Commands:',
@@ -1131,13 +1150,34 @@ async function safeSend(bot, chatId, text, opts, auditMeta) {
     });
     return message;
   } catch (err) {
-    console.error('send failed:', err.code || err.message, '| chat:', chatId, '| parse_mode:', opts && opts.parse_mode ? opts.parse_mode : 'none');
+    let primaryErr = err;
+    const retryAfterSeconds = getTelegramRetryAfterSeconds(primaryErr);
+    if (retryAfterSeconds > 0) {
+      const waitMs = (retryAfterSeconds * 1000) + Math.floor(Math.random() * 250);
+      await sleep(waitMs);
+      try {
+        const retryMessage = await bot.sendMessage(chatId, text, opts);
+        audit('telegram.send', {
+          ok: true,
+          stage: 'retry_after',
+          chatId: String(chatId),
+          parseMode,
+          messageId: retryMessage && retryMessage.message_id ? retryMessage.message_id : null,
+          textPreview: preview,
+          meta: auditMeta || null,
+        });
+        return retryMessage;
+      } catch (retryErr) {
+        primaryErr = retryErr;
+      }
+    }
+    console.error('send failed:', primaryErr.code || primaryErr.message, '| chat:', chatId, '| parse_mode:', opts && opts.parse_mode ? opts.parse_mode : 'none');
     audit('telegram.send', {
       ok: false,
       stage: 'primary',
       chatId: String(chatId),
       parseMode,
-      error: String(err && (err.code || err.message || err) || ''),
+      error: String(primaryErr && (primaryErr.code || primaryErr.message || primaryErr) || ''),
       textPreview: preview,
       meta: auditMeta || null,
     });
@@ -1205,15 +1245,50 @@ async function editHtml(bot, chatId, messageId, html, auditMeta) {
       meta: auditMeta || null,
     });
   } catch (err) {
-    if (!err.message.includes('message is not modified')) {
-      console.error('edit failed:', err.code || err.message, '| chat:', chatId, '| message_id:', messageId);
+    if (isMessageNotModifiedError(err)) {
+      audit('telegram.edit', {
+        ok: true,
+        stage: 'not_modified',
+        chatId: String(chatId),
+        messageId,
+        parseMode: 'HTML',
+        textPreview: preview,
+        meta: auditMeta || null,
+      });
+      return;
+    }
+
+    let primaryErr = err;
+    const retryAfterSeconds = getTelegramRetryAfterSeconds(primaryErr);
+    if (retryAfterSeconds > 0) {
+      const waitMs = (retryAfterSeconds * 1000) + Math.floor(Math.random() * 250);
+      await sleep(waitMs);
+      try {
+        await bot.editMessageText(truncated, { chat_id: chatId, message_id: messageId, parse_mode: 'HTML' });
+        audit('telegram.edit', {
+          ok: true,
+          stage: 'retry_after',
+          chatId: String(chatId),
+          messageId,
+          parseMode: 'HTML',
+          textPreview: preview,
+          meta: auditMeta || null,
+        });
+        return;
+      } catch (retryErr) {
+        primaryErr = retryErr;
+      }
+    }
+
+    if (!isMessageNotModifiedError(primaryErr)) {
+      console.error('edit failed:', primaryErr.code || primaryErr.message, '| chat:', chatId, '| message_id:', messageId);
       audit('telegram.edit', {
         ok: false,
         stage: 'primary',
         chatId: String(chatId),
         messageId,
         parseMode: 'HTML',
-        error: String(err && (err.code || err.message || err) || ''),
+        error: String(primaryErr && (primaryErr.code || primaryErr.message || primaryErr) || ''),
         textPreview: preview,
         meta: auditMeta || null,
       });
@@ -1241,16 +1316,6 @@ async function editHtml(bot, chatId, messageId, html, auditMeta) {
           meta: auditMeta || null,
         });
       }
-    } else {
-      audit('telegram.edit', {
-        ok: true,
-        stage: 'not_modified',
-        chatId: String(chatId),
-        messageId,
-        parseMode: 'HTML',
-        textPreview: preview,
-        meta: auditMeta || null,
-      });
     }
   }
 }

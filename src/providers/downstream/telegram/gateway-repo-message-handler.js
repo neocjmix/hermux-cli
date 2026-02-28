@@ -1,5 +1,11 @@
 'use strict';
 
+const DEFAULT_MAX_PENDING_QUEUE = 40;
+const parsedMaxPendingQueue = Number(process.env.HERMUX_MAX_PENDING_QUEUE || DEFAULT_MAX_PENDING_QUEUE);
+const MAX_PENDING_QUEUE = Number.isFinite(parsedMaxPendingQueue) && parsedMaxPendingQueue > 0
+  ? Math.floor(parsedMaxPendingQueue)
+  : DEFAULT_MAX_PENDING_QUEUE;
+
 function summarizeText(text) {
   const value = String(text || '').replace(/\s+/g, ' ').trim();
   if (!value) return '';
@@ -266,6 +272,19 @@ function createRepoMessageHandler(deps) {
     }
 
     if (state.running) {
+      if (state.queue.length >= MAX_PENDING_QUEUE) {
+        if (typeof audit === 'function') {
+          audit('repo.message.queue.dropped', {
+            repo: repo.name,
+            chatId,
+            queueLength: state.queue.length,
+            maxQueueLength: MAX_PENDING_QUEUE,
+            reason: 'queue_overflow',
+          });
+        }
+        await safeSend(bot, chatId, `System is busy right now. Queue is full (${MAX_PENDING_QUEUE}). Please retry in a moment.`);
+        return;
+      }
       state.queue.push(queuedItem);
       if (typeof audit === 'function') {
         audit('repo.message.queue.enqueued', {
