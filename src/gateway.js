@@ -1526,6 +1526,74 @@ function renderMermaidArtifacts(instance, chatId, blocks) {
   return artifacts;
 }
 
+function collectMermaidBlocksFromTextSegments(segments) {
+  if (!Array.isArray(segments) || segments.length === 0) return [];
+  const merged = segments
+    .map((segment) => String(segment || '').trim())
+    .filter(Boolean)
+    .join('\n\n');
+  if (!merged) return [];
+  return extractMermaidBlocks(merged);
+}
+
+async function sendMermaidArtifactsForRun({ bot, repo, chatId, textSegments, runAuditMeta }) {
+  const mermaidBlocks = collectMermaidBlocksFromTextSegments(textSegments);
+  if (mermaidBlocks.length === 0) return false;
+
+  if (!hasMermaidRenderer()) {
+    await safeSend(
+      bot,
+      chatId,
+      'Mermaid blocks detected, but renderer is unavailable. Install mermaid-cli (`mmdc`) to receive rendered diagrams.',
+      undefined,
+      {
+        ...(runAuditMeta || {}),
+        channel: 'mermaid',
+        reason: 'renderer_unavailable',
+      }
+    );
+    return true;
+  }
+
+  const artifacts = renderMermaidArtifacts(repo, chatId, mermaidBlocks);
+  for (let i = 0; i < artifacts.length; i += 1) {
+    const artifact = artifacts[i];
+    const caption = artifacts.length > 1 ? `Mermaid diagram ${i + 1}/${artifacts.length}` : 'Mermaid diagram';
+    if (artifact.kind === 'svg') {
+      await safeSendDocument(bot, chatId, artifact.path, caption, {
+        ...(runAuditMeta || {}),
+        channel: 'mermaid',
+      });
+      continue;
+    }
+    if (artifact.kind === 'png') {
+      await safeSendPhoto(bot, chatId, artifact.path, caption, {
+        ...(runAuditMeta || {}),
+        channel: 'mermaid',
+      });
+      continue;
+    }
+    if (artifact.kind === 'mmd') {
+      await safeSendDocument(bot, chatId, artifact.path, `${caption} (source, render failed)`, {
+        ...(runAuditMeta || {}),
+        channel: 'mermaid',
+      });
+      await safeSend(
+        bot,
+        chatId,
+        `Mermaid render failed; sent source file instead.\nreason: ${String(artifact.error || '').slice(0, 300)}`,
+        undefined,
+        {
+          ...(runAuditMeta || {}),
+          channel: 'mermaid',
+          reason: 'render_failed',
+        }
+      );
+    }
+  }
+  return true;
+}
+
 function formatToolBrief(evt) {
   const name = evt.name || 'tool';
   const input = evt.input || {};
@@ -2853,6 +2921,7 @@ async function startPromptRun(bot, repo, state, runItem) {
   let waitInfo = null;
   let heartbeatTimer = null;
   let completionHandled = false;
+  let mermaidAttachmentDelivered = false;
   let lastRawPreviewSent = '';
   let lastRawPreviewSentAt = 0;
   let finalUnitMessageIds = [];
@@ -3104,6 +3173,23 @@ async function startPromptRun(bot, repo, state, runItem) {
     });
     view.messageIds = Array.isArray(nextView && nextView.messageIds) ? nextView.messageIds : [];
     view.texts = Array.isArray(nextView && nextView.texts) ? nextView.texts : [];
+
+    if (!mermaidAttachmentDelivered) {
+      const delivered = await sendMermaidArtifactsForRun({
+        bot,
+        repo,
+        chatId,
+        textSegments: safeNextTexts,
+        runAuditMeta,
+      });
+      if (delivered) {
+        mermaidAttachmentDelivered = true;
+        auditRun('run.mermaid.attachment_sent', {
+          textCount: safeNextTexts.length,
+          completionHandled,
+        });
+      }
+    }
   };
 
   const areTextArraysEqual = (a, b) => {
@@ -3449,14 +3535,40 @@ async function startPromptRun(bot, repo, state, runItem) {
           && state.sessionRenderStates instanceof Map
           ? state.sessionRenderStates.get(activeSessionId)
           : state.latestSessionRenderState;
+        let finalSnapshotMessages = [];
         if (finalSnapshotState) {
           const finalSnapshot = finalSnapshotState.snapshot && typeof finalSnapshotState.snapshot === 'object'
             ? finalSnapshotState.snapshot
             : null;
+          finalSnapshotMessages = finalSnapshot && Array.isArray(finalSnapshot.messages)
+            ? finalSnapshot.messages
+            : [];
           await reconcileRunView(
-            finalSnapshot && Array.isArray(finalSnapshot.messages) ? finalSnapshot.messages : [],
+            finalSnapshotMessages,
             { isFinalState: true }
           );
+        }
+        if (!timeoutMsg && exitCode === 0) {
+          const fallbackFinalText = String(
+            outputSnapshot.canonicalFinal
+            || outputSnapshot.finalSeen
+            || outputSnapshot.finalText
+            || outputSnapshot.finalCandidate
+            || ''
+          ).trim();
+          const mermaidSourceSegments = finalSnapshotMessages.length > 0
+            ? finalSnapshotMessages
+            : (fallbackFinalText ? [fallbackFinalText] : []);
+          const delivered = await sendMermaidArtifactsForRun({
+            bot,
+            repo,
+            chatId,
+            textSegments: mermaidSourceSegments,
+            runAuditMeta,
+          });
+          if (delivered) {
+            mermaidAttachmentDelivered = true;
+          }
         }
         auditRun('run.complete', {
           status: timeoutMsg ? 'timeout' : (exitCode === 0 ? 'done' : `exit ${exitCode}`),
@@ -3760,6 +3872,7 @@ module.exports = {
     buildStreamingStatusHtml,
     buildLiveStatusPanelHtml,
     extractMermaidBlocks,
+    collectMermaidBlocksFromTextSegments,
     withRestartMutationLock,
     withStateDispatchLock,
     sendInterruptSignal,

@@ -422,6 +422,17 @@ test('extractMermaidBlocks parses fenced mermaid blocks', () => {
   assert.match(blocks[1], /sequenceDiagram/);
 });
 
+test('collectMermaidBlocksFromTextSegments merges segments and extracts mermaid fences', () => {
+  const blocks = _internal.collectMermaidBlocksFromTextSegments([
+    'prefix\n```mermaid\ngraph TD\nA-->B\n```',
+    'middle',
+    '```mermaid\nsequenceDiagram\nAlice->>Bob: Hi\n```\npostfix',
+  ]);
+  assert.equal(blocks.length, 2);
+  assert.match(blocks[0], /graph TD/);
+  assert.match(blocks[1], /sequenceDiagram/);
+});
+
 test('parseRawEventContent classifies JSON and plain text', () => {
   const json = _internal.parseRawEventContent('{"type":"server.connected"}');
   assert.equal(json.kind, 'json');
