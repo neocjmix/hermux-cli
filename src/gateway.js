@@ -2277,6 +2277,7 @@ function refreshRuntimeRouting(chatRouter, states) {
         interruptTrace: null,
         waitingInfo: null,
         queue: [],
+        deferredRunStartTasks: [],
         panelRefresh: null,
         dispatchQueue: Promise.resolve(),
       });
@@ -2819,6 +2820,28 @@ function clearRunRenderStateAtRunStart(state, sessionId) {
   }
 }
 
+function enqueueDeferredRunStartTask(state, task) {
+  if (!state || typeof state !== 'object') return;
+  if (typeof task !== 'function') return;
+  if (!Array.isArray(state.deferredRunStartTasks)) {
+    state.deferredRunStartTasks = [];
+  }
+  state.deferredRunStartTasks.push(task);
+}
+
+async function runDeferredRunStartTasks(state) {
+  if (!state || typeof state !== 'object') return;
+  const tasks = Array.isArray(state.deferredRunStartTasks) ? state.deferredRunStartTasks.slice() : [];
+  state.deferredRunStartTasks = [];
+  for (const task of tasks) {
+    try {
+      await Promise.resolve(task());
+    } catch (err) {
+      console.error('[deferred-run-start] task failed:', String(err && err.message ? err.message : err || ''));
+    }
+  }
+}
+
 function createTrailingThrottleProcessor({ intervalMs, handler, selectPending }) {
   const waitMs = Number(intervalMs || 0);
   if (typeof handler !== 'function') throw new Error('handler is required');
@@ -2893,6 +2916,8 @@ async function startPromptRun(bot, repo, state, runItem) {
   const chatId = runItem.chatId;
   const promptText = runItem.promptText;
   const isVersionPrompt = !!runItem.isVersionPrompt;
+
+  await runDeferredRunStartTasks(state);
 
   state.running = true;
   state.interruptRequested = false;
@@ -3520,14 +3545,17 @@ async function startPromptRun(bot, repo, state, runItem) {
         state.currentRunContext.sessionId = String(activeSessionId || '').trim();
       }
       if (activeSessionId) {
-        await ensureSessionDelivery(activeSessionId);
-      }
-      if (activeSessionId) {
-        try {
-          setSessionId(repo.name, chatId, activeSessionId);
-        } catch (e) {
-          console.error(`[${repo.name}] failed to persist session id:`, e.message);
-        }
+        const deferredSessionId = String(activeSessionId || '').trim();
+        enqueueDeferredRunStartTask(state, async () => {
+          await ensureSessionDelivery(deferredSessionId);
+        });
+        enqueueDeferredRunStartTask(state, async () => {
+          try {
+            setSessionId(repo.name, chatId, deferredSessionId);
+          } catch (e) {
+            console.error(`[${repo.name}] failed to persist session id:`, e.message);
+          }
+        });
       }
 
       if (RAW_EVENT_PASSTHROUGH) {
@@ -3543,12 +3571,15 @@ async function startPromptRun(bot, repo, state, runItem) {
           finalSnapshotMessages = finalSnapshot && Array.isArray(finalSnapshot.messages)
             ? finalSnapshot.messages
             : [];
-          await reconcileRunView(
-            finalSnapshotMessages,
-            { isFinalState: true }
-          );
+          const deferredFinalSnapshotMessages = finalSnapshotMessages.slice();
+          enqueueDeferredRunStartTask(state, async () => {
+            await reconcileRunView(
+              deferredFinalSnapshotMessages,
+              { isFinalState: true }
+            );
+          });
         }
-        if (!timeoutMsg && exitCode === 0) {
+        if (!timeoutMsg && exitCode === 0 && !mermaidAttachmentDelivered) {
           const fallbackFinalText = String(
             outputSnapshot.canonicalFinal
             || outputSnapshot.finalSeen
@@ -3559,16 +3590,19 @@ async function startPromptRun(bot, repo, state, runItem) {
           const mermaidSourceSegments = finalSnapshotMessages.length > 0
             ? finalSnapshotMessages
             : (fallbackFinalText ? [fallbackFinalText] : []);
-          const delivered = await sendMermaidArtifactsForRun({
-            bot,
-            repo,
-            chatId,
-            textSegments: mermaidSourceSegments,
-            runAuditMeta,
+          const deferredMermaidSourceSegments = mermaidSourceSegments.slice();
+          enqueueDeferredRunStartTask(state, async () => {
+            const delivered = await sendMermaidArtifactsForRun({
+              bot,
+              repo,
+              chatId,
+              textSegments: deferredMermaidSourceSegments,
+              runAuditMeta,
+            });
+            if (delivered) {
+              mermaidAttachmentDelivered = true;
+            }
           });
-          if (delivered) {
-            mermaidAttachmentDelivered = true;
-          }
         }
         auditRun('run.complete', {
           status: timeoutMsg ? 'timeout' : (exitCode === 0 ? 'done' : `exit ${exitCode}`),
@@ -3701,6 +3735,7 @@ function main() {
     interruptTrace: null,
     waitingInfo: null,
     queue: [],
+    deferredRunStartTasks: [],
     panelRefresh: null,
     sessionDelivery: null,
     sessionRenderStates: new Map(),
