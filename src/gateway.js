@@ -50,20 +50,20 @@ const {
 } = downstreamProvider;
 
 const TG_MAX_LEN = 4000;
-const IMAGE_UPLOAD_DIR = '.opencode_mobile_gateway/uploads';
+const IMAGE_UPLOAD_DIR = '.hermux/uploads';
 const DEFAULT_RUNTIME_DIR = path.join(__dirname, '..', 'runtime');
-const RUNTIME_DIR = path.resolve(process.env.OMG_RUNTIME_DIR || DEFAULT_RUNTIME_DIR);
+const RUNTIME_DIR = path.resolve(process.env.HERMUX_RUNTIME_DIR || DEFAULT_RUNTIME_DIR);
 const PID_PATH = path.join(RUNTIME_DIR, 'gateway.pid');
 const LOG_PATH = path.join(RUNTIME_DIR, 'gateway.log');
 const RESTART_NOTICE_PATH = path.join(RUNTIME_DIR, 'restart-notice.json');
-const MERMAID_RENDER_DIR = '.opencode_mobile_gateway/mermaid';
+const MERMAID_RENDER_DIR = '.hermux/mermaid';
 const STREAM_HEARTBEAT_MS = 1500;
 const REVERT_CONFIRM_TTL_MS = 10 * 60 * 1000;
 const REVERT_TARGET_LIMIT_PER_CHAT = 240;
-const OPENCODE_CONFIG_PATH = process.env.OMG_OPENCODE_CONFIG_PATH || path.join(process.env.HOME || '', '.config', 'opencode', 'opencode.json');
-const OMO_CONFIG_PATH = process.env.OMG_OMO_CONFIG_PATH || path.join(process.env.HOME || '', '.config', 'opencode', 'oh-my-opencode.json');
-const AUDIT_STRING_MAX = parseInt(process.env.OMG_AUDIT_STRING_MAX || '16000', 10);
-const APPLY_PAYLOAD_THROTTLE_MS = parseInt(process.env.OMG_APPLY_PAYLOAD_THROTTLE_MS || '10', 10);
+const OPENCODE_CONFIG_PATH = process.env.HERMUX_OPENCODE_CONFIG_PATH || path.join(process.env.HOME || '', '.config', 'opencode', 'opencode.json');
+const OMO_CONFIG_PATH = process.env.HERMUX_OMO_CONFIG_PATH || path.join(process.env.HOME || '', '.config', 'opencode', 'oh-my-opencode.json');
+const AUDIT_STRING_MAX = parseInt(process.env.HERMUX_AUDIT_STRING_MAX || '16000', 10);
+const APPLY_PAYLOAD_THROTTLE_MS = parseInt(process.env.HERMUX_APPLY_PAYLOAD_THROTTLE_MS || '10', 10);
 const auditLogger = makeAuditLogger(RUNTIME_DIR);
 let connectMutationQueue = Promise.resolve();
 let restartMutationQueue = Promise.resolve();
@@ -2573,7 +2573,7 @@ function spawnReplacementDaemon() {
   const child = spawn(process.execPath, [path.join(__dirname, 'cli.js'), 'start', '--foreground'], {
     detached: true,
     stdio: ['ignore', outFd, outFd],
-    env: { ...process.env, OMG_DAEMON_CHILD: '1' },
+    env: { ...process.env, HERMUX_DAEMON_CHILD: '1' },
   });
   child.unref();
   fs.closeSync(outFd);
@@ -2588,7 +2588,7 @@ async function handleRestartCommand(bot, chatId, repo, state) {
       return;
     }
 
-    if (process.env.OMG_DAEMON_CHILD !== '1') {
+    if (process.env.HERMUX_DAEMON_CHILD !== '1') {
       await safeSend(
         bot,
         chatId,
@@ -3537,8 +3537,8 @@ function main() {
   const onboardingSessions = new Map();
   const initSessions = new Map();
   const modelUiState = new Map();
-  const telegramBaseApiUrl = String(process.env.OMG_TELEGRAM_BASE_API_URL || '').trim();
-  const telegramPollingTimeout = Number(process.env.OMG_TELEGRAM_POLLING_TIMEOUT_SECONDS || 0) || 0;
+  const telegramBaseApiUrl = String(process.env.HERMUX_TELEGRAM_BASE_API_URL || '').trim();
+  const telegramPollingTimeout = Number(process.env.HERMUX_TELEGRAM_POLLING_TIMEOUT_SECONDS || 0) || 0;
   const bot = new TelegramBot(botToken, {
     polling: {
       timeout: telegramPollingTimeout,

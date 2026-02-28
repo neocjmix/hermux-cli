@@ -185,7 +185,7 @@ Default policy:
 - Mid-run/mid-process disabling MUST NOT be allowed for reconstructable mode.
 - Recommended controls:
   - CLI: `--audit on|off`
-  - ENV: `OMG_AUDIT_ENABLED=1|0`
+  - ENV: `HERMUX_AUDIT_ENABLED=1|0`
 
 Default during development:
 
@@ -235,5 +235,5 @@ Revised session-reuse rule:
 6. Audit timeline can reconstruct event accept/drop order for a repo/session incident.
 7. Events are never dropped solely due run lifecycle state (`idle`, `completed`, or no active run).
 8. Within same session, out-of-order events are tolerated and audited without cross-session leakage.
-9. Session-resolved late events MUST still be accepted and rendered when `OMG_SDK_POST_COMPLETE_LINGER_MS=0`.
+9. Session-resolved late events MUST still be accepted and rendered when `HERMUX_SDK_POST_COMPLETE_LINGER_MS=0`.
 10. Downstream delivery path MUST receive materialized run-view snapshots and MUST NOT require provider-specific raw event field knowledge.

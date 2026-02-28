@@ -4,8 +4,8 @@ const fs = require('fs');
 const path = require('path');
 
 const DEFAULT_STATE_DIR = path.join(__dirname, '..', '..', 'state');
-const STATE_DIR = path.resolve(process.env.OMG_STATE_DIR || DEFAULT_STATE_DIR);
-const SESSION_MAP_PATH = path.resolve(process.env.OMG_SESSION_MAP_PATH || path.join(STATE_DIR, 'session-map.json'));
+const STATE_DIR = path.resolve(process.env.HERMUX_STATE_DIR || DEFAULT_STATE_DIR);
+const SESSION_MAP_PATH = path.resolve(process.env.HERMUX_SESSION_MAP_PATH || path.join(STATE_DIR, 'session-map.json'));
 
 function normalize(raw) {
   if (!raw || typeof raw !== 'object') return { sessions: {} };

@@ -80,22 +80,22 @@ Legacy `instances[]` configs are normalized during load.
 
 ## Runtime Tuning Environment Variables
 
-- `OMG_MAX_PROCESS_SECONDS`
-- `OMG_SDK_SERVER_START_TIMEOUT_MS`
-- `OMG_SDK_PORT_RANGE_MIN`
-- `OMG_SDK_PORT_RANGE_MAX`
-- `OMG_SDK_PORT_PICK_ATTEMPTS`
-- `OMG_EXECUTION_TRANSPORT` (`sdk` or `command`)
-- `OMG_OPENCODE_SDK_SHIM` (test shim path override)
-- `OMG_SDK_POST_COMPLETE_LINGER_MS` (UX pacing window only; MUST NOT be required for session-event acceptance correctness)
+- `HERMUX_MAX_PROCESS_SECONDS`
+- `HERMUX_SDK_SERVER_START_TIMEOUT_MS`
+- `HERMUX_SDK_PORT_RANGE_MIN`
+- `HERMUX_SDK_PORT_RANGE_MAX`
+- `HERMUX_SDK_PORT_PICK_ATTEMPTS`
+- `HERMUX_EXECUTION_TRANSPORT` (`sdk` or `command`)
+- `HERMUX_OPENCODE_SDK_SHIM` (test shim path override)
+- `HERMUX_SDK_POST_COMPLETE_LINGER_MS` (UX pacing window only; MUST NOT be required for session-event acceptance correctness)
 
 ## Test Profile Isolation
 
 `npm test` and `npm run test:e2e:telegram` run through an isolated profile root (`.tmp/test-profile`) and set:
 
-- `OMG_CONFIG_DIR` / `OMG_CONFIG_PATH`
-- `OMG_STATE_DIR` / `OMG_SESSION_MAP_PATH`
-- `OMG_RUNTIME_DIR`
+- `HERMUX_CONFIG_DIR` / `HERMUX_CONFIG_PATH`
+- `HERMUX_STATE_DIR` / `HERMUX_SESSION_MAP_PATH`
+- `HERMUX_RUNTIME_DIR`
 
 This prevents test runs from mutating developer/production files under `config/`, `state/`, and `runtime/`.
 
@@ -103,7 +103,7 @@ This prevents test runs from mutating developer/production files under `config/`
 
 Hermux now writes dense JSONL audit logs for development/debugging to:
 
-- `runtime/audit-events.jsonl` (or `${OMG_RUNTIME_DIR}/audit-events.jsonl`)
+- `runtime/audit-events.jsonl` (or `${HERMUX_RUNTIME_DIR}/audit-events.jsonl`)
 
 Each record includes:
 
@@ -136,7 +136,7 @@ npm run telegram:stub
 2. Start gateway against stub:
 
 ```bash
-OMG_TELEGRAM_BASE_API_URL=http://127.0.0.1:8081 OMG_TELEGRAM_POLLING_TIMEOUT_SECONDS=0 npm start
+HERMUX_TELEGRAM_BASE_API_URL=http://127.0.0.1:8081 HERMUX_TELEGRAM_POLLING_TIMEOUT_SECONDS=0 npm start
 ```
 
 3. Inject updates (example):
@@ -162,7 +162,7 @@ Reference: `docs/specs/TELEGRAM_E2E_STUB_SPEC.md`.
 ## Packaging Notes
 
 - package name: `@hermux/cli`
-- binary: `hermux` (also `opencode-mobile-gateway` alias)
+- binary: `hermux`
 - publish configuration: public npm package
 
 ## Backlog

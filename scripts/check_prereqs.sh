@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "[check] opencode_mobile_gateway prerequisites"
+echo "[check] hermux prerequisites"
 
 missing=0
 

@@ -266,7 +266,7 @@ The following divergences are required and should remain explicit branches, not 
    - Reason: ultrawork loops can generate long-running tasks; interruption must preempt queued work.
 
 3. Transport compatibility branch is mandatory.
-   - Keep SDK-first with explicit command fallback (`OMG_EXECUTION_TRANSPORT`) in `src/lib/runner.js:163`.
+   - Keep SDK-first with explicit command fallback (`HERMUX_EXECUTION_TRANSPORT`) in `src/lib/runner.js:163`.
    - Reason: plugin or environment constraints may force command transport temporarily.
 
 4. Session continuity by `(repo, chat)` is mandatory.

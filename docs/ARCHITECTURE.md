@@ -79,7 +79,7 @@ Boundary rule:
 
 Development/debug runtime uses dense structured audit logs.
 
-- File: `runtime/audit-events.jsonl` (or `${OMG_RUNTIME_DIR}/audit-events.jsonl`)
+- File: `runtime/audit-events.jsonl` (or `${HERMUX_RUNTIME_DIR}/audit-events.jsonl`)
 - Source: `src/lib/audit-log.js` and integration points in `src/gateway.js`
 - Coverage:
   - inbound Telegram updates (`telegram.update`)

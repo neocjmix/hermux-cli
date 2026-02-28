@@ -18,8 +18,8 @@ function loadRunnerWithEnv(vars) {
 
 test('runOpencode parses structured command events and returns latest session id', async () => {
   const { runOpencode } = loadRunnerWithEnv({
-    OMG_MAX_PROCESS_SECONDS: 10,
-    OMG_EXECUTION_TRANSPORT: 'command',
+    HERMUX_MAX_PROCESS_SECONDS: 10,
+    HERMUX_EXECUTION_TRANSPORT: 'command',
   });
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runner-'));
   const events = [];
@@ -50,8 +50,8 @@ test('runOpencode parses structured command events and returns latest session id
 
 test('runOpencode times out and reports timeout message', async () => {
   const { runOpencode } = loadRunnerWithEnv({
-    OMG_MAX_PROCESS_SECONDS: 1,
-    OMG_EXECUTION_TRANSPORT: 'command',
+    HERMUX_MAX_PROCESS_SECONDS: 1,
+    HERMUX_EXECUTION_TRANSPORT: 'command',
   });
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runner-timeout-'));
 
@@ -78,8 +78,8 @@ test('runOpencode times out and reports timeout message', async () => {
 
 test('runOpencode captures rate limit from stderr metadata', async () => {
   const { runOpencode } = loadRunnerWithEnv({
-    OMG_MAX_PROCESS_SECONDS: 10,
-    OMG_EXECUTION_TRANSPORT: 'command',
+    HERMUX_MAX_PROCESS_SECONDS: 10,
+    HERMUX_EXECUTION_TRANSPORT: 'command',
   });
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runner-ratelimit-'));
 
@@ -108,8 +108,8 @@ test('runOpencode captures rate limit from stderr metadata', async () => {
 
 test('runOpencode command mode preserves multi-chunk text in meta finalText', async () => {
   const { runOpencode } = loadRunnerWithEnv({
-    OMG_MAX_PROCESS_SECONDS: 10,
-    OMG_EXECUTION_TRANSPORT: 'command',
+    HERMUX_MAX_PROCESS_SECONDS: 10,
+    HERMUX_EXECUTION_TRANSPORT: 'command',
   });
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runner-multitext-'));
   const events = [];
@@ -143,9 +143,9 @@ test('runOpencode command mode preserves multi-chunk text in meta finalText', as
 
 test('runOpencode sdk mode streams events and builds final text', async () => {
   const { runOpencode } = loadRunnerWithEnv({
-    OMG_MAX_PROCESS_SECONDS: 10,
-    OMG_EXECUTION_TRANSPORT: 'sdk',
-    OMG_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
+    HERMUX_MAX_PROCESS_SECONDS: 10,
+    HERMUX_EXECUTION_TRANSPORT: 'sdk',
+    HERMUX_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
   });
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runner-sdk-'));
   const events = [];
@@ -176,9 +176,9 @@ test('runOpencode sdk mode streams events and builds final text', async () => {
 
 test('runOpencode sdk mode drains async onEvent work before onDone', async () => {
   const { runOpencode } = loadRunnerWithEnv({
-    OMG_MAX_PROCESS_SECONDS: 10,
-    OMG_EXECUTION_TRANSPORT: 'sdk',
-    OMG_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
+    HERMUX_MAX_PROCESS_SECONDS: 10,
+    HERMUX_EXECUTION_TRANSPORT: 'sdk',
+    HERMUX_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
   });
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runner-sdk-drain-'));
   const eventsAfterDone = [];
@@ -217,9 +217,9 @@ test('runOpencode sdk mode drains async onEvent work before onDone', async () =>
 
 test('runOpencode sdk mode reuses provided session id when valid', async () => {
   const { runOpencode } = loadRunnerWithEnv({
-    OMG_MAX_PROCESS_SECONDS: 10,
-    OMG_EXECUTION_TRANSPORT: 'sdk',
-    OMG_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
+    HERMUX_MAX_PROCESS_SECONDS: 10,
+    HERMUX_EXECUTION_TRANSPORT: 'sdk',
+    HERMUX_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
   });
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runner-sdk-reuse-'));
 
@@ -249,9 +249,9 @@ test('runOpencode sdk mode reuses persistent sdk runtime for same scope', async 
   global.__FAKE_OPENCODE_SDK_STARTS__ = 0;
   global.__FAKE_OPENCODE_SDK_SUBSCRIBES__ = 0;
   const { runOpencode, stopAllRuntimeExecutors } = loadRunnerWithEnv({
-    OMG_MAX_PROCESS_SECONDS: 10,
-    OMG_EXECUTION_TRANSPORT: 'sdk',
-    OMG_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
+    HERMUX_MAX_PROCESS_SECONDS: 10,
+    HERMUX_EXECUTION_TRANSPORT: 'sdk',
+    HERMUX_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
   });
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runner-sdk-reuse-runtime-'));
   const instance = {
@@ -282,10 +282,10 @@ test('runOpencode sdk mode reuses persistent sdk runtime for same scope', async 
 
 test('subscribeSessionEvents replays session events after run completion', async () => {
   const { runOpencode, subscribeSessionEvents, stopAllRuntimeExecutors } = loadRunnerWithEnv({
-    OMG_EXECUTION_TRANSPORT: 'sdk',
-    OMG_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
-    OMG_SDK_IDLE_DRAIN_MS: 10,
-    OMG_SDK_POST_COMPLETE_LINGER_MS: 20,
+    HERMUX_EXECUTION_TRANSPORT: 'sdk',
+    HERMUX_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
+    HERMUX_SDK_IDLE_DRAIN_MS: 10,
+    HERMUX_SDK_POST_COMPLETE_LINGER_MS: 20,
   });
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runner-session-sub-'));
@@ -326,9 +326,9 @@ test('subscribeSessionEvents replays session events after run completion', async
 test('stopAllRuntimeExecutors closes sdk runtime and next run recreates it', async () => {
   global.__FAKE_OPENCODE_SDK_STARTS__ = 0;
   const { runOpencode, stopAllRuntimeExecutors } = loadRunnerWithEnv({
-    OMG_MAX_PROCESS_SECONDS: 10,
-    OMG_EXECUTION_TRANSPORT: 'sdk',
-    OMG_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
+    HERMUX_MAX_PROCESS_SECONDS: 10,
+    HERMUX_EXECUTION_TRANSPORT: 'sdk',
+    HERMUX_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
   });
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runner-sdk-recreate-runtime-'));
   const instance = {
@@ -359,8 +359,8 @@ test('stopAllRuntimeExecutors closes sdk runtime and next run recreates it', asy
 
 test('runSessionRevert calls sdk revert with message and part ids', async () => {
   const { runSessionRevert } = loadRunnerWithEnv({
-    OMG_EXECUTION_TRANSPORT: 'sdk',
-    OMG_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
+    HERMUX_EXECUTION_TRANSPORT: 'sdk',
+    HERMUX_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
   });
 
   const repo = {
@@ -370,8 +370,8 @@ test('runSessionRevert calls sdk revert with message and part ids', async () => 
   };
 
   const bootstrap = loadRunnerWithEnv({
-    OMG_EXECUTION_TRANSPORT: 'sdk',
-    OMG_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
+    HERMUX_EXECUTION_TRANSPORT: 'sdk',
+    HERMUX_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
   });
   await new Promise((resolve, reject) => {
     bootstrap.runOpencode(
@@ -399,8 +399,8 @@ test('runSessionRevert calls sdk revert with message and part ids', async () => 
 
 test('runSessionRevert reports no-op when target id cannot be resolved', async () => {
   const { runSessionRevert } = loadRunnerWithEnv({
-    OMG_EXECUTION_TRANSPORT: 'sdk',
-    OMG_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
+    HERMUX_EXECUTION_TRANSPORT: 'sdk',
+    HERMUX_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
   });
 
   const repo = {
@@ -411,8 +411,8 @@ test('runSessionRevert reports no-op when target id cannot be resolved', async (
 
   const freshSessionId = 'sdk-session-noop-target';
   const bootstrap = loadRunnerWithEnv({
-    OMG_EXECUTION_TRANSPORT: 'sdk',
-    OMG_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
+    HERMUX_EXECUTION_TRANSPORT: 'sdk',
+    HERMUX_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
   });
   await new Promise((resolve, reject) => {
     bootstrap.runOpencode(
@@ -438,8 +438,8 @@ test('runSessionRevert reports no-op when target id cannot be resolved', async (
 
 test('runSessionUnrevert reports noop when no revert state exists', async () => {
   const { runSessionUnrevert } = loadRunnerWithEnv({
-    OMG_EXECUTION_TRANSPORT: 'sdk',
-    OMG_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
+    HERMUX_EXECUTION_TRANSPORT: 'sdk',
+    HERMUX_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
   });
 
   const repo = {
@@ -450,8 +450,8 @@ test('runSessionUnrevert reports noop when no revert state exists', async () => 
 
   const freshSessionId = 'sdk-session-no-revert';
   const bootstrap = loadRunnerWithEnv({
-    OMG_EXECUTION_TRANSPORT: 'sdk',
-    OMG_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
+    HERMUX_EXECUTION_TRANSPORT: 'sdk',
+    HERMUX_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
   });
   await new Promise((resolve, reject) => {
     bootstrap.runOpencode(
@@ -477,10 +477,10 @@ test('runSessionUnrevert reports noop when no revert state exists', async () => 
 
 test('runOpencode sdk mode captures late text that arrives after idle', async () => {
   const { runOpencode } = loadRunnerWithEnv({
-    OMG_MAX_PROCESS_SECONDS: 10,
-    OMG_EXECUTION_TRANSPORT: 'sdk',
-    OMG_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk-idle-tail.js'),
-    OMG_SDK_IDLE_DRAIN_MS: 220,
+    HERMUX_MAX_PROCESS_SECONDS: 10,
+    HERMUX_EXECUTION_TRANSPORT: 'sdk',
+    HERMUX_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk-idle-tail.js'),
+    HERMUX_SDK_IDLE_DRAIN_MS: 220,
   });
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runner-sdk-idle-tail-'));
 
@@ -509,11 +509,11 @@ test('runOpencode sdk mode captures late text that arrives after idle', async ()
 
 test('runOpencode sdk mode keeps handling late deltas after completion signal', async () => {
   const { runOpencode } = loadRunnerWithEnv({
-    OMG_MAX_PROCESS_SECONDS: 10,
-    OMG_EXECUTION_TRANSPORT: 'sdk',
-    OMG_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk-idle-late-delta.js'),
-    OMG_SDK_IDLE_DRAIN_MS: 220,
-    OMG_SDK_POST_COMPLETE_LINGER_MS: 1200,
+    HERMUX_MAX_PROCESS_SECONDS: 10,
+    HERMUX_EXECUTION_TRANSPORT: 'sdk',
+    HERMUX_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk-idle-late-delta.js'),
+    HERMUX_SDK_IDLE_DRAIN_MS: 220,
+    HERMUX_SDK_POST_COMPLETE_LINGER_MS: 1200,
   });
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runner-sdk-idle-late-delta-'));
   const events = [];
@@ -543,11 +543,11 @@ test('runOpencode sdk mode keeps handling late deltas after completion signal', 
 
 test('runOpencode sdk mode ignores stale buffered idle before new run activity', async () => {
   const { runOpencode } = loadRunnerWithEnv({
-    OMG_MAX_PROCESS_SECONDS: 10,
-    OMG_EXECUTION_TRANSPORT: 'sdk',
-    OMG_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk-stale-buffer.js'),
-    OMG_SDK_IDLE_DRAIN_MS: 60,
-    OMG_SDK_POST_COMPLETE_LINGER_MS: 120,
+    HERMUX_MAX_PROCESS_SECONDS: 10,
+    HERMUX_EXECUTION_TRANSPORT: 'sdk',
+    HERMUX_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk-stale-buffer.js'),
+    HERMUX_SDK_IDLE_DRAIN_MS: 60,
+    HERMUX_SDK_POST_COMPLETE_LINGER_MS: 120,
   });
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runner-sdk-stale-buffer-'));
 
@@ -575,9 +575,9 @@ test('runOpencode sdk mode ignores stale buffered idle before new run activity',
 
 test('runtime status reflects active sdk run and resets after completion', async () => {
   const { runOpencode, getRuntimeStatusForInstance } = loadRunnerWithEnv({
-    OMG_MAX_PROCESS_SECONDS: 10,
-    OMG_EXECUTION_TRANSPORT: 'sdk',
-    OMG_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
+    HERMUX_MAX_PROCESS_SECONDS: 10,
+    HERMUX_EXECUTION_TRANSPORT: 'sdk',
+    HERMUX_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
   });
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runner-status-'));
   const instance = {
@@ -611,15 +611,15 @@ test('runtime status reflects active sdk run and resets after completion', async
 
 test('runner internal toValidPortRange falls back for invalid env values', () => {
   const { _internal } = loadRunnerWithEnv({
-    OMG_SDK_PORT_RANGE_MIN: 45000,
-    OMG_SDK_PORT_RANGE_MAX: 44999,
+    HERMUX_SDK_PORT_RANGE_MIN: 45000,
+    HERMUX_SDK_PORT_RANGE_MAX: 44999,
   });
   const bad = _internal.toValidPortRange();
   assert.deepEqual(bad, { min: 43100, max: 43999 });
 
   const { _internal: internal2 } = loadRunnerWithEnv({
-    OMG_SDK_PORT_RANGE_MIN: 43111,
-    OMG_SDK_PORT_RANGE_MAX: 43119,
+    HERMUX_SDK_PORT_RANGE_MIN: 43111,
+    HERMUX_SDK_PORT_RANGE_MAX: 43119,
   });
   const good = internal2.toValidPortRange();
   assert.deepEqual(good, { min: 43111, max: 43119 });
@@ -632,9 +632,9 @@ test('runner internal pickRandomAvailablePortInRange fails for occupied fixed ra
   const occupied = addr && typeof addr === 'object' ? addr.port : 0;
 
   const { _internal } = loadRunnerWithEnv({
-    OMG_SDK_PORT_RANGE_MIN: occupied,
-    OMG_SDK_PORT_RANGE_MAX: occupied,
-    OMG_SDK_PORT_PICK_ATTEMPTS: 3,
+    HERMUX_SDK_PORT_RANGE_MIN: occupied,
+    HERMUX_SDK_PORT_RANGE_MAX: occupied,
+    HERMUX_SDK_PORT_PICK_ATTEMPTS: 3,
   });
 
   try {
@@ -646,9 +646,9 @@ test('runner internal pickRandomAvailablePortInRange fails for occupied fixed ra
 
 test('stopAllRuntimeExecutors interrupts active sdk runs', async () => {
   const { runOpencode, stopAllRuntimeExecutors } = loadRunnerWithEnv({
-    OMG_MAX_PROCESS_SECONDS: 20,
-    OMG_EXECUTION_TRANSPORT: 'sdk',
-    OMG_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
+    HERMUX_MAX_PROCESS_SECONDS: 20,
+    HERMUX_EXECUTION_TRANSPORT: 'sdk',
+    HERMUX_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
   });
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runner-stopall-'));
 

@@ -4,7 +4,7 @@
 const { createTelegramMockServer } = require('../test/fixtures/telegram-mock-server');
 
 async function main() {
-  const port = Number(process.env.OMG_TELEGRAM_STUB_PORT || 8081) || 8081;
+  const port = Number(process.env.HERMUX_TELEGRAM_STUB_PORT || 8081) || 8081;
   const server = createTelegramMockServer();
   const started = await server.start(port);
 

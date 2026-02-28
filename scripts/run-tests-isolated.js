@@ -25,11 +25,11 @@ function main() {
 
   const env = {
     ...process.env,
-    OMG_CONFIG_DIR: configDir,
-    OMG_CONFIG_PATH: path.join(configDir, 'instances.json'),
-    OMG_STATE_DIR: stateDir,
-    OMG_SESSION_MAP_PATH: path.join(stateDir, 'session-map.json'),
-    OMG_RUNTIME_DIR: runtimeDir,
+    HERMUX_CONFIG_DIR: configDir,
+    HERMUX_CONFIG_PATH: path.join(configDir, 'instances.json'),
+    HERMUX_STATE_DIR: stateDir,
+    HERMUX_SESSION_MAP_PATH: path.join(stateDir, 'session-map.json'),
+    HERMUX_RUNTIME_DIR: runtimeDir,
   };
 
   const result = spawnSync(cmd, {

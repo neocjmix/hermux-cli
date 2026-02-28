@@ -8,7 +8,7 @@ const config = require('../src/lib/config');
 const sessionMap = require('../src/lib/session-map');
 
 const cliPath = path.resolve(__dirname, '..', 'src', 'cli.js');
-const runtimeDir = path.resolve(process.env.OMG_RUNTIME_DIR || path.join(__dirname, '..', 'runtime'));
+const runtimeDir = path.resolve(process.env.HERMUX_RUNTIME_DIR || path.join(__dirname, '..', 'runtime'));
 const pidPath = path.join(runtimeDir, 'gateway.pid');
 
 const SNAPSHOT = Symbol('missing');
@@ -32,7 +32,7 @@ function restoreFile(filePath, snapshot) {
 test('cli help exits with code 0 and prints usage', () => {
   const out = spawnSync(process.execPath, [cliPath, '--help'], {
     encoding: 'utf8',
-    env: { ...process.env, OMG_DAEMON_CHILD: '' },
+    env: { ...process.env, HERMUX_DAEMON_CHILD: '' },
   });
 
   assert.equal(out.status, 0);
@@ -105,7 +105,7 @@ test('cli start --foreground runs gateway main path without daemonize', () => {
       encoding: 'utf8',
       env: {
         ...process.env,
-        OMG_SKIP_DEP_BOOTSTRAP: '1',
+        HERMUX_SKIP_DEP_BOOTSTRAP: '1',
       },
     });
 
@@ -126,7 +126,7 @@ test('cli start in daemon mode does not spawn when pid is already alive', () => 
       encoding: 'utf8',
       env: {
         ...process.env,
-        OMG_DAEMON_CHILD: '',
+        HERMUX_DAEMON_CHILD: '',
       },
     });
     assert.equal(out.status, 0);

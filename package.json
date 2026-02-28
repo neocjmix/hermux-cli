@@ -3,8 +3,7 @@
   "version": "0.3.0",
   "description": "Telegram <-> opencode run gateway (production-grade dev base)",
   "bin": {
-    "hermux": "./src/cli.js",
-    "opencode-mobile-gateway": "./src/cli.js"
+    "hermux": "./src/cli.js"
   },
   "scripts": {
     "onboard": "node src/cli.js onboard",

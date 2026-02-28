@@ -4,8 +4,8 @@ const fs = require('fs');
 const path = require('path');
 
 const DEFAULT_CONFIG_DIR = path.join(__dirname, '..', '..', 'config');
-const CONFIG_DIR = path.resolve(process.env.OMG_CONFIG_DIR || DEFAULT_CONFIG_DIR);
-const CONFIG_PATH = path.resolve(process.env.OMG_CONFIG_PATH || path.join(CONFIG_DIR, 'instances.json'));
+const CONFIG_DIR = path.resolve(process.env.HERMUX_CONFIG_DIR || DEFAULT_CONFIG_DIR);
+const CONFIG_PATH = path.resolve(process.env.HERMUX_CONFIG_PATH || path.join(CONFIG_DIR, 'instances.json'));
 
 function asUniqueStringArray(values) {
   if (!Array.isArray(values)) return [];

@@ -67,7 +67,7 @@ Execution contract:
 
 - `runOpencode(instance, prompt, handlers)` is primary execution entrypoint
 - SDK transport is the default runtime path
-- optional command transport fallback can be forced via `OMG_EXECUTION_TRANSPORT=command`
+- optional command transport fallback can be forced via `HERMUX_EXECUTION_TRANSPORT=command`
 - runtime status is tracked by repo scope key
 
 Failure contract:

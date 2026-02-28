@@ -54,8 +54,8 @@ function preflightCheck() {
   }
   ok('opencode found in PATH');
 
-  if (process.env.OMG_ONBOARD_SKIP_MERMAID_SETUP === '1') {
-    console.log('    ! mermaid setup skipped by OMG_ONBOARD_SKIP_MERMAID_SETUP=1');
+  if (process.env.HERMUX_ONBOARD_SKIP_MERMAID_SETUP === '1') {
+    console.log('    ! mermaid setup skipped by HERMUX_ONBOARD_SKIP_MERMAID_SETUP=1');
     return;
   }
 
@@ -75,8 +75,8 @@ function preflightCheck() {
 }
 
 function maybeStartRuntime() {
-  if (process.env.OMG_ONBOARD_SKIP_START === '1') {
-    console.log('    ! runtime auto-start skipped by OMG_ONBOARD_SKIP_START=1');
+  if (process.env.HERMUX_ONBOARD_SKIP_START === '1') {
+    console.log('    ! runtime auto-start skipped by HERMUX_ONBOARD_SKIP_START=1');
     return;
   }
 
@@ -116,7 +116,7 @@ async function main() {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   console.log('');
   console.log('\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557');
-  console.log('\u2551  opencode_mobile_gateway  onboarding \u2551');
+  console.log('\u2551         hermux onboarding         \u2551');
   console.log('\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d');
   console.log('');
 

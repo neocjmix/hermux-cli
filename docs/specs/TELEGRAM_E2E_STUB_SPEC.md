@@ -37,12 +37,12 @@ In-repo stub implementation is intentionally focused on methods used by hermux r
 
 ## Runtime Integration Contract
 
-Gateway supports `OMG_TELEGRAM_BASE_API_URL` for custom Telegram API endpoint.
+Gateway supports `HERMUX_TELEGRAM_BASE_API_URL` for custom Telegram API endpoint.
 
 - when set: bot uses local/mock endpoint.
 - when unset: bot defaults to official endpoint behavior through library default.
 
-Gateway also supports `OMG_TELEGRAM_POLLING_TIMEOUT_SECONDS` to reduce integration-test latency.
+Gateway also supports `HERMUX_TELEGRAM_POLLING_TIMEOUT_SECONDS` to reduce integration-test latency.
 
 ## Determinism Requirements
 
@@ -68,7 +68,7 @@ E2E tests must validate at minimum:
 For local feature debugging:
 
 1. start stub server (`npm run telegram:stub`),
-2. start gateway with `OMG_TELEGRAM_BASE_API_URL`,
+2. start gateway with `HERMUX_TELEGRAM_BASE_API_URL`,
 3. inject updates through control API,
 4. inspect request log through control API,
 5. iterate with scenarios for errors/conflicts.

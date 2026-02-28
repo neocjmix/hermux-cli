@@ -6,7 +6,7 @@ const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 
 const DEFAULT_RUNTIME_DIR = path.join(__dirname, '..', 'runtime');
-const RUNTIME_DIR = path.resolve(process.env.OMG_RUNTIME_DIR || DEFAULT_RUNTIME_DIR);
+const RUNTIME_DIR = path.resolve(process.env.HERMUX_RUNTIME_DIR || DEFAULT_RUNTIME_DIR);
 const PID_PATH = path.join(RUNTIME_DIR, 'gateway.pid');
 const LOG_PATH = path.join(RUNTIME_DIR, 'gateway.log');
 
@@ -16,7 +16,7 @@ function hasCommand(cmd) {
 }
 
 function ensureRuntimeDependencies() {
-  if (process.env.OMG_SKIP_DEP_BOOTSTRAP === '1') return;
+  if (process.env.HERMUX_SKIP_DEP_BOOTSTRAP === '1') return;
 
   if (hasCommand('mmdc')) return;
   if (!hasCommand('npm')) {
@@ -86,7 +86,7 @@ function startAsDaemon() {
   const child = spawn(process.execPath, [__filename, 'start', '--foreground'], {
     detached: true,
     stdio: ['ignore', outFd, outFd],
-    env: { ...process.env, OMG_DAEMON_CHILD: '1' },
+    env: { ...process.env, HERMUX_DAEMON_CHILD: '1' },
   });
   child.unref();
   fs.closeSync(outFd);
@@ -98,7 +98,7 @@ function startAsDaemon() {
 
 async function main() {
   const cmd = process.argv[2] || 'start';
-  const foreground = process.argv.includes('--foreground') || process.env.OMG_DAEMON_CHILD === '1';
+  const foreground = process.argv.includes('--foreground') || process.env.HERMUX_DAEMON_CHILD === '1';
   const yes = process.argv.includes('--yes') || process.argv.includes('-y');
   const full = process.argv.includes('--full');
 

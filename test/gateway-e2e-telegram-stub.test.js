@@ -128,7 +128,7 @@ function startGateway(env) {
     env: {
       ...process.env,
       ...env,
-      OMG_RUNTIME_DIR: String((env && env.OMG_RUNTIME_DIR) || runtimeDir),
+      HERMUX_RUNTIME_DIR: String((env && env.HERMUX_RUNTIME_DIR) || runtimeDir),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -238,8 +238,8 @@ test('gateway e2e uses telegram stub for mapped /start command flow', async () =
   });
 
   const runtime = startGateway({
-    OMG_TELEGRAM_BASE_API_URL: started.baseApiUrl,
-    OMG_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
+    HERMUX_TELEGRAM_BASE_API_URL: started.baseApiUrl,
+    HERMUX_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
   });
 
   try {
@@ -305,8 +305,8 @@ test('gateway e2e persists reproducible artifact bundle on shutdown', async () =
   });
 
   const runtime = startGateway({
-    OMG_TELEGRAM_BASE_API_URL: started.baseApiUrl,
-    OMG_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
+    HERMUX_TELEGRAM_BASE_API_URL: started.baseApiUrl,
+    HERMUX_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
   });
 
   let stopped = false;
@@ -378,8 +378,8 @@ test('gateway e2e uses telegram stub for callback_query interrupt idle contract'
   });
 
   const runtime = startGateway({
-    OMG_TELEGRAM_BASE_API_URL: started.baseApiUrl,
-    OMG_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
+    HERMUX_TELEGRAM_BASE_API_URL: started.baseApiUrl,
+    HERMUX_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
   });
 
   try {
@@ -452,8 +452,8 @@ test('gateway e2e logs polling conflict detail when webhook is active', async ()
   });
 
   const runtime = startGateway({
-    OMG_TELEGRAM_BASE_API_URL: started.baseApiUrl,
-    OMG_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
+    HERMUX_TELEGRAM_BASE_API_URL: started.baseApiUrl,
+    HERMUX_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
   });
 
   try {
@@ -493,8 +493,8 @@ test('gateway e2e remains alive when scenario forces sendMessage API error', asy
   });
 
   const runtime = startGateway({
-    OMG_TELEGRAM_BASE_API_URL: started.baseApiUrl,
-    OMG_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
+    HERMUX_TELEGRAM_BASE_API_URL: started.baseApiUrl,
+    HERMUX_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
   });
 
   try {
@@ -572,8 +572,8 @@ test('gateway e2e recovers polling after webhook deletion and processes /start',
   });
 
   const runtime = startGateway({
-    OMG_TELEGRAM_BASE_API_URL: started.baseApiUrl,
-    OMG_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
+    HERMUX_TELEGRAM_BASE_API_URL: started.baseApiUrl,
+    HERMUX_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
   });
 
   try {
@@ -645,8 +645,8 @@ test('gateway e2e survives answerCallbackQuery failure and keeps idle interrupt 
   });
 
   const runtime = startGateway({
-    OMG_TELEGRAM_BASE_API_URL: started.baseApiUrl,
-    OMG_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
+    HERMUX_TELEGRAM_BASE_API_URL: started.baseApiUrl,
+    HERMUX_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
   });
 
   try {
@@ -755,8 +755,8 @@ test('gateway e2e retries sendMessage without parse_mode after HTML send failure
   });
 
   const runtime = startGateway({
-    OMG_TELEGRAM_BASE_API_URL: started.baseApiUrl,
-    OMG_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
+    HERMUX_TELEGRAM_BASE_API_URL: started.baseApiUrl,
+    HERMUX_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
   });
 
   try {
@@ -833,10 +833,10 @@ test('gateway e2e does not send final-unit messages after run.finalization', asy
   });
 
   const runtime = startGateway({
-    OMG_TELEGRAM_BASE_API_URL: started.baseApiUrl,
-    OMG_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
-    OMG_OPENCODE_SDK_SHIM: fixturePath,
-    OMG_RUNTIME_DIR: runtimeDir,
+    HERMUX_TELEGRAM_BASE_API_URL: started.baseApiUrl,
+    HERMUX_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
+    HERMUX_OPENCODE_SDK_SHIM: fixturePath,
+    HERMUX_RUNTIME_DIR: runtimeDir,
   });
 
   try {
@@ -917,10 +917,10 @@ test('gateway e2e keeps pass-through final output behavior', async () => {
   });
 
   const runtime = startGateway({
-    OMG_TELEGRAM_BASE_API_URL: started.baseApiUrl,
-    OMG_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
-    OMG_OPENCODE_SDK_SHIM: fixturePath,
-    OMG_RUNTIME_DIR: runtimeDir,
+    HERMUX_TELEGRAM_BASE_API_URL: started.baseApiUrl,
+    HERMUX_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
+    HERMUX_OPENCODE_SDK_SHIM: fixturePath,
+    HERMUX_RUNTIME_DIR: runtimeDir,
   });
 
   try {
@@ -1018,10 +1018,10 @@ test('gateway e2e renders distinct outputs for two consecutive prompts in same s
   });
 
   const runtime = startGateway({
-    OMG_TELEGRAM_BASE_API_URL: started.baseApiUrl,
-    OMG_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
-    OMG_OPENCODE_SDK_SHIM: fixturePath,
-    OMG_RUNTIME_DIR: runtimeDir,
+    HERMUX_TELEGRAM_BASE_API_URL: started.baseApiUrl,
+    HERMUX_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
+    HERMUX_OPENCODE_SDK_SHIM: fixturePath,
+    HERMUX_RUNTIME_DIR: runtimeDir,
   });
 
   try {
@@ -1132,10 +1132,10 @@ test('gateway e2e should render second run assistant output even when it arrives
   });
 
   const runtime = startGateway({
-    OMG_TELEGRAM_BASE_API_URL: started.baseApiUrl,
-    OMG_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
-    OMG_SDK_POST_COMPLETE_LINGER_MS: '0',
-    OMG_OPENCODE_SDK_SHIM: fixturePath,
+    HERMUX_TELEGRAM_BASE_API_URL: started.baseApiUrl,
+    HERMUX_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
+    HERMUX_SDK_POST_COMPLETE_LINGER_MS: '0',
+    HERMUX_OPENCODE_SDK_SHIM: fixturePath,
   });
 
   let stopped = false;
@@ -1251,9 +1251,9 @@ test('gateway e2e incident replay should deliver second run text despite post-co
   });
 
   const runtime = startGateway({
-    OMG_TELEGRAM_BASE_API_URL: started.baseApiUrl,
-    OMG_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
-    OMG_OPENCODE_SDK_SHIM: fixturePath,
+    HERMUX_TELEGRAM_BASE_API_URL: started.baseApiUrl,
+    HERMUX_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
+    HERMUX_OPENCODE_SDK_SHIM: fixturePath,
   });
 
   let stopped = false;
@@ -1405,9 +1405,9 @@ test('gateway e2e should reproduce missing second response when assistant text l
   });
 
   const runtime = startGateway({
-    OMG_TELEGRAM_BASE_API_URL: started.baseApiUrl,
-    OMG_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
-    OMG_OPENCODE_SDK_SHIM: fixturePath,
+    HERMUX_TELEGRAM_BASE_API_URL: started.baseApiUrl,
+    HERMUX_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
+    HERMUX_OPENCODE_SDK_SHIM: fixturePath,
   });
 
   let stopped = false;
@@ -1530,9 +1530,9 @@ test('gateway e2e should surface new in-progress assistant text before completio
   });
 
   const runtime = startGateway({
-    OMG_TELEGRAM_BASE_API_URL: started.baseApiUrl,
-    OMG_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
-    OMG_OPENCODE_SDK_SHIM: fixturePath,
+    HERMUX_TELEGRAM_BASE_API_URL: started.baseApiUrl,
+    HERMUX_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
+    HERMUX_OPENCODE_SDK_SHIM: fixturePath,
   });
 
   let stopped = false;

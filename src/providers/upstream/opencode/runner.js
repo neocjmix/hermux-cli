@@ -6,14 +6,14 @@ const net = require('net');
 const path = require('path');
 const { pathToFileURL } = require('url');
 
-const MAX_PROCESS_SEC = parseInt(process.env.OMG_MAX_PROCESS_SECONDS || '3600', 10);
-const SDK_SERVER_START_TIMEOUT_MS = parseInt(process.env.OMG_SDK_SERVER_START_TIMEOUT_MS || '15000', 10);
-const SDK_PORT_RANGE_MIN = parseInt(process.env.OMG_SDK_PORT_RANGE_MIN || '43100', 10);
-const SDK_PORT_RANGE_MAX = parseInt(process.env.OMG_SDK_PORT_RANGE_MAX || '43999', 10);
-const SDK_PORT_PICK_ATTEMPTS = parseInt(process.env.OMG_SDK_PORT_PICK_ATTEMPTS || '60', 10);
-const SDK_IDLE_DRAIN_MS = parseInt(process.env.OMG_SDK_IDLE_DRAIN_MS || '220', 10);
-const SDK_POST_COMPLETE_LINGER_MS = parseInt(process.env.OMG_SDK_POST_COMPLETE_LINGER_MS || '2200', 10);
-const SDK_OBSERVER_IDLE_AFTER_DONE_MS = parseInt(process.env.OMG_SDK_OBSERVER_IDLE_AFTER_DONE_MS || '45000', 10);
+const MAX_PROCESS_SEC = parseInt(process.env.HERMUX_MAX_PROCESS_SECONDS || '3600', 10);
+const SDK_SERVER_START_TIMEOUT_MS = parseInt(process.env.HERMUX_SDK_SERVER_START_TIMEOUT_MS || '15000', 10);
+const SDK_PORT_RANGE_MIN = parseInt(process.env.HERMUX_SDK_PORT_RANGE_MIN || '43100', 10);
+const SDK_PORT_RANGE_MAX = parseInt(process.env.HERMUX_SDK_PORT_RANGE_MAX || '43999', 10);
+const SDK_PORT_PICK_ATTEMPTS = parseInt(process.env.HERMUX_SDK_PORT_PICK_ATTEMPTS || '60', 10);
+const SDK_IDLE_DRAIN_MS = parseInt(process.env.HERMUX_SDK_IDLE_DRAIN_MS || '220', 10);
+const SDK_POST_COMPLETE_LINGER_MS = parseInt(process.env.HERMUX_SDK_POST_COMPLETE_LINGER_MS || '2200', 10);
+const SDK_OBSERVER_IDLE_AFTER_DONE_MS = parseInt(process.env.HERMUX_SDK_OBSERVER_IDLE_AFTER_DONE_MS || '45000', 10);
 const SDK_RAW_PASSTHROUGH = true;
 
 const activeRuns = new Set();
@@ -21,7 +21,7 @@ const runtimeStats = new Map();
 const sdkRuntimes = new Map();
 const sdkRuntimeOps = new Map();
 let stopAllInProgress = false;
-const SESSION_EVENT_BUFFER_LIMIT = parseInt(process.env.OMG_SESSION_EVENT_BUFFER_LIMIT || '200', 10);
+const SESSION_EVENT_BUFFER_LIMIT = parseInt(process.env.HERMUX_SESSION_EVENT_BUFFER_LIMIT || '200', 10);
 
 function parseRetryAfterSeconds(text) {
   const src = String(text || '');
@@ -173,7 +173,7 @@ async function stopAllRuntimeExecutors() {
 }
 
 function shouldUseSdk(instance) {
-  const forced = String(process.env.OMG_EXECUTION_TRANSPORT || '').trim().toLowerCase();
+  const forced = String(process.env.HERMUX_EXECUTION_TRANSPORT || '').trim().toLowerCase();
   if (forced === 'command') return false;
   if (forced === 'sdk') return true;
 
@@ -188,7 +188,7 @@ let sdkModulePromise = null;
 
 async function loadSdkModule() {
   if (!sdkModulePromise) {
-    const shim = String(process.env.OMG_OPENCODE_SDK_SHIM || '').trim();
+    const shim = String(process.env.HERMUX_OPENCODE_SDK_SHIM || '').trim();
     if (shim) {
       sdkModulePromise = import(pathToFileURL(path.resolve(shim)).href)
         .then((mod) => (mod && mod.default && mod.default.createOpencode ? mod.default : mod));
