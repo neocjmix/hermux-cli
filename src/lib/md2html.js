@@ -7,6 +7,40 @@ function escapeHtml(s) {
     .replace(/>/g, '&gt;');
 }
 
+function escapeAttr(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function normalizeLinkHref(raw) {
+  const href = String(raw || '').trim();
+  if (!href) return '';
+  if (/^https?:\/\//i.test(href)) return href;
+  if (/^tg:\/\/user\?id=\d+$/i.test(href)) return href;
+  return '';
+}
+
+function decodeEscapedHref(raw) {
+  return String(raw || '')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>');
+}
+
+function convertUnorderedListLines(text) {
+  return String(text || '').replace(/^([ \t]*)([*+-])\s+(.+)$/gm, (_, indentRaw, _marker, item) => {
+    const indentWidth = String(indentRaw || '').replace(/\t/g, '  ').length;
+    const level = Math.floor(indentWidth / 2);
+    return `${'  '.repeat(level)}• ${item}`;
+  });
+}
+
 function md2html(md) {
   if (!md) return '';
 
@@ -46,10 +80,22 @@ function inlineMarkdown(text) {
     return `@@CODE_${idx}@@`;
   });
 
+  out = out.replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, (_, label, hrefRaw) => {
+    const href = normalizeLinkHref(decodeEscapedHref(hrefRaw));
+    if (!href) return label;
+    return `<a href="${escapeAttr(href)}">${label}</a>`;
+  });
+
+  out = out.replace(/^&gt;\s?(.+)$/gm, '<blockquote>$1</blockquote>');
+  out = convertUnorderedListLines(out);
+
   // regex: bold **...**
   out = out.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+  out = out.replace(/__(.+?)__/g, '<u>$1</u>');
   // regex: italic _..._ — word-boundary only to avoid false positives in snake_case
   out = out.replace(/(?<!\w)_([^_]+)_(?!\w)/g, '<i>$1</i>');
+  out = out.replace(/~~(.+?)~~/g, '<s>$1</s>');
+  out = out.replace(/\|\|(.+?)\|\|/g, '<tg-spoiler>$1</tg-spoiler>');
   // regex: headings # ... — Telegram has no heading tag, rendered as bold
   out = out.replace(/^#{1,6}\s+(.+)$/gm, '<b>$1</b>');
 
