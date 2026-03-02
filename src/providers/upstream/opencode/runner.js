@@ -632,6 +632,7 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
   };
 
   const partMap = new Map();
+  const processedDeltas = new Set(); // Track processed deltas to prevent text duplication
   let partSeq = 0;
   let abortSession = null;
   let detachObserver = null;
@@ -1001,6 +1002,14 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
       const field = String(props.field || '');
       const delta = String(props.delta || '');
       if (!partId || field !== 'text' || !delta) return;
+      
+      // Create unique key for this delta event to prevent duplication
+      const deltaKey = `${partId}:${field}:${delta}:${props.messageID || ''}`;
+      if (processedDeltas.has(deltaKey)) {
+        return; // Skip already processed delta
+      }
+      processedDeltas.add(deltaKey);
+      
       const ptype = String(props.type || '').trim().toLowerCase();
       if (ptype === 'reasoning') {
         await dispatchEvent({

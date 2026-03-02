@@ -284,6 +284,12 @@ function mergePartDelta(state, event, seq) {
   const entry = ensurePart(message, props.partID, props.sessionID);
   if (!entry) return;
 
+  // Skip if already processed this event
+  const eventSeq = Number(seq || 0) || 0;
+  if (eventSeq > 0 && eventSeq <= (message.lastEventSeq || 0)) {
+    return;
+  }
+
   if (field === 'text') {
     entry.type = entry.type || 'text';
     entry.text = `${toText(entry.text)}${toText(props.delta)}`;
@@ -296,16 +302,13 @@ function mergePartDelta(state, event, seq) {
     entry[field] = `${prev}${toText(props.delta)}`;
   }
 
-  const eventSeq = Number(seq || 0) || 0;
   if (eventSeq > 0) {
     message.lastEventSeq = Math.max(Number(message.lastEventSeq || 0), eventSeq);
   }
 
   updateMessageRender(message);
 }
-
 function mergeSessionUpdated(state, event) {
-  const info = event && event.properties && event.properties.info;
   if (!info) return;
   state.session = deepMerge(state.session, info);
   state.session.id = toText(state.session.id || state.sessionId);
