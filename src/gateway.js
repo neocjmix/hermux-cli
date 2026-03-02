@@ -3322,6 +3322,22 @@ async function startPromptRun(bot, repo, state, runItem) {
             : '',
           latestAssistantTextLength: String(next && next.render && next.render.latestAssistantText || '').length,
         });
+
+        // Update lastFinalMessageRef for revert functionality
+        if (next && next.render && next.render.latestAssistantMessageId) {
+          lastFinalMessageRef.messageId = next.render.latestAssistantMessageId;
+          // Try to get partId from the latest assistant message if available
+          const messages = next.messages && next.messages.byId ? next.messages.byId : {};
+          const latestId = next.render.latestAssistantMessageId;
+          const latestMessage = messages[latestId];
+          if (latestMessage && latestMessage.parts && latestMessage.parts.length > 0) {
+            const lastPart = latestMessage.parts[latestMessage.parts.length - 1];
+            if (lastPart && lastPart.id) {
+              lastFinalMessageRef.partId = lastPart.id;
+            }
+          }
+        }
+
         auditRun('run.session_event.apply.batch.end', {
           sid: key,
           batchSize: payloads.length,
