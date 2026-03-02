@@ -153,8 +153,10 @@ function requestInterrupt(state, { forceAfterMs = 5000, sendSignal = sendInterru
   try {
     audit('interrupt.send_signal', { signal: 'SIGTERM', hasProc: !!state.currentProc, hasKill: typeof state.currentProc?.kill === 'function' });
     sendSignal(state.currentProc, 'SIGTERM');
-    state.interruptTrace.termSentAt = Date.now();
-    state.interruptTrace.status = 'term_sent';
+    if (state.interruptTrace) {
+      state.interruptTrace.termSentAt = Date.now();
+      state.interruptTrace.status = 'term_sent';
+    }
   } catch (err) {
     audit('interrupt.send_signal_failed', { error: err.message });
     state.interruptRequested = false;
