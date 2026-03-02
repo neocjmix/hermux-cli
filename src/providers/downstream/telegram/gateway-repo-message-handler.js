@@ -109,6 +109,18 @@ function createRepoMessageHandler(deps) {
         await clearSessionDelivery(state, chatId);
       }
       const cleared = clearSessionId(repo.name, chatId);
+      
+      // Clear in-memory session state
+      if (state.activeSessionId) {
+        state.activeSessionId = null;
+      }
+      if (state.sessionRenderStates) {
+        state.sessionRenderStates.clear();
+      }
+      if (state.sessionProjectedTexts) {
+        state.sessionProjectedTexts.clear();
+      }
+      
       if (cleared) {
         await safeSend(bot, chatId, `Session reset complete for repo ${repo.name}.\nNext prompt will start a new opencode session.`);
       } else {
