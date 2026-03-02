@@ -50,6 +50,8 @@ function createRenderState(sessionId) {
       status: '',
       isIdle: false,
       diff: null,
+      stepCount: 0,
+      toolCount: 0,
     },
     messages: {
       order: [],
@@ -252,6 +254,14 @@ function mergePartUpdated(state, event, seq) {
   }
   if (entry.type === 'step-finish' && Object.prototype.hasOwnProperty.call(entry, 'cost')) {
     message.cost = entry.cost;
+  }
+
+  // Update session-level counters
+  if (entry.type === 'step-start') {
+    state.session.stepCount = Number(state.session.stepCount || 0) + 1;
+  }
+  if (entry.type === 'tool') {
+    state.session.toolCount = Number(state.session.toolCount || 0) + 1;
   }
 
   const eventSeq = Number(seq || 0) || 0;

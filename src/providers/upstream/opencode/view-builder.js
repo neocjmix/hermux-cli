@@ -16,7 +16,7 @@ function formatInlineCode(value) {
   return `\`${escaped}\``;
 }
 
-function formatStatusPane(renderState, maxLen, options) {
+function formatStatusPaneVerbose(renderState, _maxLen, options) {
   const sessionId = toText(renderState.sessionId || (renderState.session && renderState.session.id)).trim();
   const status = toText(renderState.session && renderState.session.status).trim() || 'unknown';
   const isIdle = !!(renderState.session && renderState.session.isIdle);
@@ -25,14 +25,38 @@ function formatStatusPane(renderState, maxLen, options) {
     renderState.render && renderState.render.latestAssistantMessageId
   ).trim();
   const lines = [
-    'Status Pane',
     `run_id: ${formatInlineCode(runId || '-')}`,
     `session: ${formatInlineCode(sessionId || '-')}`,
     `status: ${formatInlineCode(status)}`,
     `idle: ${formatInlineCode(isIdle ? 'yes' : 'no')}`,
   ];
   if (latestAssistantMessageId) lines.push(`assistant_message: ${formatInlineCode(latestAssistantMessageId)}`);
-  return clamp(lines.join('\n'), maxLen);
+  return lines.join('\n');
+}
+
+function formatStatusPaneNormal(renderState, _maxLen, options) {
+  const sessionId = toText(renderState.sessionId || (renderState.session && renderState.session.id)).trim();
+  const status = toText(renderState.session && renderState.session.status).trim() || 'idle';
+  const repoName = toText(options && options.repoName).trim() || 'repo';
+  const stepCount = Number(renderState.session && renderState.session.stepCount) || 0;
+  const toolCount = Number(renderState.session && renderState.session.toolCount) || 0;
+
+  const statusEmoji = status === 'busy' ? '🔴' : status === 'idle' ? '🟢' : '⚪';
+  const lines = [
+    `✅ ${repoName}`,
+    `💬 ${formatInlineCode(sessionId || '-')}`,
+    `📡 ${statusEmoji} ${status} 👣${stepCount} 🛠️${toolCount}`,
+  ];
+
+  return lines.join('\n');
+}
+
+function formatStatusPane(renderState, maxLen, options) {
+  const viewMode = toText(options && options.viewMode).trim().toLowerCase();
+  if (viewMode === 'verbose') {
+    return formatStatusPaneVerbose(renderState, maxLen, options);
+  }
+  return formatStatusPaneNormal(renderState, maxLen, options);
 }
 
 function messageTimeMs(message) {
