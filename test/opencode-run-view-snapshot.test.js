@@ -62,7 +62,9 @@ test('run view snapshot materializer converts raw payload to provider-agnostic s
   assert.equal(state.snapshot.runId, 'run-1');
   assert.equal(state.snapshot.sessionId, 'ses-a');
   assert.equal(Array.isArray(state.snapshot.messages), true);
-  assert.match(state.snapshot.messages[0], /Status Pane/);
+  // Normal mode format: emoji-based compact status
+  assert.match(state.snapshot.messages[0], /✅\s+repo/);
+  assert.match(state.snapshot.messages[0], /💬\s*`ses-a`/);
   assert.equal(state.snapshot.messages[1], 'hello snapshot');
   assert.equal(state.snapshot.isFinal, false);
 });
