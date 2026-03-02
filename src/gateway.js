@@ -3300,6 +3300,8 @@ async function startPromptRun(bot, repo, state, runItem) {
             runId: runViewRunId,
             minMessageTimeMs,
             isFinal: false,
+            viewMode: state.verbose ? 'verbose' : 'normal',
+            repoName: repo.name,
           });
         }
         const next = snapshotState && snapshotState.renderState ? snapshotState.renderState : null;
