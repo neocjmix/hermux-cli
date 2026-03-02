@@ -3833,7 +3833,7 @@ function main() {
     }, 1200);
   }
 
-  const processedMessageIds = new Set();
+  const processedMessageIds = new Map();
   const MAX_PROCESSED_IDS = 1000;
   const MESSAGE_DEDUP_TTL_MS = 5 * 60 * 1000;
 
@@ -3842,20 +3842,25 @@ function main() {
   }, MESSAGE_DEDUP_TTL_MS);
 
   bot.on('message', async (msg) => {
+    const chatId = msg && msg.chat && msg.chat.id ? String(msg.chat.id) : null;
     const messageId = msg && msg.message_id;
-    if (messageId) {
-      if (processedMessageIds.has(messageId)) {
+    if (messageId && chatId) {
+      if (!processedMessageIds.has(chatId)) {
+        processedMessageIds.set(chatId, new Set());
+      }
+      const chatProcessedIds = processedMessageIds.get(chatId);
+      if (chatProcessedIds.has(messageId)) {
         audit('telegram.message.duplicate', {
-          chatId: msg && msg.chat && msg.chat.id ? String(msg.chat.id) : '',
+          chatId,
           messageId,
           textPreview: summarizeAuditText(msg && msg.text ? msg.text : ''),
         });
         return;
       }
-      processedMessageIds.add(messageId);
-      if (processedMessageIds.size > MAX_PROCESSED_IDS) {
-        const firstId = processedMessageIds.values().next().value;
-        processedMessageIds.delete(firstId);
+      chatProcessedIds.add(messageId);
+      if (chatProcessedIds.size > MAX_PROCESSED_IDS) {
+        const firstId = chatProcessedIds.values().next().value;
+        chatProcessedIds.delete(firstId);
       }
     }
     audit('telegram.update', {
