@@ -877,10 +877,13 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
 
   const handle = {
     killed: false,
+    _abortSession: null,
     kill(_signal) {
       handle.killed = true;
-      if (typeof abortSession === 'function') {
-        abortSession().catch(() => {});
+      // Use the stored abortSession reference or fall back to closure
+      const abortFn = handle._abortSession || abortSession;
+      if (typeof abortFn === 'function') {
+        abortFn().catch(() => {});
       }
       if (!state.completed) {
         finish(143, null);
@@ -1151,6 +1154,8 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
           query,
         });
       };
+      // Store reference in handle so it's available even after async setup
+      handle._abortSession = abortSession;
       await ensureSdkEventPump(instance, runtimeEntry);
       let observerQueue = Promise.resolve();
       state.attachCursor = Number(runtimeEntry.eventCursor || 0);
