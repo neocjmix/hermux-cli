@@ -879,11 +879,17 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
     killed: false,
     _abortSession: null,
     kill(_signal) {
+      console.log('[DEBUG] handle.kill called with signal:', _signal);
+      console.log('[DEBUG] handle._abortSession type:', typeof handle._abortSession);
+      console.log('[DEBUG] closure abortSession type:', typeof abortSession);
       handle.killed = true;
       // Use the stored abortSession reference or fall back to closure
       const abortFn = handle._abortSession || abortSession;
       if (typeof abortFn === 'function') {
+        console.log('[DEBUG] Calling abort function');
         abortFn().catch(() => {});
+      } else {
+        console.log('[DEBUG] No abort function available');
       }
       if (!state.completed) {
         finish(143, null);
@@ -1148,12 +1154,15 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
       }
 
       abortSession = async () => {
+        console.log('[DEBUG] abortSession called for session:', state.sessionId);
         await client.session.abort({
           url: '/session/{id}/abort',
           path: { id: state.sessionId },
           query,
         });
       };
+      // Store reference in handle
+      handle._abortSession = abortSession;
       // Store reference in handle so it's available even after async setup
       handle._abortSession = abortSession;
       await ensureSdkEventPump(instance, runtimeEntry);
