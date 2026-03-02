@@ -3386,7 +3386,6 @@ async function startPromptRun(bot, repo, state, runItem) {
     onDeliver: onDeliverSessionEvent,
   });
 
-  let sessionDeliveryMode = 'command';
   const ensureSessionDelivery = async (candidateSessionId) => {
     const sid = String(candidateSessionId || '').trim();
     if (!sid || !RAW_EVENT_PASSTHROUGH) return;
@@ -3397,10 +3396,8 @@ async function startPromptRun(bot, repo, state, runItem) {
       && String(current.sessionId || '') === sid
       && String(current.ownerRunId || '') === String(runId)
     ) {
-      sessionDeliveryMode = String(current.mode || 'command');
       auditRun('run.session_delivery.reused', {
         sessionId: sid,
-        mode: sessionDeliveryMode,
         chatId: String(chatId),
       });
       return;
@@ -3436,17 +3433,14 @@ async function startPromptRun(bot, repo, state, runItem) {
         }
       },
     });
-    sessionDeliveryMode = String(sub.mode || 'command');
     state.sessionDelivery = {
       chatId: String(chatId),
       sessionId: sid,
       ownerRunId: String(runId),
-      mode: sessionDeliveryMode,
       unsubscribe: typeof sub.unsubscribe === 'function' ? sub.unsubscribe : async () => {},
     };
     auditRun('run.session_delivery.attached', {
       sessionId: sid,
-      mode: sessionDeliveryMode,
       chatId: String(chatId),
     });
   };
@@ -3493,26 +3487,24 @@ async function startPromptRun(bot, repo, state, runItem) {
           }
           await ensureSessionDelivery(activeSessionId);
         }
-        if (sessionDeliveryMode !== 'sdk') {
-          const routedResult = await handleSessionEvent({
-            event: evt,
+        const routedResult = await handleSessionEvent({
+          event: evt,
+          activeSessionId: String(state.activeSessionId || activeSessionId || ''),
+        });
+        if (!routedResult.delivered) {
+          auditRun('run.session_event.skip', {
+            reason: routedResult.dropReason || 'router_rejected',
             activeSessionId: String(state.activeSessionId || activeSessionId || ''),
+            eventSessionId: String((evt && evt.sessionId) || ''),
           });
-          if (!routedResult.delivered) {
-            auditRun('run.session_event.skip', {
-              reason: routedResult.dropReason || 'router_rejected',
-              activeSessionId: String(state.activeSessionId || activeSessionId || ''),
-              eventSessionId: String((evt && evt.sessionId) || ''),
-            });
+        }
+        if (routedResult.nextSessionId && routedResult.nextSessionId !== activeSessionId) {
+          activeSessionId = routedResult.nextSessionId;
+          state.activeSessionId = activeSessionId;
+          if (state.currentRunContext && typeof state.currentRunContext === 'object') {
+            state.currentRunContext.sessionId = activeSessionId;
           }
-          if (routedResult.nextSessionId && routedResult.nextSessionId !== activeSessionId) {
-            activeSessionId = routedResult.nextSessionId;
-            state.activeSessionId = activeSessionId;
-            if (state.currentRunContext && typeof state.currentRunContext === 'object') {
-              state.currentRunContext.sessionId = activeSessionId;
-            }
-            await ensureSessionDelivery(activeSessionId);
-          }
+          await ensureSessionDelivery(activeSessionId);
         }
         return;
       }
@@ -3841,7 +3833,31 @@ function main() {
     }, 1200);
   }
 
+  const processedMessageIds = new Set();
+  const MAX_PROCESSED_IDS = 1000;
+  const MESSAGE_DEDUP_TTL_MS = 5 * 60 * 1000;
+
+  setInterval(() => {
+    processedMessageIds.clear();
+  }, MESSAGE_DEDUP_TTL_MS);
+
   bot.on('message', async (msg) => {
+    const messageId = msg && msg.message_id;
+    if (messageId) {
+      if (processedMessageIds.has(messageId)) {
+        audit('telegram.message.duplicate', {
+          chatId: msg && msg.chat && msg.chat.id ? String(msg.chat.id) : '',
+          messageId,
+          textPreview: summarizeAuditText(msg && msg.text ? msg.text : ''),
+        });
+        return;
+      }
+      processedMessageIds.add(messageId);
+      if (processedMessageIds.size > MAX_PROCESSED_IDS) {
+        const firstId = processedMessageIds.values().next().value;
+        processedMessageIds.delete(firstId);
+      }
+    }
     audit('telegram.update', {
       updateType: 'message',
       chatId: msg && msg.chat && msg.chat.id ? String(msg.chat.id) : '',
