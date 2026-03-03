@@ -3150,6 +3150,16 @@ async function startPromptRun(bot, repo, state, runItem) {
       chatId: targetChatId,
     };
     const safeNextTexts = Array.isArray(nextTexts) ? nextTexts : [];
+    
+    // Use provided currentView or fall back to state.runView
+    const providedCurrentView = options && options.currentView;
+    const currentViewTexts = providedCurrentView && Array.isArray(providedCurrentView.texts) 
+      ? providedCurrentView.texts 
+      : (Array.isArray(view.texts) ? view.texts : []);
+    const currentViewMessageIds = providedCurrentView && Array.isArray(providedCurrentView.messageIds)
+      ? providedCurrentView.messageIds
+      : (Array.isArray(view.messageIds) ? view.messageIds : []);
+    
     runMetrics.downstreamApplyExecuted += 1;
     const applyStartAtMs = Date.now() - runStartedAt;
     if (runMetrics.downstreamFirstApplyAtMs === null) {
@@ -3168,8 +3178,8 @@ async function startPromptRun(bot, repo, state, runItem) {
       chatId: targetChatId,
       runAuditMeta: targetAuditMeta,
       currentView: {
-        texts: Array.isArray(view.texts) ? view.texts : [],
-        messageIds: Array.isArray(view.messageIds) ? view.messageIds : [],
+        texts: currentViewTexts,
+        messageIds: currentViewMessageIds,
       },
       nextTexts: safeNextTexts,
       isFinalState,
@@ -3240,8 +3250,19 @@ async function startPromptRun(bot, repo, state, runItem) {
       return Promise.resolve();
     }
 
+    // Check if this is a new run starting (different runId)
+    const previousRunId = state.runView && state.runView.runId ? String(state.runView.runId) : '';
+    const currentRunId = state.currentRunContext && state.currentRunContext.runId ? String(state.currentRunContext.runId) : '';
+    const isNewRunStarting = previousRunId && currentRunId && previousRunId !== currentRunId;
+
+    // For new runs, don't pass old messageIds to avoid deleting previous messages
+    const currentView = isNewRunStarting ? { texts: [], messageIds: [] } : {
+      texts: Array.isArray(state.runView?.texts) ? state.runView.texts : [],
+      messageIds: Array.isArray(state.runView?.messageIds) ? state.runView.messageIds : [],
+    };
+
     runMetrics.downstreamApplyRequested += 1;
-    return applyRunViewSnapshot(normalizedNextTexts, { isFinalState: requestedFinalState });
+    return applyRunViewSnapshot(normalizedNextTexts, { isFinalState: requestedFinalState, currentView });
   };
 
   const sessionApplyProcessors = new Map();
