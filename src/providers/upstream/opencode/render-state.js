@@ -309,6 +309,7 @@ function mergePartDelta(state, event, seq) {
   updateMessageRender(message);
 }
 function mergeSessionUpdated(state, event) {
+  const info = event && event.properties && event.properties.info;
   if (!info) return;
   state.session = deepMerge(state.session, info);
   state.session.id = toText(state.session.id || state.sessionId);
