@@ -3320,7 +3320,8 @@ async function startPromptRun(bot, repo, state, runItem) {
             ? state.currentRunContext
             : null;
           const runViewRunId = state.runView && state.runView.runId ? String(state.runView.runId) : String(runId);
-          const minMessageTimeMs = Number(currentContext && currentContext.startedAtMs ? currentContext.startedAtMs : 0) || 0;
+          // Don't filter messages by run start time - preserve previous run messages
+          const minMessageTimeMs = 0;
           snapshotState = applyPayloadToRunViewSnapshot(snapshotState, payload, renderSeq, {
             splitByLimit,
             maxLen: TG_MAX_LEN,
