@@ -34,6 +34,11 @@ function appendUnique(arr, value) {
   return arr;
 }
 
+// Track processed deltas to prevent duplication from multiple sources
+const processedDeltas = new Set();
+const MAX_PROCESSED_DELTAS = 1000;
+
+
 function createRenderState(sessionId) {
   return {
     schemaVersion: 'opencode-render-state.v1',
@@ -284,7 +289,25 @@ function mergePartDelta(state, event, seq) {
   const entry = ensurePart(message, props.partID, props.sessionID);
   if (!entry) return;
 
-  // Skip if already processed this event
+  // Deduplicate by content, not just seq (seq can differ between runner and gateway)
+  if (field === 'text') {
+    const deltaText = toText(props.delta);
+    const partId = toText(props.partID);
+    const messageId = toText(props.messageID);
+    // Create unique key for this specific delta content
+    const deltaKey = `${messageId}:${partId}:${deltaText}`;
+    if (processedDeltas.has(deltaKey)) {
+      return; // Skip already processed delta
+    }
+    processedDeltas.add(deltaKey);
+    // Limit set size to prevent memory leak
+    if (processedDeltas.size > MAX_PROCESSED_DELTAS) {
+      const firstKey = processedDeltas.values().next().value;
+      processedDeltas.delete(firstKey);
+    }
+  }
+
+  // Skip if already processed this event by seq
   const eventSeq = Number(seq || 0) || 0;
   if (eventSeq > 0 && eventSeq <= (message.lastEventSeq || 0)) {
     return;
@@ -292,12 +315,7 @@ function mergePartDelta(state, event, seq) {
 
   if (field === 'text') {
     entry.type = entry.type || 'text';
-    const deltaText = toText(props.delta);
-    const currentText = toText(entry.text);
-    // Prevent double-append if delta is already at the end (runner.js may have already added it)
-    if (!currentText.endsWith(deltaText)) {
-      entry.text = `${currentText}${deltaText}`;
-    }
+    entry.text = `${toText(entry.text)}${toText(props.delta)}`;
     const textSeq = Number(seq || 0) || 0;
     if (textSeq > 0) {
       message.lastTextSeq = Math.max(Number(message.lastTextSeq || 0), textSeq);
