@@ -2809,8 +2809,9 @@ function clearRunRenderStateAtRunStart(state, sessionId) {
   const sid = String(sessionId || '').trim();
   if (!sid) return;
 
-  state.sessionRenderStates.delete(sid);
-  state.sessionProjectedTexts.delete(sid);
+  // Don't clear previous run messages - preserve message history across runs
+  // state.sessionRenderStates.delete(sid);
+  // state.sessionProjectedTexts.delete(sid);
 
   const latest = state.latestSessionRenderState;
   const latestSid = String(
@@ -2973,8 +2974,9 @@ async function startPromptRun(bot, repo, state, runItem) {
   state.runView = {
     runId,
     chatId: String(chatId),
-    messageIds: [],
-    texts: [],
+    // Preserve previous message IDs to avoid deleting old messages
+    messageIds: state.runView?.messageIds || [],
+    texts: state.runView?.texts || [],
   };
   const runAuditMeta = {
     runId,
