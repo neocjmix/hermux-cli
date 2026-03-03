@@ -45,7 +45,7 @@ function formatStatusPaneNormal(renderState, _maxLen, options) {
   const lines = [
     `✅ ${repoName}`,
     `💬 ${formatInlineCode(sessionId || '-')}`,
-    `📡 ${statusEmoji} ${status} 👣${stepCount} 🛠️${toolCount}`,
+    `${statusEmoji} ${status} 👣${stepCount} 🛠️${toolCount}`,
   ];
 
   return lines.join('\n');

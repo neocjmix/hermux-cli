@@ -68,7 +68,7 @@ test('opencode view builder emits status pane first and assistant text after', (
   // Normal mode format: emoji-based compact status
   assert.match(view[0], /✅\s+my-repo/);
   assert.match(view[0], /💬\s*`ses-a`/);
-  assert.match(view[0], /📡.*busy/);
+  assert.match(view[0], /🔴.*busy/);
   assert.equal(view[1], 'hello');
 });
 
