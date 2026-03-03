@@ -1,0 +1,583 @@
+[
+  {
+    "id": 3,
+    "timestamp": "2026-03-01T00:04:50.130Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "0",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": [
+        {
+          "update_id": 51,
+          "message": {
+            "message_id": 51,
+            "date": 1772323489,
+            "text": "incident-replay-first",
+            "chat": {
+              "id": 100,
+              "type": "private"
+            },
+            "from": {
+              "id": 200,
+              "is_bot": false,
+              "first_name": "Tester"
+            }
+          }
+        },
+        {
+          "update_id": 52,
+          "message": {
+            "message_id": 52,
+            "date": 1772323489,
+            "text": "incident-replay-second",
+            "chat": {
+              "id": 100,
+              "type": "private"
+            },
+            "from": {
+              "id": 200,
+              "is_bot": false,
+              "first_name": "Tester"
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": 4,
+    "timestamp": "2026-03-01T00:04:50.175Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "parse_mode": "HTML",
+      "chat_id": "100",
+      "text": "Status Pane\nmode: <code>normal</code>\nstatus: <code>busy</code>\nidle: <code>no</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 1,
+        "date": 1772323490,
+        "text": "Status Pane\nmode: <code>normal</code>\nstatus: <code>busy</code>\nidle: <code>no</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 5,
+    "timestamp": "2026-03-01T00:04:50.182Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "1",
+      "parse_mode": "HTML",
+      "text": "Status Pane\nmode: <code>normal</code>\nstatus: <code>busy</code>\nidle: <code>no</code>\nassistant_message: <code>msg-first</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 2,
+        "date": 1772323490,
+        "text": "Status Pane\nmode: <code>normal</code>\nstatus: <code>busy</code>\nidle: <code>no</code>\nassistant_message: <code>msg-first</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 6,
+    "timestamp": "2026-03-01T00:04:50.183Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "parse_mode": "HTML",
+      "chat_id": "100",
+      "text": "first-incident-answer\nprompt:incident-replay-first"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 3,
+        "date": 1772323490,
+        "text": "first-incident-answer\nprompt:incident-replay-first",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 7,
+    "timestamp": "2026-03-01T00:04:50.202Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "1",
+      "parse_mode": "HTML",
+      "text": "Status Pane\nmode: <code>normal</code>\nstatus: <code>idle</code>\nidle: <code>yes</code>\nassistant_message: <code>msg-first</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 4,
+        "date": 1772323490,
+        "text": "Status Pane\nmode: <code>normal</code>\nstatus: <code>idle</code>\nidle: <code>yes</code>\nassistant_message: <code>msg-first</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 8,
+    "timestamp": "2026-03-01T00:04:50.441Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "53",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 9,
+    "timestamp": "2026-03-01T00:04:50.749Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "53",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 10,
+    "timestamp": "2026-03-01T00:04:51.055Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "53",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 11,
+    "timestamp": "2026-03-01T00:04:51.361Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "53",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 12,
+    "timestamp": "2026-03-01T00:04:51.576Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "1",
+      "parse_mode": "HTML",
+      "text": "Status Pane\nmode: <code>normal</code>\nstatus: <code>busy</code>\nidle: <code>no</code>\nassistant_message: <code>msg-first</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 5,
+        "date": 1772323491,
+        "text": "Status Pane\nmode: <code>normal</code>\nstatus: <code>busy</code>\nidle: <code>no</code>\nassistant_message: <code>msg-first</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 13,
+    "timestamp": "2026-03-01T00:04:51.584Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "1",
+      "parse_mode": "HTML",
+      "text": "Status Pane\nmode: <code>normal</code>\nstatus: <code>idle</code>\nidle: <code>yes</code>\nassistant_message: <code>msg-first</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 6,
+        "date": 1772323491,
+        "text": "Status Pane\nmode: <code>normal</code>\nstatus: <code>idle</code>\nidle: <code>yes</code>\nassistant_message: <code>msg-first</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 14,
+    "timestamp": "2026-03-01T00:04:51.586Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "3",
+      "parse_mode": "HTML",
+      "text": "first-incident-answer\nprompt:incident-replay-first\n\nfirst-run-late-tail"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 7,
+        "date": 1772323491,
+        "text": "first-incident-answer\nprompt:incident-replay-first\n\nfirst-run-late-tail",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 15,
+    "timestamp": "2026-03-01T00:04:51.667Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "53",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 16,
+    "timestamp": "2026-03-01T00:04:51.973Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "53",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 17,
+    "timestamp": "2026-03-01T00:04:52.279Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "53",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 18,
+    "timestamp": "2026-03-01T00:04:52.386Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "parse_mode": "HTML",
+      "chat_id": "100",
+      "text": "Status Pane\nmode: <code>normal</code>\nstatus: <code>busy</code>\nidle: <code>no</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 8,
+        "date": 1772323492,
+        "text": "Status Pane\nmode: <code>normal</code>\nstatus: <code>busy</code>\nidle: <code>no</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 19,
+    "timestamp": "2026-03-01T00:04:52.392Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "8",
+      "parse_mode": "HTML",
+      "text": "Status Pane\nmode: <code>normal</code>\nstatus: <code>busy</code>\nidle: <code>no</code>\nassistant_message: <code>msg-first</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 9,
+        "date": 1772323492,
+        "text": "Status Pane\nmode: <code>normal</code>\nstatus: <code>busy</code>\nidle: <code>no</code>\nassistant_message: <code>msg-first</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 20,
+    "timestamp": "2026-03-01T00:04:52.470Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "8",
+      "parse_mode": "HTML",
+      "text": "Status Pane\nmode: <code>normal</code>\nstatus: <code>idle</code>\nidle: <code>yes</code>\nassistant_message: <code>msg-first</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 10,
+        "date": 1772323492,
+        "text": "Status Pane\nmode: <code>normal</code>\nstatus: <code>idle</code>\nidle: <code>yes</code>\nassistant_message: <code>msg-first</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 21,
+    "timestamp": "2026-03-01T00:04:52.583Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "53",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 22,
+    "timestamp": "2026-03-01T00:04:52.888Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "53",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 23,
+    "timestamp": "2026-03-01T00:04:53.193Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "53",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 24,
+    "timestamp": "2026-03-01T00:04:53.242Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "8",
+      "parse_mode": "HTML",
+      "text": "Status Pane\nmode: <code>normal</code>\nstatus: <code>busy</code>\nidle: <code>no</code>\nassistant_message: <code>msg-first</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 11,
+        "date": 1772323493,
+        "text": "Status Pane\nmode: <code>normal</code>\nstatus: <code>busy</code>\nidle: <code>no</code>\nassistant_message: <code>msg-first</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 25,
+    "timestamp": "2026-03-01T00:04:53.250Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "8",
+      "parse_mode": "HTML",
+      "text": "Status Pane\nmode: <code>normal</code>\nstatus: <code>idle</code>\nidle: <code>yes</code>\nassistant_message: <code>msg-second</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 12,
+        "date": 1772323493,
+        "text": "Status Pane\nmode: <code>normal</code>\nstatus: <code>idle</code>\nidle: <code>yes</code>\nassistant_message: <code>msg-second</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 26,
+    "timestamp": "2026-03-01T00:04:53.252Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "parse_mode": "HTML",
+      "chat_id": "100",
+      "text": "second-incident-answer: prompt:incident-replay-second"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 13,
+        "date": 1772323493,
+        "text": "second-incident-answer: prompt:incident-replay-second",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 27,
+    "timestamp": "2026-03-01T00:04:53.498Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "53",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 28,
+    "timestamp": "2026-03-01T00:04:53.804Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "53",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 29,
+    "timestamp": "2026-03-01T00:04:54.110Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "53",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 30,
+    "timestamp": "2026-03-01T00:04:54.415Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "53",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  }
+]

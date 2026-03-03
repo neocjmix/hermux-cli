@@ -1,0 +1,458 @@
+[
+  {
+    "id": 3,
+    "timestamp": "2026-03-02T01:06:03.465Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "0",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": [
+        {
+          "update_id": 61,
+          "message": {
+            "message_id": 61,
+            "date": 1772413563,
+            "text": "pc-first",
+            "chat": {
+              "id": 100,
+              "type": "private"
+            },
+            "from": {
+              "id": 200,
+              "is_bot": false,
+              "first_name": "Tester"
+            }
+          }
+        },
+        {
+          "update_id": 62,
+          "message": {
+            "message_id": 62,
+            "date": 1772413563,
+            "text": "pc-second",
+            "chat": {
+              "id": 100,
+              "type": "private"
+            },
+            "from": {
+              "id": 200,
+              "is_bot": false,
+              "first_name": "Tester"
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": 4,
+    "timestamp": "2026-03-02T01:06:03.506Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "parse_mode": "HTML",
+      "chat_id": "100",
+      "text": "Status Pane\nrun_id: <code>1772413563472-0d6bcd</code>\nsession: <code>sdk-two-runs-session</code>\nstatus: <code>busy</code>\nidle: <code>no</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 1,
+        "date": 1772413563,
+        "text": "Status Pane\nrun_id: <code>1772413563472-0d6bcd</code>\nsession: <code>sdk-two-runs-session</code>\nstatus: <code>busy</code>\nidle: <code>no</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 5,
+    "timestamp": "2026-03-02T01:06:03.514Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "1",
+      "parse_mode": "HTML",
+      "text": "Status Pane\nrun_id: <code>1772413563472-0d6bcd</code>\nsession: <code>sdk-two-runs-session</code>\nstatus: <code>idle</code>\nidle: <code>yes</code>\nassistant_message: <code>msg-first</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 2,
+        "date": 1772413563,
+        "text": "Status Pane\nrun_id: <code>1772413563472-0d6bcd</code>\nsession: <code>sdk-two-runs-session</code>\nstatus: <code>idle</code>\nidle: <code>yes</code>\nassistant_message: <code>msg-first</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 6,
+    "timestamp": "2026-03-02T01:06:03.515Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "parse_mode": "HTML",
+      "chat_id": "100",
+      "text": "first-ok\nprompt:pc-first"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 3,
+        "date": 1772413563,
+        "text": "first-ok\nprompt:pc-first",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 7,
+    "timestamp": "2026-03-02T01:06:03.774Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 8,
+    "timestamp": "2026-03-02T01:06:04.080Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 9,
+    "timestamp": "2026-03-02T01:06:04.386Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 10,
+    "timestamp": "2026-03-02T01:06:04.692Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 11,
+    "timestamp": "2026-03-02T01:06:04.997Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 12,
+    "timestamp": "2026-03-02T01:06:05.301Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 13,
+    "timestamp": "2026-03-02T01:06:05.606Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 14,
+    "timestamp": "2026-03-02T01:06:05.718Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "parse_mode": "HTML",
+      "chat_id": "100",
+      "text": "Status Pane\nrun_id: <code>1772413565710-ffa3a0</code>\nsession: <code>sdk-two-runs-session</code>\nstatus: <code>busy</code>\nidle: <code>no</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 4,
+        "date": 1772413565,
+        "text": "Status Pane\nrun_id: <code>1772413565710-ffa3a0</code>\nsession: <code>sdk-two-runs-session</code>\nstatus: <code>busy</code>\nidle: <code>no</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 15,
+    "timestamp": "2026-03-02T01:06:05.723Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "4",
+      "parse_mode": "HTML",
+      "text": "Status Pane\nrun_id: <code>1772413565710-ffa3a0</code>\nsession: <code>sdk-two-runs-session</code>\nstatus: <code>idle</code>\nidle: <code>yes</code>\nassistant_message: <code>msg-first</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 5,
+        "date": 1772413565,
+        "text": "Status Pane\nrun_id: <code>1772413565710-ffa3a0</code>\nsession: <code>sdk-two-runs-session</code>\nstatus: <code>idle</code>\nidle: <code>yes</code>\nassistant_message: <code>msg-first</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 16,
+    "timestamp": "2026-03-02T01:06:05.911Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 17,
+    "timestamp": "2026-03-02T01:06:06.215Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 18,
+    "timestamp": "2026-03-02T01:06:06.519Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 19,
+    "timestamp": "2026-03-02T01:06:06.825Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 20,
+    "timestamp": "2026-03-02T01:06:07.132Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 21,
+    "timestamp": "2026-03-02T01:06:07.437Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 22,
+    "timestamp": "2026-03-02T01:06:07.621Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "4",
+      "parse_mode": "HTML",
+      "text": "Status Pane\nrun_id: <code>1772413565710-ffa3a0</code>\nsession: <code>sdk-two-runs-session</code>\nstatus: <code>busy</code>\nidle: <code>no</code>\nassistant_message: <code>msg-first</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 6,
+        "date": 1772413567,
+        "text": "Status Pane\nrun_id: <code>1772413565710-ffa3a0</code>\nsession: <code>sdk-two-runs-session</code>\nstatus: <code>busy</code>\nidle: <code>no</code>\nassistant_message: <code>msg-first</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 23,
+    "timestamp": "2026-03-02T01:06:07.628Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "4",
+      "parse_mode": "HTML",
+      "text": "Status Pane\nrun_id: <code>1772413565710-ffa3a0</code>\nsession: <code>sdk-two-runs-session</code>\nstatus: <code>idle</code>\nidle: <code>yes</code>\nassistant_message: <code>msg-second</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 7,
+        "date": 1772413567,
+        "text": "Status Pane\nrun_id: <code>1772413565710-ffa3a0</code>\nsession: <code>sdk-two-runs-session</code>\nstatus: <code>idle</code>\nidle: <code>yes</code>\nassistant_message: <code>msg-second</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 24,
+    "timestamp": "2026-03-02T01:06:07.630Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "parse_mode": "HTML",
+      "chat_id": "100",
+      "text": "second-post-complete:pc-second"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 8,
+        "date": 1772413567,
+        "text": "second-post-complete:pc-second",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 25,
+    "timestamp": "2026-03-02T01:06:07.742Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  }
+]

@@ -1,0 +1,583 @@
+[
+  {
+    "id": 3,
+    "timestamp": "2026-03-02T00:56:29.714Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "0",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": [
+        {
+          "update_id": 51,
+          "message": {
+            "message_id": 51,
+            "date": 1772412989,
+            "text": "incident-replay-first",
+            "chat": {
+              "id": 100,
+              "type": "private"
+            },
+            "from": {
+              "id": 200,
+              "is_bot": false,
+              "first_name": "Tester"
+            }
+          }
+        },
+        {
+          "update_id": 52,
+          "message": {
+            "message_id": 52,
+            "date": 1772412989,
+            "text": "incident-replay-second",
+            "chat": {
+              "id": 100,
+              "type": "private"
+            },
+            "from": {
+              "id": 200,
+              "is_bot": false,
+              "first_name": "Tester"
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": 4,
+    "timestamp": "2026-03-02T00:56:29.759Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "parse_mode": "HTML",
+      "chat_id": "100",
+      "text": "Status Pane\nrun_id: <code>1772412989725-af168c</code>\nsession: <code>sdk-two-runs-session</code>\nstatus: <code>busy</code>\nidle: <code>no</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 1,
+        "date": 1772412989,
+        "text": "Status Pane\nrun_id: <code>1772412989725-af168c</code>\nsession: <code>sdk-two-runs-session</code>\nstatus: <code>busy</code>\nidle: <code>no</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 5,
+    "timestamp": "2026-03-02T00:56:29.767Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "1",
+      "parse_mode": "HTML",
+      "text": "Status Pane\nrun_id: <code>1772412989725-af168c</code>\nsession: <code>sdk-two-runs-session</code>\nstatus: <code>busy</code>\nidle: <code>no</code>\nassistant_message: <code>msg-first</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 2,
+        "date": 1772412989,
+        "text": "Status Pane\nrun_id: <code>1772412989725-af168c</code>\nsession: <code>sdk-two-runs-session</code>\nstatus: <code>busy</code>\nidle: <code>no</code>\nassistant_message: <code>msg-first</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 6,
+    "timestamp": "2026-03-02T00:56:29.768Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "parse_mode": "HTML",
+      "chat_id": "100",
+      "text": "first-incident-answer\nprompt:incident-replay-first"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 3,
+        "date": 1772412989,
+        "text": "first-incident-answer\nprompt:incident-replay-first",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 7,
+    "timestamp": "2026-03-02T00:56:29.786Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "1",
+      "parse_mode": "HTML",
+      "text": "Status Pane\nrun_id: <code>1772412989725-af168c</code>\nsession: <code>sdk-two-runs-session</code>\nstatus: <code>idle</code>\nidle: <code>yes</code>\nassistant_message: <code>msg-first</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 4,
+        "date": 1772412989,
+        "text": "Status Pane\nrun_id: <code>1772412989725-af168c</code>\nsession: <code>sdk-two-runs-session</code>\nstatus: <code>idle</code>\nidle: <code>yes</code>\nassistant_message: <code>msg-first</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 8,
+    "timestamp": "2026-03-02T00:56:30.026Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "53",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 9,
+    "timestamp": "2026-03-02T00:56:30.332Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "53",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 10,
+    "timestamp": "2026-03-02T00:56:30.636Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "53",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 11,
+    "timestamp": "2026-03-02T00:56:30.941Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "53",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 12,
+    "timestamp": "2026-03-02T00:56:31.160Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "1",
+      "parse_mode": "HTML",
+      "text": "Status Pane\nrun_id: <code>1772412989725-af168c</code>\nsession: <code>sdk-two-runs-session</code>\nstatus: <code>busy</code>\nidle: <code>no</code>\nassistant_message: <code>msg-first</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 5,
+        "date": 1772412991,
+        "text": "Status Pane\nrun_id: <code>1772412989725-af168c</code>\nsession: <code>sdk-two-runs-session</code>\nstatus: <code>busy</code>\nidle: <code>no</code>\nassistant_message: <code>msg-first</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 13,
+    "timestamp": "2026-03-02T00:56:31.169Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "1",
+      "parse_mode": "HTML",
+      "text": "Status Pane\nrun_id: <code>1772412989725-af168c</code>\nsession: <code>sdk-two-runs-session</code>\nstatus: <code>idle</code>\nidle: <code>yes</code>\nassistant_message: <code>msg-first</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 6,
+        "date": 1772412991,
+        "text": "Status Pane\nrun_id: <code>1772412989725-af168c</code>\nsession: <code>sdk-two-runs-session</code>\nstatus: <code>idle</code>\nidle: <code>yes</code>\nassistant_message: <code>msg-first</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 14,
+    "timestamp": "2026-03-02T00:56:31.171Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "3",
+      "parse_mode": "HTML",
+      "text": "first-incident-answer\nprompt:incident-replay-first\n\nfirst-run-late-tail"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 7,
+        "date": 1772412991,
+        "text": "first-incident-answer\nprompt:incident-replay-first\n\nfirst-run-late-tail",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 15,
+    "timestamp": "2026-03-02T00:56:31.244Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "53",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 16,
+    "timestamp": "2026-03-02T00:56:31.548Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "53",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 17,
+    "timestamp": "2026-03-02T00:56:31.852Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "53",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 18,
+    "timestamp": "2026-03-02T00:56:31.962Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "parse_mode": "HTML",
+      "chat_id": "100",
+      "text": "Status Pane\nrun_id: <code>1772412991958-c99123</code>\nsession: <code>sdk-two-runs-session</code>\nstatus: <code>busy</code>\nidle: <code>no</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 8,
+        "date": 1772412991,
+        "text": "Status Pane\nrun_id: <code>1772412991958-c99123</code>\nsession: <code>sdk-two-runs-session</code>\nstatus: <code>busy</code>\nidle: <code>no</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 19,
+    "timestamp": "2026-03-02T00:56:31.973Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "8",
+      "parse_mode": "HTML",
+      "text": "Status Pane\nrun_id: <code>1772412991958-c99123</code>\nsession: <code>sdk-two-runs-session</code>\nstatus: <code>busy</code>\nidle: <code>no</code>\nassistant_message: <code>msg-first</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 9,
+        "date": 1772412991,
+        "text": "Status Pane\nrun_id: <code>1772412991958-c99123</code>\nsession: <code>sdk-two-runs-session</code>\nstatus: <code>busy</code>\nidle: <code>no</code>\nassistant_message: <code>msg-first</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 20,
+    "timestamp": "2026-03-02T00:56:32.013Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "8",
+      "parse_mode": "HTML",
+      "text": "Status Pane\nrun_id: <code>1772412991958-c99123</code>\nsession: <code>sdk-two-runs-session</code>\nstatus: <code>idle</code>\nidle: <code>yes</code>\nassistant_message: <code>msg-first</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 10,
+        "date": 1772412992,
+        "text": "Status Pane\nrun_id: <code>1772412991958-c99123</code>\nsession: <code>sdk-two-runs-session</code>\nstatus: <code>idle</code>\nidle: <code>yes</code>\nassistant_message: <code>msg-first</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 21,
+    "timestamp": "2026-03-02T00:56:32.156Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "53",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 22,
+    "timestamp": "2026-03-02T00:56:32.461Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "53",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 23,
+    "timestamp": "2026-03-02T00:56:32.766Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "53",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 24,
+    "timestamp": "2026-03-02T00:56:32.818Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "8",
+      "parse_mode": "HTML",
+      "text": "Status Pane\nrun_id: <code>1772412991958-c99123</code>\nsession: <code>sdk-two-runs-session</code>\nstatus: <code>busy</code>\nidle: <code>no</code>\nassistant_message: <code>msg-first</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 11,
+        "date": 1772412992,
+        "text": "Status Pane\nrun_id: <code>1772412991958-c99123</code>\nsession: <code>sdk-two-runs-session</code>\nstatus: <code>busy</code>\nidle: <code>no</code>\nassistant_message: <code>msg-first</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 25,
+    "timestamp": "2026-03-02T00:56:32.826Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "8",
+      "parse_mode": "HTML",
+      "text": "Status Pane\nrun_id: <code>1772412991958-c99123</code>\nsession: <code>sdk-two-runs-session</code>\nstatus: <code>idle</code>\nidle: <code>yes</code>\nassistant_message: <code>msg-second</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 12,
+        "date": 1772412992,
+        "text": "Status Pane\nrun_id: <code>1772412991958-c99123</code>\nsession: <code>sdk-two-runs-session</code>\nstatus: <code>idle</code>\nidle: <code>yes</code>\nassistant_message: <code>msg-second</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 26,
+    "timestamp": "2026-03-02T00:56:32.828Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "parse_mode": "HTML",
+      "chat_id": "100",
+      "text": "second-incident-answer: prompt:incident-replay-second"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 13,
+        "date": 1772412992,
+        "text": "second-incident-answer: prompt:incident-replay-second",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 27,
+    "timestamp": "2026-03-02T00:56:33.070Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "53",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 28,
+    "timestamp": "2026-03-02T00:56:33.373Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "53",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 29,
+    "timestamp": "2026-03-02T00:56:33.678Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "53",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 30,
+    "timestamp": "2026-03-02T00:56:33.983Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "53",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  }
+]

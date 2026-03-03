@@ -1,0 +1,29 @@
+/Users/chanjinpark/dev/hermux-cli/src/providers/downstream/telegram/gateway-repo-message-handler.js:29
+    getHelpText,
+    ^
+
+SyntaxError: Identifier 'getHelpText' has already been declared
+    at wrapSafe (node:internal/modules/cjs/loader:1742:18)
+    at Module._compile (node:internal/modules/cjs/loader:1785:20)
+    at Module._extensions..js (node:internal/modules/cjs/loader:1942:10)
+    at Module.load (node:internal/modules/cjs/loader:1532:32)
+    at Module._load (node:internal/modules/cjs/loader:1334:12)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.require (node:internal/modules/cjs/loader:1555:12)
+    at require (node:internal/modules/helpers:152:16)
+    at Object.<anonymous> (/Users/chanjinpark/dev/hermux-cli/src/providers/downstream/telegram/index.js:5:38)
+    at Module._compile (node:internal/modules/cjs/loader:1811:14)
+    at Module._extensions..js (node:internal/modules/cjs/loader:1942:10)
+    at Module.load (node:internal/modules/cjs/loader:1532:32)
+    at Module._load (node:internal/modules/cjs/loader:1334:12)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.require (node:internal/modules/cjs/loader:1555:12)
+    at require (node:internal/modules/helpers:152:16)
+    at telegram (/Users/chanjinpark/dev/hermux-cli/src/providers/index.js:10:19)
+    at resolveDownstreamProvider (/Users/chanjinpark/dev/hermux-cli/src/providers/index.js:24:10)
+    at Object.<anonymous> (/Users/chanjinpark/dev/hermux-cli/src/gateway.js:31:28)
+    at Module._compile (node:internal/modules/cjs/loader:1811:14)
+    at Module._extensions..js (node:internal/modules/cjs/loader:1942:10)
+    at Module.load (node:internal/modules/cjs/loader:1532:32)
+
+Node.js v25.6.1

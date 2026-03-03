@@ -1,0 +1,14 @@
+{
+  "testName": "post-complete-late-text-repro",
+  "status": "ok",
+  "finishedAt": "2026-02-28T12:07:38.956Z",
+  "startedAt": "2026-02-28T12:07:33.954Z",
+  "runtimeDir": "/Users/chanjinpark/dev/hermux-cli/.tmp/e2e-artifacts/gateway-e2e-2026-02-28T12-07-33-952Z-33b04c/runtime",
+  "artifactDir": "/Users/chanjinpark/dev/hermux-cli/.tmp/e2e-artifacts/gateway-e2e-2026-02-28T12-07-33-952Z-33b04c",
+  "stdoutPath": "/Users/chanjinpark/dev/hermux-cli/.tmp/e2e-artifacts/gateway-e2e-2026-02-28T12-07-33-952Z-33b04c/gateway.stdout.log",
+  "stderrPath": "/Users/chanjinpark/dev/hermux-cli/.tmp/e2e-artifacts/gateway-e2e-2026-02-28T12-07-33-952Z-33b04c/gateway.stderr.log",
+  "auditPath": "/Users/chanjinpark/dev/hermux-cli/.tmp/e2e-artifacts/gateway-e2e-2026-02-28T12-07-33-952Z-33b04c/runtime/audit-events.jsonl",
+  "auditExists": true,
+  "gatewayExitCode": 0,
+  "requestsCount": 24
+}

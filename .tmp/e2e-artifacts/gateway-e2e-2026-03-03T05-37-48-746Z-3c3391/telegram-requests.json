@@ -1,0 +1,194 @@
+[
+  {
+    "id": 3,
+    "timestamp": "2026-03-03T05:37:49.238Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "0",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": [
+        {
+          "update_id": 41,
+          "message": {
+            "message_id": 41,
+            "date": 1772516268,
+            "text": "first-prompt-late-case",
+            "chat": {
+              "id": 100,
+              "type": "private"
+            },
+            "from": {
+              "id": 200,
+              "is_bot": false,
+              "first_name": "Tester"
+            }
+          }
+        },
+        {
+          "update_id": 42,
+          "message": {
+            "message_id": 42,
+            "date": 1772516268,
+            "text": "second-prompt-late-case",
+            "chat": {
+              "id": 100,
+              "type": "private"
+            },
+            "from": {
+              "id": 200,
+              "is_bot": false,
+              "first_name": "Tester"
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": 4,
+    "timestamp": "2026-03-03T05:37:49.274Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "parse_mode": "HTML",
+      "chat_id": "100",
+      "text": "✅ demo\n💬 <code>sdk-two-runs-session</code>\n🔴 busy 👣0 🛠️0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 1,
+        "date": 1772516269,
+        "text": "✅ demo\n💬 <code>sdk-two-runs-session</code>\n🔴 busy 👣0 🛠️0",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 5,
+    "timestamp": "2026-03-03T05:37:49.275Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "parse_mode": "HTML",
+      "chat_id": "100",
+      "text": "✅ demo\n💬 <code>sdk-two-runs-session</code>\n🔴 busy 👣0 🛠️0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 2,
+        "date": 1772516269,
+        "text": "✅ demo\n💬 <code>sdk-two-runs-session</code>\n🔴 busy 👣0 🛠️0",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 6,
+    "timestamp": "2026-03-03T05:37:49.291Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "2",
+      "parse_mode": "HTML",
+      "text": "✅ demo\n💬 <code>sdk-two-runs-session</code>\n🟢 idle 👣0 🛠️0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 3,
+        "date": 1772516269,
+        "text": "✅ demo\n💬 <code>sdk-two-runs-session</code>\n🟢 idle 👣0 🛠️0",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 7,
+    "timestamp": "2026-03-03T05:37:49.547Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "43",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 8,
+    "timestamp": "2026-03-03T05:37:49.851Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "43",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 9,
+    "timestamp": "2026-03-03T05:37:50.158Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "43",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 10,
+    "timestamp": "2026-03-03T05:37:50.185Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "parse_mode": "HTML",
+      "chat_id": "100",
+      "text": "second-late-answer\nprompt:second-prompt-late-case"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 4,
+        "date": 1772516270,
+        "text": "second-late-answer\nprompt:second-prompt-late-case",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  }
+]

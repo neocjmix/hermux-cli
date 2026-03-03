@@ -1,0 +1,423 @@
+[
+  {
+    "id": 3,
+    "timestamp": "2026-02-28T13:52:55.032Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "0",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": [
+        {
+          "update_id": 30,
+          "message": {
+            "message_id": 30,
+            "date": 1772286774,
+            "text": "question-one-marker",
+            "chat": {
+              "id": 100,
+              "type": "private"
+            },
+            "from": {
+              "id": 200,
+              "is_bot": false,
+              "first_name": "Tester"
+            }
+          }
+        },
+        {
+          "update_id": 31,
+          "message": {
+            "message_id": 31,
+            "date": 1772286774,
+            "text": "question-two-marker",
+            "chat": {
+              "id": 100,
+              "type": "private"
+            },
+            "from": {
+              "id": 200,
+              "is_bot": false,
+              "first_name": "Tester"
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": 4,
+    "timestamp": "2026-02-28T13:52:55.074Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "parse_mode": "HTML",
+      "chat_id": "100",
+      "text": "Status Pane\nrun_id: <code>1772286775043-5eac54</code>\nsession: <code>sdk-race-session</code>\nstatus: <code>busy</code>\nidle: <code>no</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 1,
+        "date": 1772286775,
+        "text": "Status Pane\nrun_id: <code>1772286775043-5eac54</code>\nsession: <code>sdk-race-session</code>\nstatus: <code>busy</code>\nidle: <code>no</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 5,
+    "timestamp": "2026-02-28T13:52:55.084Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "1",
+      "parse_mode": "HTML",
+      "text": "Status Pane\nrun_id: <code>1772286775043-5eac54</code>\nsession: <code>sdk-race-session</code>\nstatus: <code>idle</code>\nidle: <code>yes</code>\nassistant_message: <code>msg-1</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 2,
+        "date": 1772286775,
+        "text": "Status Pane\nrun_id: <code>1772286775043-5eac54</code>\nsession: <code>sdk-race-session</code>\nstatus: <code>idle</code>\nidle: <code>yes</code>\nassistant_message: <code>msg-1</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 6,
+    "timestamp": "2026-02-28T13:52:55.085Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "parse_mode": "HTML",
+      "chat_id": "100",
+      "text": "first-answer-only\nprompt:question-one-marker"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 3,
+        "date": 1772286775,
+        "text": "first-answer-only\nprompt:question-one-marker",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 7,
+    "timestamp": "2026-02-28T13:52:55.345Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 8,
+    "timestamp": "2026-02-28T13:52:55.651Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 9,
+    "timestamp": "2026-02-28T13:52:55.959Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 10,
+    "timestamp": "2026-02-28T13:52:56.266Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 11,
+    "timestamp": "2026-02-28T13:52:56.572Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 12,
+    "timestamp": "2026-02-28T13:52:56.877Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 13,
+    "timestamp": "2026-02-28T13:52:57.181Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 14,
+    "timestamp": "2026-02-28T13:52:57.440Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "parse_mode": "HTML",
+      "chat_id": "100",
+      "text": "Status Pane\nrun_id: <code>1772286777433-bd8a20</code>\nsession: <code>sdk-race-session</code>\nstatus: <code>busy</code>\nidle: <code>no</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 4,
+        "date": 1772286777,
+        "text": "Status Pane\nrun_id: <code>1772286777433-bd8a20</code>\nsession: <code>sdk-race-session</code>\nstatus: <code>busy</code>\nidle: <code>no</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 15,
+    "timestamp": "2026-02-28T13:52:57.447Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "4",
+      "parse_mode": "HTML",
+      "text": "Status Pane\nrun_id: <code>1772286777433-bd8a20</code>\nsession: <code>sdk-race-session</code>\nstatus: <code>idle</code>\nidle: <code>yes</code>\nassistant_message: <code>msg-2</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 5,
+        "date": 1772286777,
+        "text": "Status Pane\nrun_id: <code>1772286777433-bd8a20</code>\nsession: <code>sdk-race-session</code>\nstatus: <code>idle</code>\nidle: <code>yes</code>\nassistant_message: <code>msg-2</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 16,
+    "timestamp": "2026-02-28T13:52:57.449Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "parse_mode": "HTML",
+      "chat_id": "100",
+      "text": "second-answer-only\nprompt:question-two-marker"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 6,
+        "date": 1772286777,
+        "text": "second-answer-only\nprompt:question-two-marker",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 17,
+    "timestamp": "2026-02-28T13:52:57.487Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 18,
+    "timestamp": "2026-02-28T13:52:57.793Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 19,
+    "timestamp": "2026-02-28T13:52:58.099Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 20,
+    "timestamp": "2026-02-28T13:52:58.404Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 21,
+    "timestamp": "2026-02-28T13:52:58.710Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 22,
+    "timestamp": "2026-02-28T13:52:59.017Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 23,
+    "timestamp": "2026-02-28T13:52:59.322Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 24,
+    "timestamp": "2026-02-28T13:52:59.627Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  }
+]

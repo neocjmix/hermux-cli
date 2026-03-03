@@ -1,0 +1,14 @@
+{
+  "testName": "persist-artifacts",
+  "status": "teardown",
+  "finishedAt": "2026-03-02T01:35:15.630Z",
+  "startedAt": "2026-03-02T01:35:05.542Z",
+  "runtimeDir": "/Users/chanjinpark/dev/hermux-cli/.tmp/e2e-artifacts/gateway-e2e-2026-03-02T01-35-05-539Z-d81580/runtime",
+  "artifactDir": "/Users/chanjinpark/dev/hermux-cli/.tmp/e2e-artifacts/gateway-e2e-2026-03-02T01-35-05-539Z-d81580",
+  "stdoutPath": "/Users/chanjinpark/dev/hermux-cli/.tmp/e2e-artifacts/gateway-e2e-2026-03-02T01-35-05-539Z-d81580/gateway.stdout.log",
+  "stderrPath": "/Users/chanjinpark/dev/hermux-cli/.tmp/e2e-artifacts/gateway-e2e-2026-03-02T01-35-05-539Z-d81580/gateway.stderr.log",
+  "auditPath": "/Users/chanjinpark/dev/hermux-cli/.tmp/e2e-artifacts/gateway-e2e-2026-03-02T01-35-05-539Z-d81580/runtime/audit-events.jsonl",
+  "auditExists": false,
+  "gatewayExitCode": 1,
+  "requestsCount": 0
+}

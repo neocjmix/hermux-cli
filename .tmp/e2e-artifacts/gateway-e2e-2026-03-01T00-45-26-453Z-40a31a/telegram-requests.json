@@ -1,0 +1,423 @@
+[
+  {
+    "id": 3,
+    "timestamp": "2026-03-01T00:45:26.957Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "0",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": [
+        {
+          "update_id": 30,
+          "message": {
+            "message_id": 30,
+            "date": 1772325926,
+            "text": "question-one-marker",
+            "chat": {
+              "id": 100,
+              "type": "private"
+            },
+            "from": {
+              "id": 200,
+              "is_bot": false,
+              "first_name": "Tester"
+            }
+          }
+        },
+        {
+          "update_id": 31,
+          "message": {
+            "message_id": 31,
+            "date": 1772325926,
+            "text": "question-two-marker",
+            "chat": {
+              "id": 100,
+              "type": "private"
+            },
+            "from": {
+              "id": 200,
+              "is_bot": false,
+              "first_name": "Tester"
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": 4,
+    "timestamp": "2026-03-01T00:45:26.988Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "parse_mode": "HTML",
+      "chat_id": "100",
+      "text": "📦 demo (sdk-two-ru...)\n📡 busy\n🔁 0 · 🧰 0\n🧠 -"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 1,
+        "date": 1772325926,
+        "text": "📦 demo (sdk-two-ru...)\n📡 busy\n🔁 0 · 🧰 0\n🧠 -",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 5,
+    "timestamp": "2026-03-01T00:45:26.994Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "1",
+      "parse_mode": "HTML",
+      "text": "📦 demo (sdk-two-ru...)\n📡 idle\n🔁 0 · 🧰 0\n🧠 -"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 2,
+        "date": 1772325926,
+        "text": "📦 demo (sdk-two-ru...)\n📡 idle\n🔁 0 · 🧰 0\n🧠 -",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 6,
+    "timestamp": "2026-03-01T00:45:26.995Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "parse_mode": "HTML",
+      "chat_id": "100",
+      "text": "first-answer-only\nprompt:question-one-marker"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 3,
+        "date": 1772325926,
+        "text": "first-answer-only\nprompt:question-one-marker",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 7,
+    "timestamp": "2026-03-01T00:45:27.264Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 8,
+    "timestamp": "2026-03-01T00:45:27.569Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 9,
+    "timestamp": "2026-03-01T00:45:27.887Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 10,
+    "timestamp": "2026-03-01T00:45:28.191Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 11,
+    "timestamp": "2026-03-01T00:45:28.495Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 12,
+    "timestamp": "2026-03-01T00:45:28.800Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 13,
+    "timestamp": "2026-03-01T00:45:29.104Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 14,
+    "timestamp": "2026-03-01T00:45:29.343Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "parse_mode": "HTML",
+      "chat_id": "100",
+      "text": "📦 demo (sdk-two-ru...)\n📡 busy\n🔁 0 · 🧰 0\n🧠 -"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 4,
+        "date": 1772325929,
+        "text": "📦 demo (sdk-two-ru...)\n📡 busy\n🔁 0 · 🧰 0\n🧠 -",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 15,
+    "timestamp": "2026-03-01T00:45:29.352Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "4",
+      "parse_mode": "HTML",
+      "text": "📦 demo (sdk-two-ru...)\n📡 idle\n🔁 0 · 🧰 0\n🧠 -"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 5,
+        "date": 1772325929,
+        "text": "📦 demo (sdk-two-ru...)\n📡 idle\n🔁 0 · 🧰 0\n🧠 -",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 16,
+    "timestamp": "2026-03-01T00:45:29.356Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "parse_mode": "HTML",
+      "chat_id": "100",
+      "text": "second-answer-only\nprompt:question-two-marker"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 6,
+        "date": 1772325929,
+        "text": "second-answer-only\nprompt:question-two-marker",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 17,
+    "timestamp": "2026-03-01T00:45:29.407Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 18,
+    "timestamp": "2026-03-01T00:45:29.712Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 19,
+    "timestamp": "2026-03-01T00:45:30.017Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 20,
+    "timestamp": "2026-03-01T00:45:30.320Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 21,
+    "timestamp": "2026-03-01T00:45:30.625Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 22,
+    "timestamp": "2026-03-01T00:45:30.930Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 23,
+    "timestamp": "2026-03-01T00:45:31.235Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 24,
+    "timestamp": "2026-03-01T00:45:31.538Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  }
+]

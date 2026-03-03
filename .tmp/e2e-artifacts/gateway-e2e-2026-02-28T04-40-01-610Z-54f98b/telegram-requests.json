@@ -1,0 +1,417 @@
+[
+  {
+    "id": 3,
+    "timestamp": "2026-02-28T04:40:02.102Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "0",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": [
+        {
+          "update_id": 30,
+          "message": {
+            "message_id": 30,
+            "date": 1772253601,
+            "text": "question-one-marker",
+            "chat": {
+              "id": 100,
+              "type": "private"
+            },
+            "from": {
+              "id": 200,
+              "is_bot": false,
+              "first_name": "Tester"
+            }
+          }
+        },
+        {
+          "update_id": 31,
+          "message": {
+            "message_id": 31,
+            "date": 1772253601,
+            "text": "question-two-marker",
+            "chat": {
+              "id": 100,
+              "type": "private"
+            },
+            "from": {
+              "id": 200,
+              "is_bot": false,
+              "first_name": "Tester"
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": 4,
+    "timestamp": "2026-02-28T04:40:02.146Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "chat_id": "100",
+      "text": "Status Pane\nrun_id: `1772253602113-6493e6`\nsession: `sdk-race-session`\nstatus: `busy`\nidle: `no`"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 1,
+        "date": 1772253602,
+        "text": "Status Pane\nrun_id: `1772253602113-6493e6`\nsession: `sdk-race-session`\nstatus: `busy`\nidle: `no`",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 5,
+    "timestamp": "2026-02-28T04:40:02.155Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "1",
+      "text": "Status Pane\nrun_id: `1772253602113-6493e6`\nsession: `sdk-race-session`\nstatus: `idle`\nidle: `yes`\nassistant_message: `msg-1`"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 2,
+        "date": 1772253602,
+        "text": "Status Pane\nrun_id: `1772253602113-6493e6`\nsession: `sdk-race-session`\nstatus: `idle`\nidle: `yes`\nassistant_message: `msg-1`",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 6,
+    "timestamp": "2026-02-28T04:40:02.156Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "chat_id": "100",
+      "text": "first-answer-only\nprompt:question-one-marker"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 3,
+        "date": 1772253602,
+        "text": "first-answer-only\nprompt:question-one-marker",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 7,
+    "timestamp": "2026-02-28T04:40:02.414Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 8,
+    "timestamp": "2026-02-28T04:40:02.720Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 9,
+    "timestamp": "2026-02-28T04:40:03.027Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 10,
+    "timestamp": "2026-02-28T04:40:03.334Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 11,
+    "timestamp": "2026-02-28T04:40:03.642Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 12,
+    "timestamp": "2026-02-28T04:40:03.948Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 13,
+    "timestamp": "2026-02-28T04:40:04.254Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 14,
+    "timestamp": "2026-02-28T04:40:04.509Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "chat_id": "100",
+      "text": "Status Pane\nrun_id: `1772253604502-67ac71`\nsession: `sdk-race-session`\nstatus: `busy`\nidle: `no`"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 4,
+        "date": 1772253604,
+        "text": "Status Pane\nrun_id: `1772253604502-67ac71`\nsession: `sdk-race-session`\nstatus: `busy`\nidle: `no`",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 15,
+    "timestamp": "2026-02-28T04:40:04.516Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "4",
+      "text": "Status Pane\nrun_id: `1772253604502-67ac71`\nsession: `sdk-race-session`\nstatus: `idle`\nidle: `yes`\nassistant_message: `msg-2`"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 5,
+        "date": 1772253604,
+        "text": "Status Pane\nrun_id: `1772253604502-67ac71`\nsession: `sdk-race-session`\nstatus: `idle`\nidle: `yes`\nassistant_message: `msg-2`",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 16,
+    "timestamp": "2026-02-28T04:40:04.517Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "chat_id": "100",
+      "text": "second-answer-only\nprompt:question-two-marker"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 6,
+        "date": 1772253604,
+        "text": "second-answer-only\nprompt:question-two-marker",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 17,
+    "timestamp": "2026-02-28T04:40:04.561Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 18,
+    "timestamp": "2026-02-28T04:40:04.867Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 19,
+    "timestamp": "2026-02-28T04:40:05.171Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 20,
+    "timestamp": "2026-02-28T04:40:05.476Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 21,
+    "timestamp": "2026-02-28T04:40:05.781Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 22,
+    "timestamp": "2026-02-28T04:40:06.087Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 23,
+    "timestamp": "2026-02-28T04:40:06.393Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 24,
+    "timestamp": "2026-02-28T04:40:06.698Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "32",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  }
+]

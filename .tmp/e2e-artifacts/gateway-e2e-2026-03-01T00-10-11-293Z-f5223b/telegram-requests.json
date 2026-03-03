@@ -1,0 +1,458 @@
+[
+  {
+    "id": 3,
+    "timestamp": "2026-03-01T00:10:11.803Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "0",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": [
+        {
+          "update_id": 61,
+          "message": {
+            "message_id": 61,
+            "date": 1772323811,
+            "text": "pc-first",
+            "chat": {
+              "id": 100,
+              "type": "private"
+            },
+            "from": {
+              "id": 200,
+              "is_bot": false,
+              "first_name": "Tester"
+            }
+          }
+        },
+        {
+          "update_id": 62,
+          "message": {
+            "message_id": 62,
+            "date": 1772323811,
+            "text": "pc-second",
+            "chat": {
+              "id": 100,
+              "type": "private"
+            },
+            "from": {
+              "id": 200,
+              "is_bot": false,
+              "first_name": "Tester"
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": 4,
+    "timestamp": "2026-03-01T00:10:11.846Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "parse_mode": "HTML",
+      "chat_id": "100",
+      "text": "Status Pane\n📦 demo (sdk-two-ru...)\n📡 busy\n🔁 0 · 🧰 0\n🧠 -\n----------"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 1,
+        "date": 1772323811,
+        "text": "Status Pane\n📦 demo (sdk-two-ru...)\n📡 busy\n🔁 0 · 🧰 0\n🧠 -\n----------",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 5,
+    "timestamp": "2026-03-01T00:10:11.854Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "1",
+      "parse_mode": "HTML",
+      "text": "Status Pane\n📦 demo (sdk-two-ru...)\n📡 idle\n🔁 0 · 🧰 0\n🧠 -\n----------"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 2,
+        "date": 1772323811,
+        "text": "Status Pane\n📦 demo (sdk-two-ru...)\n📡 idle\n🔁 0 · 🧰 0\n🧠 -\n----------",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 6,
+    "timestamp": "2026-03-01T00:10:11.856Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "parse_mode": "HTML",
+      "chat_id": "100",
+      "text": "first-ok\nprompt:pc-first"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 3,
+        "date": 1772323811,
+        "text": "first-ok\nprompt:pc-first",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 7,
+    "timestamp": "2026-03-01T00:10:12.114Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 8,
+    "timestamp": "2026-03-01T00:10:12.421Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 9,
+    "timestamp": "2026-03-01T00:10:12.728Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 10,
+    "timestamp": "2026-03-01T00:10:13.035Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 11,
+    "timestamp": "2026-03-01T00:10:13.342Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 12,
+    "timestamp": "2026-03-01T00:10:13.646Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 13,
+    "timestamp": "2026-03-01T00:10:13.952Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 14,
+    "timestamp": "2026-03-01T00:10:14.058Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "parse_mode": "HTML",
+      "chat_id": "100",
+      "text": "Status Pane\n📦 demo (sdk-two-ru...)\n📡 busy\n🔁 0 · 🧰 0\n🧠 -\n----------"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 4,
+        "date": 1772323814,
+        "text": "Status Pane\n📦 demo (sdk-two-ru...)\n📡 busy\n🔁 0 · 🧰 0\n🧠 -\n----------",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 15,
+    "timestamp": "2026-03-01T00:10:14.064Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "4",
+      "parse_mode": "HTML",
+      "text": "Status Pane\n📦 demo (sdk-two-ru...)\n📡 idle\n🔁 0 · 🧰 0\n🧠 -\n----------"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 5,
+        "date": 1772323814,
+        "text": "Status Pane\n📦 demo (sdk-two-ru...)\n📡 idle\n🔁 0 · 🧰 0\n🧠 -\n----------",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 16,
+    "timestamp": "2026-03-01T00:10:14.258Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 17,
+    "timestamp": "2026-03-01T00:10:14.563Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 18,
+    "timestamp": "2026-03-01T00:10:14.871Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 19,
+    "timestamp": "2026-03-01T00:10:15.176Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 20,
+    "timestamp": "2026-03-01T00:10:15.481Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 21,
+    "timestamp": "2026-03-01T00:10:15.786Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 22,
+    "timestamp": "2026-03-01T00:10:15.962Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "4",
+      "parse_mode": "HTML",
+      "text": "Status Pane\n📦 demo (sdk-two-ru...)\n📡 busy\n🔁 0 · 🧰 0\n🧠 -\n----------"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 6,
+        "date": 1772323815,
+        "text": "Status Pane\n📦 demo (sdk-two-ru...)\n📡 busy\n🔁 0 · 🧰 0\n🧠 -\n----------",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 23,
+    "timestamp": "2026-03-01T00:10:15.969Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "4",
+      "parse_mode": "HTML",
+      "text": "Status Pane\n📦 demo (sdk-two-ru...)\n📡 idle\n🔁 2 · 🧰 0\n🧠 -\n----------"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 7,
+        "date": 1772323815,
+        "text": "Status Pane\n📦 demo (sdk-two-ru...)\n📡 idle\n🔁 2 · 🧰 0\n🧠 -\n----------",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 24,
+    "timestamp": "2026-03-01T00:10:15.971Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "parse_mode": "HTML",
+      "chat_id": "100",
+      "text": "second-post-complete:pc-second"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 8,
+        "date": 1772323815,
+        "text": "second-post-complete:pc-second",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 25,
+    "timestamp": "2026-03-01T00:10:16.090Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  }
+]

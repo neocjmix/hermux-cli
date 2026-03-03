@@ -1,0 +1,458 @@
+[
+  {
+    "id": 3,
+    "timestamp": "2026-02-28T12:47:01.604Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "0",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": [
+        {
+          "update_id": 61,
+          "message": {
+            "message_id": 61,
+            "date": 1772282821,
+            "text": "pc-first",
+            "chat": {
+              "id": 100,
+              "type": "private"
+            },
+            "from": {
+              "id": 200,
+              "is_bot": false,
+              "first_name": "Tester"
+            }
+          }
+        },
+        {
+          "update_id": 62,
+          "message": {
+            "message_id": 62,
+            "date": 1772282821,
+            "text": "pc-second",
+            "chat": {
+              "id": 100,
+              "type": "private"
+            },
+            "from": {
+              "id": 200,
+              "is_bot": false,
+              "first_name": "Tester"
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": 4,
+    "timestamp": "2026-02-28T12:47:01.651Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "parse_mode": "HTML",
+      "chat_id": "100",
+      "text": "Status Pane\nrun_id: <code>1772282821616-1e7f73</code>\nsession: <code>sdk-race-session</code>\nstatus: <code>busy</code>\nidle: <code>no</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 1,
+        "date": 1772282821,
+        "text": "Status Pane\nrun_id: <code>1772282821616-1e7f73</code>\nsession: <code>sdk-race-session</code>\nstatus: <code>busy</code>\nidle: <code>no</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 5,
+    "timestamp": "2026-02-28T12:47:01.660Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "1",
+      "parse_mode": "HTML",
+      "text": "Status Pane\nrun_id: <code>1772282821616-1e7f73</code>\nsession: <code>sdk-race-session</code>\nstatus: <code>idle</code>\nidle: <code>yes</code>\nassistant_message: <code>msg-first</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 2,
+        "date": 1772282821,
+        "text": "Status Pane\nrun_id: <code>1772282821616-1e7f73</code>\nsession: <code>sdk-race-session</code>\nstatus: <code>idle</code>\nidle: <code>yes</code>\nassistant_message: <code>msg-first</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 6,
+    "timestamp": "2026-02-28T12:47:01.661Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "parse_mode": "HTML",
+      "chat_id": "100",
+      "text": "first-ok\nprompt:pc-first"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 3,
+        "date": 1772282821,
+        "text": "first-ok\nprompt:pc-first",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 7,
+    "timestamp": "2026-02-28T12:47:01.916Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 8,
+    "timestamp": "2026-02-28T12:47:02.220Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 9,
+    "timestamp": "2026-02-28T12:47:02.525Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 10,
+    "timestamp": "2026-02-28T12:47:02.831Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 11,
+    "timestamp": "2026-02-28T12:47:03.136Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 12,
+    "timestamp": "2026-02-28T12:47:03.441Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 13,
+    "timestamp": "2026-02-28T12:47:03.744Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 14,
+    "timestamp": "2026-02-28T12:47:03.857Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "parse_mode": "HTML",
+      "chat_id": "100",
+      "text": "Status Pane\nrun_id: <code>1772282823852-f5dcf7</code>\nsession: <code>sdk-race-session</code>\nstatus: <code>busy</code>\nidle: <code>no</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 4,
+        "date": 1772282823,
+        "text": "Status Pane\nrun_id: <code>1772282823852-f5dcf7</code>\nsession: <code>sdk-race-session</code>\nstatus: <code>busy</code>\nidle: <code>no</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 15,
+    "timestamp": "2026-02-28T12:47:03.868Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "4",
+      "parse_mode": "HTML",
+      "text": "Status Pane\nrun_id: <code>1772282823852-f5dcf7</code>\nsession: <code>sdk-race-session</code>\nstatus: <code>idle</code>\nidle: <code>yes</code>\nassistant_message: <code>msg-first</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 5,
+        "date": 1772282823,
+        "text": "Status Pane\nrun_id: <code>1772282823852-f5dcf7</code>\nsession: <code>sdk-race-session</code>\nstatus: <code>idle</code>\nidle: <code>yes</code>\nassistant_message: <code>msg-first</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 16,
+    "timestamp": "2026-02-28T12:47:04.049Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 17,
+    "timestamp": "2026-02-28T12:47:04.353Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 18,
+    "timestamp": "2026-02-28T12:47:04.658Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 19,
+    "timestamp": "2026-02-28T12:47:04.963Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 20,
+    "timestamp": "2026-02-28T12:47:05.267Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 21,
+    "timestamp": "2026-02-28T12:47:05.572Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 22,
+    "timestamp": "2026-02-28T12:47:05.764Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "4",
+      "parse_mode": "HTML",
+      "text": "Status Pane\nrun_id: <code>1772282823852-f5dcf7</code>\nsession: <code>sdk-race-session</code>\nstatus: <code>busy</code>\nidle: <code>no</code>\nassistant_message: <code>msg-first</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 6,
+        "date": 1772282825,
+        "text": "Status Pane\nrun_id: <code>1772282823852-f5dcf7</code>\nsession: <code>sdk-race-session</code>\nstatus: <code>busy</code>\nidle: <code>no</code>\nassistant_message: <code>msg-first</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 23,
+    "timestamp": "2026-02-28T12:47:05.771Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "4",
+      "parse_mode": "HTML",
+      "text": "Status Pane\nrun_id: <code>1772282823852-f5dcf7</code>\nsession: <code>sdk-race-session</code>\nstatus: <code>idle</code>\nidle: <code>yes</code>\nassistant_message: <code>msg-second</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 7,
+        "date": 1772282825,
+        "text": "Status Pane\nrun_id: <code>1772282823852-f5dcf7</code>\nsession: <code>sdk-race-session</code>\nstatus: <code>idle</code>\nidle: <code>yes</code>\nassistant_message: <code>msg-second</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 24,
+    "timestamp": "2026-02-28T12:47:05.773Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "parse_mode": "HTML",
+      "chat_id": "100",
+      "text": "second-post-complete:pc-second"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 8,
+        "date": 1772282825,
+        "text": "second-post-complete:pc-second",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 25,
+    "timestamp": "2026-02-28T12:47:05.876Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "63",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  }
+]

@@ -1,0 +1,84 @@
+[
+  {
+    "id": 1,
+    "timestamp": "2026-02-28T15:04:57.369Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "0",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 2,
+    "timestamp": "2026-02-28T15:04:57.369Z",
+    "token": "test-token",
+    "method": "setMyCommands",
+    "params": {
+      "commands": "[{\"command\":\"onboard\",\"description\":\"Run chat onboarding wizard\"},{\"command\":\"init\",\"description\":\"Initialize by clearing mappings/sessions\"},{\"command\":\"start\",\"description\":\"Show mapped repo info\"},{\"command\":\"repos\",\"description\":\"List repos and how to connect\"},{\"command\":\"connect\",\"description\":\"Connect this chat to a repo\"},{\"command\":\"status\",\"description\":\"Show current runtime status\"},{\"command\":\"models\",\"description\":\"Manage opencode/omo model layers\"},{\"command\":\"session\",\"description\":\"Show current opencode session\"},{\"command\":\"version\",\"description\":\"Show opencode and hermux version\"},{\"command\":\"revert\",\"description\":\"Reply to output and revert (confirm)\"},{\"command\":\"unrevert\",\"description\":\"Undo latest revert if still available\"},{\"command\":\"test\",\"description\":\"Send Telegram formatting showcase\"},{\"command\":\"interrupt\",\"description\":\"Stop current running task\"},{\"command\":\"restart\",\"description\":\"Restart daemon process\"},{\"command\":\"reset\",\"description\":\"Reset current chat session\"},{\"command\":\"verbose\",\"description\":\"Show or toggle verbose mode\"},{\"command\":\"whereami\",\"description\":\"Show current chat ID and mapping\"},{\"command\":\"help\",\"description\":\"Show onboarding and command help\"}]"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": true
+    }
+  },
+  {
+    "id": 3,
+    "timestamp": "2026-02-28T15:04:57.674Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "0",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": [
+        {
+          "update_id": 3,
+          "message": {
+            "message_id": 2,
+            "date": 1772291097,
+            "text": "/start",
+            "chat": {
+              "id": 100,
+              "type": "private"
+            },
+            "from": {
+              "id": 200,
+              "is_bot": false,
+              "first_name": "Tester"
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": 4,
+    "timestamp": "2026-02-28T15:04:57.676Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "chat_id": "100",
+      "text": "opencode gateway [demo]\nworkdir: /tmp/demo\n\nmode: compact (final output only)\ncommands: /repos, /status, /models, /session, /version, /revert, /unrevert, /test, /interrupt, /restart, /reset, /init, /verbose on, /verbose off, /whereami\n\nSend any prompt to run opencode."
+    },
+    "scenario": {
+      "method": "sendMessage",
+      "match": null,
+      "times": 0
+    },
+    "response": {
+      "ok": false,
+      "error_code": 429,
+      "description": "Too Many Requests: retry later"
+    }
+  }
+]

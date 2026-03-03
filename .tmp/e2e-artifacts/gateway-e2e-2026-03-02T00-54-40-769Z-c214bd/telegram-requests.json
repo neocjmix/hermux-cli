@@ -1,0 +1,189 @@
+[
+  {
+    "id": 3,
+    "timestamp": "2026-03-02T00:54:41.282Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "0",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": [
+        {
+          "update_id": 21,
+          "message": {
+            "message_id": 21,
+            "date": 1772412880,
+            "text": "run reminder race demo",
+            "chat": {
+              "id": 100,
+              "type": "private"
+            },
+            "from": {
+              "id": 200,
+              "is_bot": false,
+              "first_name": "Tester"
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": 4,
+    "timestamp": "2026-03-02T00:54:41.322Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "parse_mode": "HTML",
+      "chat_id": "100",
+      "text": "Status Pane\nrun_id: <code>1772412881289-a2bb0f</code>\nsession: <code>sdk-reminder-race-session</code>\nstatus: <code>unknown</code>\nidle: <code>no</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 1,
+        "date": 1772412881,
+        "text": "Status Pane\nrun_id: <code>1772412881289-a2bb0f</code>\nsession: <code>sdk-reminder-race-session</code>\nstatus: <code>unknown</code>\nidle: <code>no</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 5,
+    "timestamp": "2026-03-02T00:54:41.329Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "1",
+      "parse_mode": "HTML",
+      "text": "Status Pane\nrun_id: <code>1772412881289-a2bb0f</code>\nsession: <code>sdk-reminder-race-session</code>\nstatus: <code>idle</code>\nidle: <code>yes</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 2,
+        "date": 1772412881,
+        "text": "Status Pane\nrun_id: <code>1772412881289-a2bb0f</code>\nsession: <code>sdk-reminder-race-session</code>\nstatus: <code>idle</code>\nidle: <code>yes</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 6,
+    "timestamp": "2026-03-02T00:54:41.592Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "22",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 7,
+    "timestamp": "2026-03-02T00:54:41.897Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "22",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 8,
+    "timestamp": "2026-03-02T00:54:42.201Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "22",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 9,
+    "timestamp": "2026-03-02T00:54:42.508Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "22",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 10,
+    "timestamp": "2026-03-02T00:54:42.815Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "22",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 11,
+    "timestamp": "2026-03-02T00:54:43.123Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "22",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 12,
+    "timestamp": "2026-03-02T00:54:43.426Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "22",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  }
+]

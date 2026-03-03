@@ -1,0 +1,16 @@
+[
+  {
+    "id": 1,
+    "timestamp": "2026-03-02T01:35:35.750Z",
+    "token": "test-token",
+    "method": "setWebhook",
+    "params": {
+      "url": "https://example.test/webhook-recovery"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": true
+    }
+  }
+]

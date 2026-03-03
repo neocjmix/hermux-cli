@@ -1,0 +1,189 @@
+[
+  {
+    "id": 3,
+    "timestamp": "2026-02-28T12:09:05.857Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "0",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": [
+        {
+          "update_id": 20,
+          "message": {
+            "message_id": 20,
+            "date": 1772280545,
+            "text": "run race demo",
+            "chat": {
+              "id": 100,
+              "type": "private"
+            },
+            "from": {
+              "id": 200,
+              "is_bot": false,
+              "first_name": "Tester"
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": 4,
+    "timestamp": "2026-02-28T12:09:05.914Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "parse_mode": "HTML",
+      "chat_id": "100",
+      "text": "Status Pane\nrun_id: <code>1772280545867-2dc904</code>\nsession: <code>sdk-race-session</code>\nstatus: <code>busy</code>\nidle: <code>no</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 1,
+        "date": 1772280545,
+        "text": "Status Pane\nrun_id: <code>1772280545867-2dc904</code>\nsession: <code>sdk-race-session</code>\nstatus: <code>busy</code>\nidle: <code>no</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 5,
+    "timestamp": "2026-02-28T12:09:05.932Z",
+    "token": "test-token",
+    "method": "editMessageText",
+    "params": {
+      "chat_id": "100",
+      "message_id": "1",
+      "parse_mode": "HTML",
+      "text": "Status Pane\nrun_id: <code>1772280545867-2dc904</code>\nsession: <code>sdk-race-session</code>\nstatus: <code>idle</code>\nidle: <code>yes</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 2,
+        "date": 1772280545,
+        "text": "Status Pane\nrun_id: <code>1772280545867-2dc904</code>\nsession: <code>sdk-race-session</code>\nstatus: <code>idle</code>\nidle: <code>yes</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 6,
+    "timestamp": "2026-02-28T12:09:06.168Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "21",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 7,
+    "timestamp": "2026-02-28T12:09:06.474Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "21",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 8,
+    "timestamp": "2026-02-28T12:09:06.781Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "21",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 9,
+    "timestamp": "2026-02-28T12:09:07.088Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "21",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 10,
+    "timestamp": "2026-02-28T12:09:07.397Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "21",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 11,
+    "timestamp": "2026-02-28T12:09:07.705Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "21",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 12,
+    "timestamp": "2026-02-28T12:09:08.008Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "21",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  }
+]

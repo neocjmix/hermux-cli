@@ -1,0 +1,13 @@
+polling with 1 bot for 1 repo(s), 1 chat id(s)
+
+shutting down...
+[DEBUG] handle.kill called with signal: SIGTERM
+[DEBUG] handle._abortSession type: function
+[DEBUG] closure abortSession type: function
+[DEBUG] Calling abort function
+[DEBUG] abortSession called for session: sdk-two-runs-session
+[DEBUG] handle.kill called with signal: SIGKILL
+[DEBUG] handle._abortSession type: function
+[DEBUG] closure abortSession type: function
+[DEBUG] Calling abort function
+[DEBUG] abortSession called for session: sdk-two-runs-session

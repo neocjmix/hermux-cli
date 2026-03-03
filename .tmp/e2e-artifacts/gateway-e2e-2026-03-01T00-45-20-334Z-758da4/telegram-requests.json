@@ -1,0 +1,82 @@
+[
+  {
+    "id": 3,
+    "timestamp": "2026-03-01T00:45:20.838Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "0",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": [
+        {
+          "update_id": 12,
+          "message": {
+            "message_id": 12,
+            "date": 1772325920,
+            "text": "/status",
+            "chat": {
+              "id": 100,
+              "type": "private"
+            },
+            "from": {
+              "id": 200,
+              "is_bot": false,
+              "first_name": "Tester"
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": 4,
+    "timestamp": "2026-03-01T00:45:20.846Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "parse_mode": "HTML",
+      "reply_markup": "{\"inline_keyboard\":[[{\"text\":\"Models\",\"callback_data\":\"m:r\"},{\"text\":\"Verbose\",\"callback_data\":\"verbose:status\"},{\"text\":\"Interrupt\",\"callback_data\":\"interrupt:now\"}]]}",
+      "chat_id": "100",
+      "text": "<b>📊 Runtime Status · demo</b>\n<code>chat: 100</code>\n<code>workdir: /tmp/demo</code>\n\n<code>state: ready | busy: no | waiting: no | queue: 0</code>\n<code>runtime: idle | transport: idle | runs: 0</code>\n<code>verbose: off</code>\n<code>session: (none)</code>\n<code>wait detail: -</code>"
+    },
+    "scenario": {
+      "method": "sendMessage",
+      "match": {
+        "parse_mode": "HTML"
+      },
+      "times": 0
+    },
+    "response": {
+      "ok": false,
+      "error_code": 400,
+      "description": "Bad Request: can't parse entities"
+    }
+  },
+  {
+    "id": 5,
+    "timestamp": "2026-03-01T00:45:20.849Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "chat_id": "100",
+      "text": "<b>📊 Runtime Status · demo</b>\n<code>chat: 100</code>\n<code>workdir: /tmp/demo</code>\n\n<code>state: ready | busy: no | waiting: no | queue: 0</code>\n<code>runtime: idle | transport: idle | runs: 0</code>\n<code>verbose: off</code>\n<code>session: (none)</code>\n<code>wait detail: -</code>"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 1,
+        "date": 1772325920,
+        "text": "<b>📊 Runtime Status · demo</b>\n<code>chat: 100</code>\n<code>workdir: /tmp/demo</code>\n\n<code>state: ready | busy: no | waiting: no | queue: 0</code>\n<code>runtime: idle | transport: idle | runs: 0</code>\n<code>verbose: off</code>\n<code>session: (none)</code>\n<code>wait detail: -</code>",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  }
+]

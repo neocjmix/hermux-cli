@@ -1,0 +1,105 @@
+[
+  {
+    "id": 1,
+    "timestamp": "2026-03-01T00:09:50.719Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "0",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": []
+    }
+  },
+  {
+    "id": 2,
+    "timestamp": "2026-03-01T00:09:50.719Z",
+    "token": "test-token",
+    "method": "setMyCommands",
+    "params": {
+      "commands": "[{\"command\":\"onboard\",\"description\":\"Run chat onboarding wizard\"},{\"command\":\"init\",\"description\":\"Initialize by clearing mappings/sessions\"},{\"command\":\"start\",\"description\":\"Show mapped repo info\"},{\"command\":\"repos\",\"description\":\"List repos and how to connect\"},{\"command\":\"connect\",\"description\":\"Connect this chat to a repo\"},{\"command\":\"status\",\"description\":\"Show current runtime status\"},{\"command\":\"models\",\"description\":\"Manage opencode/omo model layers\"},{\"command\":\"session\",\"description\":\"Show current opencode session\"},{\"command\":\"version\",\"description\":\"Show opencode and hermux version\"},{\"command\":\"revert\",\"description\":\"Reply to output and revert (confirm)\"},{\"command\":\"unrevert\",\"description\":\"Undo latest revert if still available\"},{\"command\":\"test\",\"description\":\"Send Telegram formatting showcase\"},{\"command\":\"interrupt\",\"description\":\"Stop current running task\"},{\"command\":\"restart\",\"description\":\"Restart daemon process\"},{\"command\":\"reset\",\"description\":\"Reset current chat session\"},{\"command\":\"verbose\",\"description\":\"Show or toggle verbose mode\"},{\"command\":\"whereami\",\"description\":\"Show current chat ID and mapping\"},{\"command\":\"help\",\"description\":\"Show onboarding and command help\"}]"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": true
+    }
+  },
+  {
+    "id": 3,
+    "timestamp": "2026-03-01T00:09:51.028Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "0",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": [
+        {
+          "update_id": 2,
+          "callback_query": {
+            "id": "cb-1",
+            "from": {
+              "id": 200,
+              "is_bot": false,
+              "first_name": "Tester"
+            },
+            "data": "interrupt:now",
+            "message": {
+              "message_id": 9,
+              "date": 1772323790,
+              "chat": {
+                "id": 100,
+                "type": "private"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": 4,
+    "timestamp": "2026-03-01T00:09:51.037Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "chat_id": "100",
+      "text": "No running task to interrupt."
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 1,
+        "date": 1772323791,
+        "text": "No running task to interrupt.",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 5,
+    "timestamp": "2026-03-01T00:09:51.040Z",
+    "token": "test-token",
+    "method": "answerCallbackQuery",
+    "params": {
+      "text": "idle",
+      "callback_query_id": "cb-1"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": true
+    }
+  }
+]

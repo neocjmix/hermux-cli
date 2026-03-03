@@ -1,0 +1,87 @@
+[
+  {
+    "id": 3,
+    "timestamp": "2026-02-28T16:20:45.929Z",
+    "token": "test-token",
+    "method": "getUpdates",
+    "params": {
+      "offset": "0",
+      "timeout": "0"
+    },
+    "scenario": null,
+    "response": {
+      "ok": true,
+      "result": [
+        {
+          "update_id": 11,
+          "callback_query": {
+            "id": "cb-fail",
+            "from": {
+              "id": 200,
+              "is_bot": false,
+              "first_name": "Tester"
+            },
+            "data": "interrupt:now",
+            "message": {
+              "message_id": 11,
+              "date": 1772295645,
+              "chat": {
+                "id": 100,
+                "type": "private"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": 4,
+    "timestamp": "2026-02-28T16:20:45.931Z",
+    "token": "test-token",
+    "method": "sendMessage",
+    "params": {
+      "chat_id": "100",
+      "text": "No running task to interrupt."
+    },
+    "scenario": {
+      "method": "sendMessage",
+      "match": null,
+      "times": 119
+    },
+    "response": {
+      "ok": true,
+      "result": {
+        "message_id": 1,
+        "date": 1772295645,
+        "text": "No running task to interrupt.",
+        "chat": {
+          "id": 100,
+          "type": "private"
+        }
+      }
+    }
+  },
+  {
+    "id": 5,
+    "timestamp": "2026-02-28T16:20:46.014Z",
+    "token": "test-token",
+    "method": "answerCallbackQuery",
+    "params": {
+      "text": "idle",
+      "callback_query_id": "cb-fail"
+    },
+    "scenario": {
+      "method": "answerCallbackQuery",
+      "match": {
+        "callback_query_id": "cb-fail"
+      },
+      "times": 0
+    },
+    "response": {
+      "ok": false,
+      "error_code": 500,
+      "description": "Internal Server Error"
+    }
+  }
+]

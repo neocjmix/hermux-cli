@@ -292,7 +292,12 @@ function mergePartDelta(state, event, seq) {
 
   if (field === 'text') {
     entry.type = entry.type || 'text';
-    entry.text = `${toText(entry.text)}${toText(props.delta)}`;
+    const deltaText = toText(props.delta);
+    const currentText = toText(entry.text);
+    // Prevent double-append if delta is already at the end (runner.js may have already added it)
+    if (!currentText.endsWith(deltaText)) {
+      entry.text = `${currentText}${deltaText}`;
+    }
     const textSeq = Number(seq || 0) || 0;
     if (textSeq > 0) {
       message.lastTextSeq = Math.max(Number(message.lastTextSeq || 0), textSeq);

@@ -1,0 +1,1 @@
+[bot] polling error detail: {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: can't use getUpdates method while webhook is active","httpStatus":200,"tgErrorCode":409,"description":"Conflict: can't use getUpdates method while webhook is active","parameters":null,"migrateToChatId":"","retryAfter":null}
