@@ -60,6 +60,7 @@ function createRenderState(sessionId) {
     render: {
       latestAssistantMessageId: '',
       latestAssistantText: '',
+      latestReasoningText: '',
       busy: false,
     },
   };
@@ -88,6 +89,7 @@ function ensureMessage(state, messageId) {
       summary: null,
       parts: { order: [], byId: {} },
       renderText: '',
+      renderReasoningText: '',
       renderReasoningEncrypted: null,
       lastEventSeq: 0,
       lastTextSeq: 0,
@@ -119,11 +121,13 @@ function ensurePart(message, partId, sessionId) {
 
 function updateMessageRender(message) {
   const textParts = [];
+  const reasoningParts = [];
   let reasoningEncrypted = null;
   for (const pid of message.parts.order) {
     const part = message.parts.byId[pid];
     if (!part) continue;
     if (part.type === 'text' && toText(part.text)) textParts.push(toText(part.text));
+    if (part.type === 'reasoning' && toText(part.text)) reasoningParts.push(toText(part.text));
     if (part.type === 'reasoning') {
       const encrypted = part.metadata
         && part.metadata.openai
@@ -132,6 +136,7 @@ function updateMessageRender(message) {
     }
   }
   message.renderText = textParts.join('\n\n');
+  message.renderReasoningText = reasoningParts.join('\n\n');
   message.renderReasoningEncrypted = reasoningEncrypted;
 }
 
@@ -181,6 +186,7 @@ function updateGlobalRender(state) {
 
   state.render.latestAssistantMessageId = best ? best.id : '';
   state.render.latestAssistantText = best ? toText(best.renderText) : '';
+  state.render.latestReasoningText = best ? toText(best.renderReasoningText) : '';
   state.render.busy = state.session.status === 'busy';
 }
 

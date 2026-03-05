@@ -132,3 +132,35 @@ test('opencode render state preserves repeated identical deltas for same part', 
   assert.equal(state.messages.byId['msg-repeat'].parts.byId['prt-repeat'].text, '하하');
   assert.equal(state.messages.byId['msg-repeat'].renderText, '하하');
 });
+
+test('opencode render state tracks latest reasoning text for status pane', () => {
+  let state = createRenderState('ses-r');
+
+  state = applyPayload(state, JSON.stringify({
+    type: 'message.updated',
+    properties: {
+      info: {
+        id: 'msg-r',
+        sessionID: 'ses-r',
+        role: 'assistant',
+        time: { created: 1 },
+      },
+    },
+  }), 1);
+
+  state = applyPayload(state, JSON.stringify({
+    type: 'message.part.updated',
+    properties: {
+      part: {
+        id: 'part-r',
+        sessionID: 'ses-r',
+        messageID: 'msg-r',
+        type: 'reasoning',
+        text: 'reasoning snippet',
+      },
+    },
+  }), 2);
+
+  assert.equal(state.messages.byId['msg-r'].renderReasoningText, 'reasoning snippet');
+  assert.equal(state.render.latestReasoningText, 'reasoning snippet');
+});

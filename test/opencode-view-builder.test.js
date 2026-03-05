@@ -176,6 +176,49 @@ test('opencode view builder verbose mode shows detailed status', () => {
   assert.match(view[0], /status:\s*`busy`/i);
 });
 
+test('opencode view builder includes latest reasoning in status pane', () => {
+  let state = createRenderState('ses-a');
+
+  state = applyEvent(state, {
+    type: 'session.status',
+    properties: { sessionID: 'ses-a', status: { type: 'busy' } },
+  }, 1);
+
+  state = applyEvent(state, {
+    type: 'message.updated',
+    properties: {
+      info: {
+        id: 'msg-a',
+        sessionID: 'ses-a',
+        role: 'assistant',
+        time: { created: 10 },
+      },
+    },
+  }, 2);
+
+  state = applyEvent(state, {
+    type: 'message.part.updated',
+    properties: {
+      part: {
+        id: 'prt-r',
+        sessionID: 'ses-a',
+        messageID: 'msg-a',
+        type: 'reasoning',
+        text: 'thinking through edge cases',
+      },
+    },
+  }, 3);
+
+  const normalView = buildRunViewFromRenderState(state, splitByLimit, 4000, { repoName: 'my-repo' });
+  assert.match(normalView[0], /🤔\s+thinking through edge cases/);
+
+  const verboseView = buildRunViewFromRenderState(state, splitByLimit, 4000, {
+    runId: 'run-123',
+    viewMode: 'verbose',
+  });
+  assert.match(verboseView[0], /reasoning:\s*`thinking through edge cases`/i);
+});
+
 test('opencode view builder step and tool counters', () => {
   let state = createRenderState('ses-a');
 

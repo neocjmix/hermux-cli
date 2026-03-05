@@ -24,6 +24,7 @@ function formatStatusPaneVerbose(renderState, _maxLen, options) {
   const latestAssistantMessageId = toText(
     renderState.render && renderState.render.latestAssistantMessageId
   ).trim();
+  const latestReasoningText = toText(renderState.render && renderState.render.latestReasoningText).trim();
   const lines = [
     `run_id: ${formatInlineCode(runId || '-')}`,
     `session: ${formatInlineCode(sessionId || '-')}`,
@@ -31,6 +32,7 @@ function formatStatusPaneVerbose(renderState, _maxLen, options) {
     `idle: ${formatInlineCode(isIdle ? 'yes' : 'no')}`,
   ];
   if (latestAssistantMessageId) lines.push(`assistant_message: ${formatInlineCode(latestAssistantMessageId)}`);
+  if (latestReasoningText) lines.push(`reasoning: ${formatInlineCode(clamp(latestReasoningText, 120))}`);
   return lines.join('\n');
 }
 
@@ -40,6 +42,7 @@ function formatStatusPaneNormal(renderState, _maxLen, options) {
   const repoName = toText(options && options.repoName).trim() || 'repo';
   const stepCount = Number(renderState.session && renderState.session.stepCount) || 0;
   const toolCount = Number(renderState.session && renderState.session.toolCount) || 0;
+  const latestReasoningText = toText(renderState.render && renderState.render.latestReasoningText).trim();
 
   const statusEmoji = status === 'busy' ? '🔴' : status === 'idle' ? '🟢' : '⚪';
   const lines = [
@@ -47,6 +50,7 @@ function formatStatusPaneNormal(renderState, _maxLen, options) {
     `💬 ${formatInlineCode(sessionId || '-')}`,
     `${statusEmoji} ${status} 👣${stepCount} 🛠️${toolCount}`,
   ];
+  if (latestReasoningText) lines.push(`🤔 ${clamp(latestReasoningText, 120)}`);
 
   return lines.join('\n');
 }
