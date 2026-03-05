@@ -920,6 +920,19 @@ function formatOnboardingQuestion(session) {
   return 'Onboarding state error. Run /onboard again.';
 }
 
+function normalizeOnboardingWorkdirInput(input) {
+  const raw = String(input || '').trim();
+  if (!raw) return '';
+  const quoted = raw.match(/^(["'])(.*)\1$/);
+  const unquoted = quoted ? String(quoted[2] || '').trim() : raw;
+  if (unquoted.startsWith('~/')) {
+    const home = String(process.env.HOME || '').trim();
+    if (!home) return unquoted;
+    return path.join(home, unquoted.slice(2));
+  }
+  return unquoted;
+}
+
 function createOnboardingSession(chatId) {
   const config = load();
   const existingToken = String((config.global || {}).telegramBotToken || '').trim();
@@ -1097,15 +1110,16 @@ async function handleOnboardingInput(bot, chatId, text, chatRouter, states, onbo
   }
 
   if (session.step === 'workdir') {
-    if (!path.isAbsolute(value)) {
+    const normalizedWorkdir = normalizeOnboardingWorkdirInput(value);
+    if (!path.isAbsolute(normalizedWorkdir)) {
       await safeSend(bot, chatId, 'Workdir must be an absolute path.');
       return true;
     }
-    if (!fs.existsSync(value) || !fs.statSync(value).isDirectory()) {
+    if (!fs.existsSync(normalizedWorkdir) || !fs.statSync(normalizedWorkdir).isDirectory()) {
       await safeSend(bot, chatId, 'Workdir directory does not exist. Send another path.');
       return true;
     }
-    session.data.workdir = value;
+    session.data.workdir = normalizedWorkdir;
     session.step = 'attach_chat';
     await safeSend(bot, chatId, formatOnboardingQuestion(session));
     return true;
@@ -4061,6 +4075,7 @@ module.exports = {
   main,
   _internal: {
     parseCommand,
+    normalizeOnboardingWorkdirInput,
     splitByLimit,
     buildNoOutputMessage,
     appendHermuxVersion,

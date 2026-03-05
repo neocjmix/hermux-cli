@@ -6,6 +6,14 @@ function summarizeText(text) {
   return value.length > 240 ? `${value.slice(0, 240)}...(truncated)` : value;
 }
 
+function looksLikeWorkdirPathInput(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return false;
+  const quoted = raw.match(/^(["'])(.*)\1$/);
+  const unquoted = quoted ? String(quoted[2] || '').trim() : raw;
+  return unquoted.startsWith('/') || unquoted.startsWith('~/');
+}
+
 function createMessageHandler(deps) {
   const {
     bot,
@@ -53,8 +61,13 @@ function createMessageHandler(deps) {
     }
 
     if (onboardingSessions.has(chatId)) {
+      const onboardingSession = onboardingSessions.get(chatId) || {};
       if (typeof audit === 'function') audit('router.message.route', { chatId, target: 'onboarding_input', command: command || null });
-      if (command && command !== '/onboard') {
+      if (
+        command
+        && command !== '/onboard'
+        && !(onboardingSession.step === 'workdir' && looksLikeWorkdirPathInput(text))
+      ) {
         await safeSend(bot, chatId, 'Onboarding in progress. Reply to the current question or run /onboard cancel.');
         return;
       }

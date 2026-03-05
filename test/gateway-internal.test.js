@@ -13,6 +13,17 @@ test('parseCommand handles bot mention and args', () => {
   assert.deepEqual(parsed.args, ['repo-name']);
 });
 
+test('normalizeOnboardingWorkdirInput expands tilde to home directory', () => {
+  const out = _internal.normalizeOnboardingWorkdirInput('~/dev/test');
+  assert.equal(out.startsWith('/'), true);
+  assert.match(out, /\/dev\/test$/);
+});
+
+test('normalizeOnboardingWorkdirInput strips matching quotes around absolute path', () => {
+  const out = _internal.normalizeOnboardingWorkdirInput('"/Users/chanjinpark/dev"');
+  assert.equal(out, '/Users/chanjinpark/dev');
+});
+
 test('splitByLimit splits long text near newline', () => {
   const input = 'line1\nline2\nline3\nline4';
   const out = _internal.splitByLimit(input, 9);

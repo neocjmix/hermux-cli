@@ -209,6 +209,17 @@ test('message handler routes onboarding free text to onboarding input handler', 
   assert.equal(calls.safeSend.length, 0);
 });
 
+test('message handler allows absolute workdir path input during onboarding workdir step', async () => {
+  const { calls, deps, onboardingSessions } = makeHarness();
+  onboardingSessions.set('100', { step: 'workdir' });
+  const handler = createMessageHandler(deps);
+
+  await handler({ chat: { id: '100' }, text: '/Users/chanjinpark/dev/test' });
+
+  assert.equal(calls.onboardingInput, 1);
+  assert.equal(calls.safeSend.length, 0);
+});
+
 test('message handler routes /help to help text sender', async () => {
   const { calls, deps } = makeHarness({ getHelpText: () => 'help-text' });
   const handler = createMessageHandler(deps);
