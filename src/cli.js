@@ -5,7 +5,14 @@ const fs = require('fs');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 
-const DEFAULT_RUNTIME_DIR = path.join(__dirname, '..', 'runtime');
+const TEST_PROFILE_ENABLED = String(process.env.HERMUX_TEST_PROFILE || '').trim() === '1';
+const TEST_PROFILE_ROOT = path.resolve(
+  process.env.HERMUX_TEST_PROFILE_ROOT
+    || path.join(__dirname, '..', '.tmp', 'test-profile', `p-${process.pid}`)
+);
+const DEFAULT_RUNTIME_DIR = TEST_PROFILE_ENABLED
+  ? path.join(TEST_PROFILE_ROOT, 'runtime')
+  : path.join(__dirname, '..', 'runtime');
 const RUNTIME_DIR = path.resolve(process.env.HERMUX_RUNTIME_DIR || DEFAULT_RUNTIME_DIR);
 const PID_PATH = path.join(RUNTIME_DIR, 'gateway.pid');
 const LOG_PATH = path.join(RUNTIME_DIR, 'gateway.log');

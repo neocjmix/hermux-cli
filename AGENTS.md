@@ -34,3 +34,8 @@ For non-trivial work, use this loop:
 4. Reconcile docs with final behavior.
 
 Detailed rule set: `docs/rules/DOCUMENTATION_RULES.md`.
+
+## Test Safety Invariant
+
+- Tests must never write to default developer profiles under `config/`, `state/`, or `runtime/`.
+- Always use the isolated test profile (`.tmp/test-profile`) via `test/helpers/test-profile.js` and `scripts/run-tests-isolated.js`.

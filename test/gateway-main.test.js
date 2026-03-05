@@ -4,6 +4,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
+require('./helpers/test-profile');
+
 const config = require('../src/lib/config');
 
 const SNAPSHOT = Symbol('missing');

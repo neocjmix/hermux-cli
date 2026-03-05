@@ -99,6 +99,18 @@ Legacy `instances[]` configs are normalized during load.
 
 This prevents test runs from mutating developer/production files under `config/`, `state/`, and `runtime/`.
 
+Mandatory safeguard for tests that import config/session modules:
+
+- Load `test/helpers/test-profile.js` before `../src/lib/config` or `../src/lib/session-map`.
+- The helper hard-sets test profile env defaults (`HERMUX_TEST_PROFILE=1`) and redirects config/state/runtime paths into `.tmp/test-profile/p-<pid>`.
+- Runtime code also treats `HERMUX_TEST_PROFILE=1` as a fail-safe default root for config/state/runtime, even if explicit path env vars are missing.
+
+If you run tests manually (outside npm scripts), keep isolation enabled:
+
+```bash
+node --require ./test/helpers/test-profile.js --test --test-concurrency=1 test/*.test.js
+```
+
 ## Event/Telegram Audit Logging
 
 Hermux now writes dense JSONL audit logs for development/debugging to:

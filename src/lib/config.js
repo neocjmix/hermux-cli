@@ -3,7 +3,15 @@
 const fs = require('fs');
 const path = require('path');
 
-const DEFAULT_CONFIG_DIR = path.join(__dirname, '..', '..', 'config');
+const TEST_PROFILE_ENABLED = String(process.env.HERMUX_TEST_PROFILE || '').trim() === '1'
+  || process.argv.includes('--test');
+const TEST_PROFILE_ROOT = path.resolve(
+  process.env.HERMUX_TEST_PROFILE_ROOT
+    || path.join(__dirname, '..', '..', '.tmp', 'test-profile', `p-${process.pid}`)
+);
+const DEFAULT_CONFIG_DIR = TEST_PROFILE_ENABLED
+  ? path.join(TEST_PROFILE_ROOT, 'config')
+  : path.join(__dirname, '..', '..', 'config');
 const CONFIG_DIR = path.resolve(process.env.HERMUX_CONFIG_DIR || DEFAULT_CONFIG_DIR);
 const CONFIG_PATH = path.resolve(process.env.HERMUX_CONFIG_PATH || path.join(CONFIG_DIR, 'instances.json'));
 

@@ -78,3 +78,57 @@ test('opencode render state accumulates latest session/message/part projection',
   assert.equal(state.render.latestAssistantText, '안녕!');
   assert.equal(state.render.busy, false);
 });
+
+test('opencode render state preserves repeated identical deltas for same part', () => {
+  let state = createRenderState('ses-repeat');
+
+  state = applyPayload(state, JSON.stringify({
+    type: 'message.updated',
+    properties: {
+      info: {
+        id: 'msg-repeat',
+        sessionID: 'ses-repeat',
+        role: 'assistant',
+        time: { created: 10 },
+      },
+    },
+  }), 1);
+
+  state = applyPayload(state, JSON.stringify({
+    type: 'message.part.updated',
+    properties: {
+      part: {
+        id: 'prt-repeat',
+        sessionID: 'ses-repeat',
+        messageID: 'msg-repeat',
+        type: 'text',
+        text: '',
+      },
+    },
+  }), 2);
+
+  state = applyPayload(state, JSON.stringify({
+    type: 'message.part.delta',
+    properties: {
+      sessionID: 'ses-repeat',
+      messageID: 'msg-repeat',
+      partID: 'prt-repeat',
+      field: 'text',
+      delta: '하',
+    },
+  }), 3);
+
+  state = applyPayload(state, JSON.stringify({
+    type: 'message.part.delta',
+    properties: {
+      sessionID: 'ses-repeat',
+      messageID: 'msg-repeat',
+      partID: 'prt-repeat',
+      field: 'text',
+      delta: '하',
+    },
+  }), 4);
+
+  assert.equal(state.messages.byId['msg-repeat'].parts.byId['prt-repeat'].text, '하하');
+  assert.equal(state.messages.byId['msg-repeat'].renderText, '하하');
+});

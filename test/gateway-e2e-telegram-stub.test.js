@@ -6,6 +6,8 @@ const path = require('node:path');
 const http = require('node:http');
 const { spawn } = require('node:child_process');
 
+require('./helpers/test-profile');
+
 const config = require('../src/lib/config');
 const { createTelegramMockServer } = require('./fixtures/telegram-mock-server');
 
@@ -1112,6 +1114,109 @@ test('gateway e2e renders distinct outputs for two consecutive prompts in same s
   }
 });
 
+test('gateway e2e should not duplicate streamed deltas when dual ingress is active', async () => {
+  const cfgSnapshot = backupFile(config.CONFIG_PATH);
+  const token = 'test-token';
+  const telegram = createTelegramMockServer();
+  const started = await telegram.start(0);
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runtime-dup-delta-'));
+  const fixturePath = path.resolve(__dirname, 'fixtures', 'fake-opencode-sdk-duplicate-delta-stream.js');
+
+  config.save({
+    global: { telegramBotToken: token },
+    repos: [{
+      name: 'demo',
+      enabled: true,
+      workdir: '/tmp/demo',
+      chatIds: ['100'],
+      opencodeCommand: 'opencode sdk',
+      logFile: './logs/demo.log',
+    }],
+  });
+
+  const runtime = startGateway({
+    HERMUX_TELEGRAM_BASE_API_URL: started.baseApiUrl,
+    HERMUX_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
+    HERMUX_OPENCODE_SDK_SHIM: fixturePath,
+    HERMUX_RUNTIME_DIR: runtimeDir,
+  });
+
+  try {
+    await waitForBootstrapAndClearRequests(started.controlUrl);
+
+    await httpJson({
+      method: 'POST',
+      url: `${started.controlUrl}/updates`,
+      body: {
+        token,
+        update: {
+          update_id: 40,
+          message: {
+            message_id: 40,
+            date: Math.floor(Date.now() / 1000),
+            text: 'delta-dup-check',
+            chat: { id: 100, type: 'private' },
+            from: { id: 200, is_bot: false, first_name: 'Tester' },
+          },
+        },
+      },
+    });
+
+    const auditPath = path.join(runtimeDir, 'audit-events.jsonl');
+    const records = await waitFor(() => {
+      const rows = readJsonlRecords(auditPath);
+      const completed = rows.filter((r) => r.kind === 'run.complete');
+      return completed.length >= 1 ? rows : null;
+    }, { timeoutMs: 25000, stepMs: 120 });
+
+    const runStart = records.find((r) => r.kind === 'run.start');
+    assert.ok(runStart && runStart.payload && runStart.payload.runId);
+    const runId = String(runStart.payload.runId);
+
+    const runRows = records.filter((r) => {
+      const payloadRunId = r && r.payload && r.payload.runId ? String(r.payload.runId) : '';
+      const metaRunId = r && r.payload && r.payload.meta && r.payload.meta.runId ? String(r.payload.meta.runId) : '';
+      return payloadRunId === runId || metaRunId === runId;
+    });
+
+    const deltaDiagnostics = runRows.filter((r) => {
+      if (r.kind !== 'run.session_event.diagnostic') return false;
+      const p = r.payload || {};
+      return String(p.payloadType || '') === 'message.part.delta';
+    });
+    assert.equal(deltaDiagnostics.length > 0, true);
+
+    const byHash = new Map();
+    for (const row of deltaDiagnostics) {
+      const p = row.payload || {};
+      const hash = String(p.payloadSha256 || '');
+      if (!hash) continue;
+      if (!byHash.has(hash)) {
+        byHash.set(hash, { count: 0, sources: new Set() });
+      }
+      const entry = byHash.get(hash);
+      entry.count += 1;
+      entry.sources.add(String(p.source || ''));
+    }
+
+    for (const entry of byHash.values()) {
+      assert.equal(entry.count, 1);
+      assert.equal(entry.sources.size, 1);
+    }
+
+    const applyEnds = runRows.filter((r) => r.kind === 'run.session_event.apply.end');
+    assert.equal(applyEnds.length > 0, true);
+    const lastApply = applyEnds[applyEnds.length - 1];
+    const textLength = Number(lastApply && lastApply.payload && lastApply.payload.latestAssistantTextLength || 0);
+
+    assert.equal(textLength, 3);
+  } finally {
+    await stopGateway(runtime, { controlUrl: started.controlUrl });
+    await telegram.stop();
+    restoreFile(config.CONFIG_PATH, cfgSnapshot);
+  }
+});
+
 test('gateway e2e should render second run assistant output even when it arrives late', async () => {
   const cfgSnapshot = backupFile(config.CONFIG_PATH);
   const token = 'test-token';
@@ -1498,6 +1603,16 @@ test('gateway e2e should reproduce missing second response when assistant text l
       .join('\n');
 
     assert.match(secondRunViewText, /second-post-complete:pc-second/);
+
+    const finalRunViewApply = secondRows
+      .filter((r) => r.kind === 'run.view.apply.end')
+      .filter((r) => !!(r.payload && r.payload.isFinalState))
+      .pop();
+    assert.ok(finalRunViewApply);
+    const finalPreview = Array.isArray(finalRunViewApply.payload && finalRunViewApply.payload.textPreview)
+      ? finalRunViewApply.payload.textPreview.join('\n')
+      : String(finalRunViewApply && finalRunViewApply.payload && finalRunViewApply.payload.textPreview || '');
+    assert.match(finalPreview, /second-post-complete:pc-second/);
 
     await stopGateway(runtime, { controlUrl: started.controlUrl, testName: 'post-complete-late-text-repro', status: 'ok' });
     stopped = true;

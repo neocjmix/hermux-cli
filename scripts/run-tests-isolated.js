@@ -25,6 +25,8 @@ function main() {
 
   const env = {
     ...process.env,
+    HERMUX_TEST_PROFILE: '1',
+    HERMUX_TEST_PROFILE_ROOT: testRoot,
     HERMUX_CONFIG_DIR: configDir,
     HERMUX_CONFIG_PATH: path.join(configDir, 'instances.json'),
     HERMUX_STATE_DIR: stateDir,

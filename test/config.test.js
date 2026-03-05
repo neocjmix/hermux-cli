@@ -3,6 +3,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
+require('./helpers/test-profile');
+
 const config = require('../src/lib/config');
 
 const SNAPSHOT = Symbol('config-snapshot');

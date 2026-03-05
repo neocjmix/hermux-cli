@@ -51,7 +51,14 @@ const {
 
 const TG_MAX_LEN = 4000;
 const IMAGE_UPLOAD_DIR = '.hermux/uploads';
-const DEFAULT_RUNTIME_DIR = path.join(__dirname, '..', 'runtime');
+const TEST_PROFILE_ENABLED = String(process.env.HERMUX_TEST_PROFILE || '').trim() === '1';
+const TEST_PROFILE_ROOT = path.resolve(
+  process.env.HERMUX_TEST_PROFILE_ROOT
+    || path.join(__dirname, '..', '.tmp', 'test-profile', `p-${process.pid}`)
+);
+const DEFAULT_RUNTIME_DIR = TEST_PROFILE_ENABLED
+  ? path.join(TEST_PROFILE_ROOT, 'runtime')
+  : path.join(__dirname, '..', 'runtime');
 const RUNTIME_DIR = path.resolve(process.env.HERMUX_RUNTIME_DIR || DEFAULT_RUNTIME_DIR);
 const PID_PATH = path.join(RUNTIME_DIR, 'gateway.pid');
 const LOG_PATH = path.join(RUNTIME_DIR, 'gateway.log');
@@ -64,6 +71,8 @@ const OPENCODE_CONFIG_PATH = process.env.HERMUX_OPENCODE_CONFIG_PATH || path.joi
 const OMO_CONFIG_PATH = process.env.HERMUX_OMO_CONFIG_PATH || path.join(process.env.HOME || '', '.config', 'opencode', 'oh-my-opencode.json');
 const AUDIT_STRING_MAX = parseInt(process.env.HERMUX_AUDIT_STRING_MAX || '16000', 10);
 const APPLY_PAYLOAD_THROTTLE_MS = parseInt(process.env.HERMUX_APPLY_PAYLOAD_THROTTLE_MS || '10', 10);
+const TRACE_RUNVIEW_DIAGNOSTICS = true;
+const TRACE_SESSION_ID = String(process.env.HERMUX_TRACE_SESSION_ID || '').trim();
 const auditLogger = makeAuditLogger(RUNTIME_DIR);
 let connectMutationQueue = Promise.resolve();
 let restartMutationQueue = Promise.resolve();
@@ -86,6 +95,63 @@ function buildAuditContentMeta(text) {
     contentRawLength: length,
     auditStringMax: AUDIT_STRING_MAX,
     willAuditTruncate: length > AUDIT_STRING_MAX,
+  };
+}
+
+function shouldTraceSessionDiagnostic(...sessionCandidates) {
+  if (!TRACE_RUNVIEW_DIAGNOSTICS) return false;
+  if (!TRACE_SESSION_ID) return true;
+  for (const candidate of sessionCandidates) {
+    const sid = String(candidate || '').trim();
+    if (sid && sid === TRACE_SESSION_ID) return true;
+  }
+  return false;
+}
+
+function parsePayloadMeta(payload) {
+  const raw = String(payload || '').trim();
+  if (!raw) {
+    return {
+      payloadType: '',
+      payloadSessionId: '',
+      messageId: '',
+      partId: '',
+      field: '',
+      deltaLength: 0,
+      payloadSha256: createHash('sha256').update('').digest('hex'),
+    };
+  }
+  const payloadSha256 = createHash('sha256').update(raw).digest('hex');
+  let parsed = null;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (_err) {
+    return {
+      payloadType: '',
+      payloadSessionId: '',
+      messageId: '',
+      partId: '',
+      field: '',
+      deltaLength: 0,
+      payloadSha256,
+    };
+  }
+  const props = parsed && typeof parsed.properties === 'object' ? parsed.properties : {};
+  const payloadSessionId = String(
+    props.sessionID
+    || (props.part && props.part.sessionID)
+    || (props.info && props.info.sessionID)
+    || ''
+  ).trim();
+  const deltaText = String(props.delta || '');
+  return {
+    payloadType: String(parsed && parsed.type ? parsed.type : ''),
+    payloadSessionId,
+    messageId: String(props.messageID || (props.part && props.part.messageID) || (props.info && props.info.id) || ''),
+    partId: String(props.partID || (props.part && props.part.id) || ''),
+    field: String(props.field || ''),
+    deltaLength: deltaText.length,
+    payloadSha256,
   };
 }
 
@@ -2809,9 +2875,8 @@ function clearRunRenderStateAtRunStart(state, sessionId) {
   const sid = String(sessionId || '').trim();
   if (!sid) return;
 
-  // Don't clear previous run messages - preserve message history across runs
-  // state.sessionRenderStates.delete(sid);
-  // state.sessionProjectedTexts.delete(sid);
+  state.sessionRenderStates.delete(sid);
+  state.sessionProjectedTexts.delete(sid);
 
   const latest = state.latestSessionRenderState;
   const latestSid = String(
@@ -3401,7 +3466,7 @@ async function startPromptRun(bot, repo, state, runItem) {
     return created;
   };
 
-  const onDeliverSessionEvent = async ({ payload, sessionId }) => {
+  const onDeliverSessionEvent = async ({ payload, sessionId, event }) => {
     if (!isCurrentRunOwner()) {
       auditRun('run.session_event.skip', {
         reason: 'stale_run_owner',
@@ -3418,6 +3483,22 @@ async function startPromptRun(bot, repo, state, runItem) {
         activeSessionId: String(activeSessionId || ''),
       });
       return;
+    }
+    const source = String(event && event._gatewaySource ? event._gatewaySource : 'unknown');
+    const eventType = String(event && event.type ? event.type : '');
+    const eventCursor = Number(event && event.cursor ? event.cursor : 0) || 0;
+    const eventSessionId = String(event && event.sessionId ? event.sessionId : '').trim();
+    if (shouldTraceSessionDiagnostic(sid, eventSessionId, state.activeSessionId, activeSessionId)) {
+      const payloadMeta = parsePayloadMeta(payload);
+      auditRun('run.session_event.diagnostic', {
+        sid,
+        source,
+        eventType,
+        eventCursor,
+        eventSessionId,
+        activeSessionId: String(state.activeSessionId || activeSessionId || '').trim(),
+        ...payloadMeta,
+      });
     }
     const processor = getSessionApplyProcessor(sid);
     if (!processor) return;
@@ -3457,8 +3538,26 @@ async function startPromptRun(bot, repo, state, runItem) {
           });
           return;
         }
+        const eventForRouter = {
+          ...(evt && typeof evt === 'object' ? evt : {}),
+          _gatewaySource: 'session_delivery',
+        };
+        if (shouldTraceSessionDiagnostic(
+          eventForRouter.sessionId,
+          state.activeSessionId,
+          activeSessionId,
+          sid
+        )) {
+          auditRun('run.session_event.ingress', {
+            source: 'session_delivery',
+            eventType: String(eventForRouter.type || ''),
+            eventCursor: Number(eventForRouter.cursor || 0) || 0,
+            eventSessionId: String(eventForRouter.sessionId || ''),
+            activeSessionId: String(state.activeSessionId || activeSessionId || ''),
+          });
+        }
         const routedResult = await handleSessionEvent({
-          event: evt,
+          event: eventForRouter,
           activeSessionId: String(state.activeSessionId || activeSessionId || ''),
         });
         if (!routedResult.delivered) {
@@ -3529,25 +3628,28 @@ async function startPromptRun(bot, repo, state, runItem) {
           }
           await ensureSessionDelivery(activeSessionId);
         }
-        const routedResult = await handleSessionEvent({
-          event: evt,
-          activeSessionId: String(state.activeSessionId || activeSessionId || ''),
-        });
-        if (!routedResult.delivered) {
-          auditRun('run.session_event.skip', {
-            reason: routedResult.dropReason || 'router_rejected',
+        const eventForRouter = {
+          ...(evt && typeof evt === 'object' ? evt : {}),
+          _gatewaySource: 'run_callback',
+        };
+        if (shouldTraceSessionDiagnostic(
+          eventForRouter.sessionId,
+          state.activeSessionId,
+          activeSessionId
+        )) {
+          auditRun('run.session_event.ingress', {
+            source: 'run_callback',
+            eventType: String(eventForRouter.type || ''),
+            eventCursor: Number(eventForRouter.cursor || 0) || 0,
+            eventSessionId: String(eventForRouter.sessionId || ''),
             activeSessionId: String(state.activeSessionId || activeSessionId || ''),
-            eventSessionId: String((evt && evt.sessionId) || ''),
           });
         }
-        if (routedResult.nextSessionId && routedResult.nextSessionId !== activeSessionId) {
-          activeSessionId = routedResult.nextSessionId;
-          state.activeSessionId = activeSessionId;
-          if (state.currentRunContext && typeof state.currentRunContext === 'object') {
-            state.currentRunContext.sessionId = activeSessionId;
-          }
-          await ensureSessionDelivery(activeSessionId);
-        }
+        auditRun('run.session_event.skip', {
+          reason: 'run_callback_passthrough_shadowed_by_session_delivery',
+          activeSessionId: String(state.activeSessionId || activeSessionId || ''),
+          eventSessionId: String((evt && evt.sessionId) || ''),
+        });
         return;
       }
     },
@@ -3640,6 +3742,7 @@ async function startPromptRun(bot, repo, state, runItem) {
             }
           });
         }
+        await runDeferredRunStartTasks(state);
         auditRun('run.complete', {
           status: timeoutMsg ? 'timeout' : (exitCode === 0 ? 'done' : `exit ${exitCode}`),
           exitCode,
