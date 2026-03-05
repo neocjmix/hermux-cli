@@ -2974,9 +2974,8 @@ async function startPromptRun(bot, repo, state, runItem) {
   state.runView = {
     runId,
     chatId: String(chatId),
-    // Preserve previous message IDs to avoid deleting old messages
-    messageIds: state.runView?.messageIds || [],
-    texts: state.runView?.texts || [],
+    messageIds: [],
+    texts: [],
   };
   const runAuditMeta = {
     runId,
@@ -3320,8 +3319,7 @@ async function startPromptRun(bot, repo, state, runItem) {
             ? state.currentRunContext
             : null;
           const runViewRunId = state.runView && state.runView.runId ? String(state.runView.runId) : String(runId);
-          // Don't filter messages by run start time - preserve previous run messages
-          const minMessageTimeMs = 0;
+          const minMessageTimeMs = Number(currentContext && currentContext.startedAtMs ? currentContext.startedAtMs : 0) || 0;
           snapshotState = applyPayloadToRunViewSnapshot(snapshotState, payload, renderSeq, {
             splitByLimit,
             maxLen: TG_MAX_LEN,
