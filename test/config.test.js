@@ -81,6 +81,36 @@ test('config addChatIdToRepo rejects cross-repo duplicate mapping', () => {
   }
 });
 
+test('config moveChatIdToRepo remaps chat from existing repo to target repo', () => {
+  const snapshot = backupFile(config.CONFIG_PATH);
+  try {
+    config.save({
+      global: { telegramBotToken: '1:abc' },
+      repos: [
+        {
+          name: 'repo-a', enabled: true, workdir: '/tmp/a', chatIds: ['100'], opencodeCommand: 'opencode run', logFile: './logs/a.log',
+        },
+        {
+          name: 'repo-b', enabled: true, workdir: '/tmp/b', chatIds: [], opencodeCommand: 'opencode run', logFile: './logs/b.log',
+        },
+      ],
+    });
+
+    const result = config.moveChatIdToRepo('repo-b', '100');
+    assert.equal(result.ok, true);
+    assert.equal(result.moved, true);
+    assert.equal(result.previousRepo, 'repo-a');
+
+    const loaded = config.load();
+    const repoA = loaded.repos.find((r) => r.name === 'repo-a');
+    const repoB = loaded.repos.find((r) => r.name === 'repo-b');
+    assert.equal(repoA.chatIds.includes('100'), false);
+    assert.equal(repoB.chatIds.includes('100'), true);
+  } finally {
+    restoreFile(config.CONFIG_PATH, snapshot);
+  }
+});
+
 test('config addChatIdToRepo validates input and repo existence', () => {
   const snapshot = backupFile(config.CONFIG_PATH);
   try {

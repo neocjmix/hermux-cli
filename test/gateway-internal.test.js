@@ -1,7 +1,29 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+require('./helpers/test-profile');
 
 const { _internal } = require('../src/gateway');
+const config = require('../src/lib/config');
+const sessions = require('../src/lib/session-map');
+
+const SNAPSHOT = Symbol('snapshot');
+
+function backupFile(filePath) {
+  if (fs.existsSync(filePath)) return fs.readFileSync(filePath, 'utf8');
+  return SNAPSHOT;
+}
+
+function restoreFile(filePath, snapshot) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  if (snapshot === SNAPSHOT) {
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    return;
+  }
+  fs.writeFileSync(filePath, snapshot, 'utf8');
+}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -22,6 +44,93 @@ test('normalizeOnboardingWorkdirInput expands tilde to home directory', () => {
 test('normalizeOnboardingWorkdirInput strips matching quotes around absolute path', () => {
   const out = _internal.normalizeOnboardingWorkdirInput('"/Users/chanjinpark/dev"');
   assert.equal(out, '/Users/chanjinpark/dev');
+});
+
+test('handleConnectCommand warns before remap and requires explicit confirmation', async () => {
+  const configSnapshot = backupFile(config.CONFIG_PATH);
+  const sessionSnapshot = backupFile(sessions.SESSION_MAP_PATH);
+  try {
+    config.save({
+      global: { telegramBotToken: '1:abc' },
+      repos: [
+        { name: 'sample-repo', enabled: true, workdir: '/tmp/sample', chatIds: ['100'], logFile: './logs/sample.log' },
+        { name: 'dev-test', enabled: true, workdir: '/tmp/dev-test', chatIds: [], logFile: './logs/dev.log' },
+      ],
+    });
+    sessions.setSessionId('sample-repo', '100', 'ses-old');
+
+    const sent = [];
+    const bot = {
+      sendMessage: async (_chatId, text) => {
+        sent.push(String(text));
+        return { message_id: sent.length };
+      },
+    };
+    const chatRouter = new Map([
+      ['100', { name: 'sample-repo', workdir: '/tmp/sample' }],
+    ]);
+    const states = new Map([
+      ['sample-repo', { running: false, queue: [] }],
+      ['dev-test', { running: false, queue: [] }],
+    ]);
+
+    await _internal.handleConnectCommand(bot, '100', ['dev-test'], chatRouter, states);
+
+    const warning = sent[sent.length - 1] || '';
+    assert.match(warning, /already connected to repo:\s*sample-repo/i);
+    assert.match(warning, /To confirm move:\s*\/connect dev-test move/i);
+    assert.equal(sessions.getSessionId('sample-repo', '100'), 'ses-old');
+  } finally {
+    restoreFile(config.CONFIG_PATH, configSnapshot);
+    restoreFile(sessions.SESSION_MAP_PATH, sessionSnapshot);
+  }
+});
+
+test('handleConnectCommand remaps chat and resets session continuity when confirmed', async () => {
+  const configSnapshot = backupFile(config.CONFIG_PATH);
+  const sessionSnapshot = backupFile(sessions.SESSION_MAP_PATH);
+  try {
+    config.save({
+      global: { telegramBotToken: '1:abc' },
+      repos: [
+        { name: 'sample-repo', enabled: true, workdir: '/tmp/sample', chatIds: ['100'], logFile: './logs/sample.log' },
+        { name: 'dev-test', enabled: true, workdir: '/tmp/dev-test', chatIds: [], logFile: './logs/dev.log' },
+      ],
+    });
+    sessions.setSessionId('sample-repo', '100', 'ses-old');
+    sessions.setSessionId('dev-test', '100', 'ses-new');
+
+    const sent = [];
+    const bot = {
+      sendMessage: async (_chatId, text) => {
+        sent.push(String(text));
+        return { message_id: sent.length };
+      },
+    };
+    const chatRouter = new Map([
+      ['100', { name: 'sample-repo', workdir: '/tmp/sample' }],
+    ]);
+    const states = new Map([
+      ['sample-repo', { running: false, queue: [] }],
+      ['dev-test', { running: false, queue: [] }],
+    ]);
+
+    await _internal.handleConnectCommand(bot, '100', ['dev-test', 'move'], chatRouter, states);
+
+    const confirmation = sent[sent.length - 1] || '';
+    assert.match(confirmation, /Moved:\s*chat 100 -> repo dev-test/i);
+    assert.equal(sessions.getSessionId('sample-repo', '100'), '');
+    assert.equal(sessions.getSessionId('dev-test', '100'), '');
+
+    const loaded = config.load();
+    const sampleRepo = loaded.repos.find((r) => r.name === 'sample-repo');
+    const devRepo = loaded.repos.find((r) => r.name === 'dev-test');
+    assert.equal(Array.isArray(sampleRepo.chatIds) && sampleRepo.chatIds.includes('100'), false);
+    assert.equal(Array.isArray(devRepo.chatIds) && devRepo.chatIds.includes('100'), true);
+  } finally {
+    restoreFile(config.CONFIG_PATH, configSnapshot);
+    restoreFile(sessions.SESSION_MAP_PATH, sessionSnapshot);
+  }
 });
 
 test('splitByLimit splits long text near newline', () => {

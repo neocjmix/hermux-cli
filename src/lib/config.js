@@ -165,6 +165,76 @@ function addChatIdToRepo(repoName, chatId) {
   return { ok: true, changed: false, repo: normalizeRepo(repo) };
 }
 
+function moveChatIdToRepo(repoName, chatId) {
+  const config = load();
+  const targetName = String(repoName || '').trim();
+  const targetChatId = String(chatId || '').trim();
+
+  if (!targetName) {
+    return { ok: false, reason: 'invalid_repo' };
+  }
+
+  if (!/^-?\d+$/.test(targetChatId)) {
+    return { ok: false, reason: 'invalid_chat_id' };
+  }
+
+  const targetRepo = config.repos.find((r) => r.name === targetName);
+  if (!targetRepo) {
+    return { ok: false, reason: 'repo_not_found' };
+  }
+
+  const existingRepo = config.repos.find((r) => {
+    return Array.isArray(r.chatIds) && r.chatIds.includes(targetChatId);
+  });
+
+  if (!Array.isArray(targetRepo.chatIds)) {
+    targetRepo.chatIds = [];
+  }
+
+  if (!existingRepo) {
+    if (!targetRepo.chatIds.includes(targetChatId)) {
+      targetRepo.chatIds.push(targetChatId);
+      save(config);
+      return {
+        ok: true,
+        changed: true,
+        moved: false,
+        repo: normalizeRepo(targetRepo),
+      };
+    }
+    return {
+      ok: true,
+      changed: false,
+      moved: false,
+      repo: normalizeRepo(targetRepo),
+    };
+  }
+
+  if (existingRepo.name === targetRepo.name) {
+    return {
+      ok: true,
+      changed: false,
+      moved: false,
+      repo: normalizeRepo(targetRepo),
+      previousRepo: existingRepo.name,
+    };
+  }
+
+  existingRepo.chatIds = asUniqueStringArray(existingRepo.chatIds).filter((id) => id !== targetChatId);
+  if (!targetRepo.chatIds.includes(targetChatId)) {
+    targetRepo.chatIds.push(targetChatId);
+  }
+
+  save(config);
+  return {
+    ok: true,
+    changed: true,
+    moved: true,
+    previousRepo: existingRepo.name,
+    repo: normalizeRepo(targetRepo),
+  };
+}
+
 function getEnabledRepos() {
   return load().repos.filter(i => i.enabled);
 }
@@ -193,6 +263,7 @@ module.exports = {
   setGlobalBotToken,
   addOrUpdateRepo,
   addChatIdToRepo,
+  moveChatIdToRepo,
   getEnabledRepos,
   resetConfig,
   CONFIG_PATH,

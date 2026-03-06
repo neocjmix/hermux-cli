@@ -12,7 +12,7 @@ const {
   resolveUpstreamProvider,
   resolveDownstreamProvider,
 } = require('./providers');
-const { load, getEnabledRepos, addChatIdToRepo, addOrUpdateRepo, setGlobalBotToken, resetConfig, CONFIG_PATH } = require('./lib/config');
+const { load, getEnabledRepos, addChatIdToRepo, moveChatIdToRepo, addOrUpdateRepo, setGlobalBotToken, resetConfig, CONFIG_PATH } = require('./lib/config');
 const { md2html, escapeHtml } = require('./lib/md2html');
 const { getSessionId, setSessionId, clearSessionId, getSessionInfo, clearAllSessions, SESSION_MAP_PATH } = require('./lib/session-map');
 const { makeAuditLogger } = require('./lib/audit-log');
@@ -2477,6 +2477,10 @@ async function handleConnectCommand(bot, chatId, args, chatRouter, states) {
   }
 
   const requestedRepo = String(args[0] || '').trim();
+  const remapConfirm = Array.isArray(args) && args.slice(1).some((arg) => {
+    const token = String(arg || '').trim().toLowerCase();
+    return token === 'move' || token === '--move' || token === 'confirm' || token === '--confirm';
+  });
   if (!requestedRepo) {
     const keyboard = buildConnectKeyboard(availableRepos);
     await safeSend(
@@ -2536,15 +2540,42 @@ async function handleConnectCommand(bot, chatId, args, chatRouter, states) {
       }
 
       if (result.reason === 'chat_already_mapped') {
+        if (!remapConfirm) {
+          await safeSend(
+            bot,
+            chatId,
+            [
+              `This chat is already connected to repo: ${result.existingRepo}`,
+              `Requested repo: ${requestedRepo}`,
+              '',
+              '⚠️ Moving this chat will reset session continuity for this chat in both repos.',
+              `To confirm move: /connect ${requestedRepo} move`,
+              'Use /whereami to verify current mapping first.',
+            ].join('\n')
+          );
+          return;
+        }
+        const moved = await withConnectMutationLock(async () => {
+          const update = moveChatIdToRepo(requestedRepo, chatId);
+          if (update.ok) {
+            refreshRuntimeRouting(chatRouter, states);
+            clearSessionId(String(result.existingRepo || ''), chatId);
+            clearSessionId(requestedRepo, chatId);
+          }
+          return update;
+        });
+        if (!moved.ok) {
+          await safeSend(bot, chatId, `Connect failed (${moved.reason}). Retry: /connect ${requestedRepo}`);
+          return;
+        }
         await safeSend(
           bot,
           chatId,
           [
-            `This chat is already connected to repo: ${result.existingRepo}`,
-            `Requested repo: ${requestedRepo}`,
-            '',
-            'Use /whereami to verify current mapping.',
-            'If you want to move this chat, edit config and restart runtime.',
+            `Moved: chat ${chatId} -> repo ${requestedRepo}`,
+            `Previous repo: ${result.existingRepo}`,
+            'Session continuity was reset for safety. Next prompt starts a new session.',
+            'Tip: /whereami, then send a fresh prompt.',
           ].join('\n')
         );
         return;
@@ -4113,6 +4144,7 @@ module.exports = {
     normalizeImageExt,
     getImagePayloadFromMessage,
     formatRepoList,
+    handleConnectCommand,
     parseRawEventContent,
     formatRawEventPreview,
     resolveRawDeliveryPlan,
