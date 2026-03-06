@@ -128,6 +128,28 @@ function createMessageHandler(deps) {
         );
       }
 
+      if (
+        command
+        && command !== '/onboard'
+        && command !== '/init'
+        && command !== '/repos'
+        && command !== '/connect'
+        && command !== '/start'
+        && command !== '/whereami'
+        && command !== '/restart'
+        && command !== '/interrupt'
+      ) {
+        await safeSend(
+          bot,
+          chatId,
+          [
+            `chat_id: ${chatId}`,
+            'This chat is not mapped yet.',
+            'Start setup with /onboard, then run /repos and /connect <repo>.',
+          ].join('\n')
+        );
+      }
+
       if (!command && text) {
         await safeSend(
           bot,

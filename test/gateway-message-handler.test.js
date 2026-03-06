@@ -99,6 +99,17 @@ test('message handler returns setup guidance for unmapped runtime command', asyn
   assert.match(calls.safeSend[0].text, /not mapped to any repo/);
 });
 
+test('message handler returns setup guidance for unmapped /status command', async () => {
+  const { calls, deps } = makeHarness();
+  const handler = createMessageHandler(deps);
+
+  await handler({ chat: { id: '100' }, text: '/status@hermux_bot' });
+
+  assert.equal(calls.safeSend.length, 1);
+  assert.match(calls.safeSend[0].text, /This chat is not mapped yet/);
+  assert.match(calls.safeSend[0].text, /\/onboard/);
+});
+
 test('message handler dispatches mapped chat through state lock and repo handler', async () => {
   const { calls, deps, chatRouter, states } = makeHarness();
   chatRouter.set('100', { name: 'demo', workdir: '/tmp/demo' });

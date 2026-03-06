@@ -133,6 +133,41 @@ test('handleConnectCommand remaps chat and resets session continuity when confir
   }
 });
 
+test('handleConnectCommand includes privacy hint when connecting a group chat', async () => {
+  const configSnapshot = backupFile(config.CONFIG_PATH);
+  const sessionSnapshot = backupFile(sessions.SESSION_MAP_PATH);
+  try {
+    config.save({
+      global: { telegramBotToken: '1:abc' },
+      repos: [
+        { name: 'dev-test', enabled: true, workdir: '/tmp/dev-test', chatIds: [], logFile: './logs/dev.log' },
+      ],
+    });
+
+    const sent = [];
+    const bot = {
+      sendMessage: async (_chatId, text) => {
+        sent.push(String(text));
+        return { message_id: sent.length };
+      },
+    };
+    const chatRouter = new Map();
+    const states = new Map([
+      ['dev-test', { running: false, queue: [] }],
+    ]);
+
+    await _internal.handleConnectCommand(bot, '-1001234567890', ['dev-test'], chatRouter, states);
+
+    const confirmation = sent[sent.length - 1] || '';
+    assert.match(confirmation, /Connected:\s*chat -1001234567890 -> repo dev-test/i);
+    assert.match(confirmation, /Group chat note:/i);
+    assert.match(confirmation, /setprivacy/i);
+  } finally {
+    restoreFile(config.CONFIG_PATH, configSnapshot);
+    restoreFile(sessions.SESSION_MAP_PATH, sessionSnapshot);
+  }
+});
+
 test('registerRevertTargetFromSentMessage links sent message_id to revert target', () => {
   _internal.resetRevertTargetStoreForTest({ removePersisted: true });
   const chatId = '100';
@@ -674,6 +709,49 @@ test('withStateDispatchLock serializes concurrent tasks', async () => {
 
   await Promise.all([a, b]);
   assert.deepEqual(seq, ['a:start', 'a:end', 'b:start', 'b:end']);
+});
+
+test('withRunViewDispatchLock prevents duplicate send for same run-view index under overlap', async () => {
+  const state = {
+    runViewDispatchQueue: Promise.resolve(),
+    runView: {
+      texts: ['alpha'],
+      messageIds: [7001],
+    },
+  };
+  const sentIndices = [];
+
+  const reconcileLikeGateway = async (nextTexts) => _internal.withRunViewDispatchLock(state, async () => {
+    const currentView = {
+      texts: Array.isArray(state.runView && state.runView.texts) ? state.runView.texts.slice() : [],
+      messageIds: Array.isArray(state.runView && state.runView.messageIds) ? state.runView.messageIds.slice() : [],
+    };
+
+    await sleep(15);
+
+    const nextMessageIds = currentView.messageIds.slice();
+    for (let i = 0; i < nextTexts.length; i += 1) {
+      if (!nextMessageIds[i]) {
+        sentIndices.push(i);
+        nextMessageIds[i] = 8000 + sentIndices.length;
+      }
+    }
+
+    state.runView = {
+      texts: nextTexts.slice(),
+      messageIds: nextMessageIds,
+    };
+  });
+
+  const nonFinal = reconcileLikeGateway(['alpha', 'draft']);
+  const final = reconcileLikeGateway(['alpha', 'final']);
+  await Promise.all([nonFinal, final]);
+
+  assert.deepEqual(sentIndices, [1]);
+  assert.equal(Array.isArray(state.runView.messageIds), true);
+  assert.equal(state.runView.messageIds.length, 2);
+  assert.ok(state.runView.messageIds[1]);
+  assert.deepEqual(state.runView.texts, ['alpha', 'final']);
 });
 
 test('serializePollingError extracts useful telegram fields', () => {

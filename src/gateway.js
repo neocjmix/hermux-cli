@@ -238,6 +238,13 @@ function withStateDispatchLock(state, task) {
   return run;
 }
 
+function withRunViewDispatchLock(state, task) {
+  if (!state.runViewDispatchQueue) state.runViewDispatchQueue = Promise.resolve();
+  const run = state.runViewDispatchQueue.then(task, task);
+  state.runViewDispatchQueue = run.catch(() => {});
+  return run;
+}
+
 function clearInterruptEscalationTimer(state) {
   if (!state || !state.interruptEscalationTimer) return;
   clearTimeout(state.interruptEscalationTimer);
@@ -2498,6 +2505,7 @@ function refreshRuntimeRouting(chatRouter, states) {
         deferredRunStartTasks: [],
         panelRefresh: null,
         dispatchQueue: Promise.resolve(),
+        runViewDispatchQueue: Promise.resolve(),
       });
     }
   }
@@ -2601,6 +2609,10 @@ async function sendRepoList(bot, chatId, chatRouter) {
   const keyboard = buildConnectKeyboard(repos);
   const opts = keyboard ? { reply_markup: keyboard } : undefined;
   await safeSend(bot, chatId, text, opts);
+}
+
+function isLikelyGroupChatId(chatId) {
+  return String(chatId || '').trim().startsWith('-');
 }
 
 async function handleConnectCommand(bot, chatId, args, chatRouter, states) {
@@ -2720,6 +2732,14 @@ async function handleConnectCommand(bot, chatId, args, chatRouter, states) {
     }
 
     if (result.changed) {
+      const groupHint = isLikelyGroupChatId(chatId)
+        ? [
+          '',
+          'Group chat note:',
+          '- If normal text prompts are not received, disable BotFather privacy mode (/setprivacy -> Disable).',
+          '- With privacy mode ON, use @bot mention or reply-to-bot message.',
+        ]
+        : [];
       await safeSend(
         bot,
         chatId,
@@ -2727,6 +2747,7 @@ async function handleConnectCommand(bot, chatId, args, chatRouter, states) {
           `Connected: chat ${chatId} -> repo ${requestedRepo}`,
           'You can now send prompts in this chat.',
           'Tip: /status, /verbose on, /whereami',
+          ...groupHint,
         ].join('\n')
       );
       return;
@@ -3504,25 +3525,28 @@ async function startPromptRun(bot, repo, state, runItem) {
   const reconcileRunView = async (nextTexts, options) => {
     const normalizedNextTexts = Array.isArray(nextTexts) ? nextTexts.slice() : [];
     const requestedFinalState = !!(options && options.isFinalState);
-    const currentViewTexts = state.runView && Array.isArray(state.runView.texts) ? state.runView.texts : [];
 
-    if (!requestedFinalState && areTextArraysEqual(currentViewTexts, normalizedNextTexts)) {
-      return Promise.resolve();
-    }
+    return withRunViewDispatchLock(state, async () => {
+      const currentViewTexts = state.runView && Array.isArray(state.runView.texts) ? state.runView.texts : [];
 
-    // Check if this is a new run starting (different runId)
-    const previousRunId = state.runView && state.runView.runId ? String(state.runView.runId) : '';
-    const currentRunId = state.currentRunContext && state.currentRunContext.runId ? String(state.currentRunContext.runId) : '';
-    const isNewRunStarting = previousRunId && currentRunId && previousRunId !== currentRunId;
+      if (!requestedFinalState && areTextArraysEqual(currentViewTexts, normalizedNextTexts)) {
+        return;
+      }
 
-    // For new runs, don't pass old messageIds to avoid deleting previous messages
-    const currentView = isNewRunStarting ? { texts: [], messageIds: [] } : {
-      texts: Array.isArray(state.runView?.texts) ? state.runView.texts : [],
-      messageIds: Array.isArray(state.runView?.messageIds) ? state.runView.messageIds : [],
-    };
+      // Check if this is a new run starting (different runId)
+      const previousRunId = state.runView && state.runView.runId ? String(state.runView.runId) : '';
+      const currentRunId = state.currentRunContext && state.currentRunContext.runId ? String(state.currentRunContext.runId) : '';
+      const isNewRunStarting = previousRunId && currentRunId && previousRunId !== currentRunId;
 
-    runMetrics.downstreamApplyRequested += 1;
-    return applyRunViewSnapshot(normalizedNextTexts, { isFinalState: requestedFinalState, currentView });
+      // For new runs, don't pass old messageIds to avoid deleting previous messages
+      const currentView = isNewRunStarting ? { texts: [], messageIds: [] } : {
+        texts: Array.isArray(state.runView?.texts) ? state.runView.texts : [],
+        messageIds: Array.isArray(state.runView?.messageIds) ? state.runView.messageIds : [],
+      };
+
+      runMetrics.downstreamApplyRequested += 1;
+      await applyRunViewSnapshot(normalizedNextTexts, { isFinalState: requestedFinalState, currentView });
+    });
   };
 
   const sessionApplyProcessors = new Map();
@@ -4089,6 +4113,7 @@ function main() {
     runView: null,
     sessionProjectedTexts: new Map(),
     dispatchQueue: Promise.resolve(),
+    runViewDispatchQueue: Promise.resolve(),
   }]));
   const onboardingSessions = new Map();
   const initSessions = new Map();
@@ -4286,6 +4311,7 @@ module.exports = {
     collectMermaidBlocksFromTextSegments,
     withRestartMutationLock,
     withStateDispatchLock,
+    withRunViewDispatchLock,
     sendInterruptSignal,
     requestInterrupt,
     clearInterruptEscalationTimer,
