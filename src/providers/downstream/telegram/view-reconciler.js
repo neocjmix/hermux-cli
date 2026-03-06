@@ -51,6 +51,7 @@ async function reconcileRunViewForTelegram(params) {
     sendText,
     editText,
     deleteMessage,
+    onMessagePersist,
   } = params;
 
   const currentTexts = Array.isArray(currentView && currentView.texts) ? currentView.texts : [];
@@ -76,6 +77,15 @@ async function reconcileRunViewForTelegram(params) {
         index: command.index,
         isFinalState: command.isFinalState,
       });
+      if (typeof onMessagePersist === 'function') {
+        await onMessagePersist({
+          op: 'edit',
+          messageId: command.messageId,
+          index: command.index,
+          text: command.text,
+          isFinalState: command.isFinalState,
+        });
+      }
     } else if (command.op === 'send') {
       stats.sendCount += 1;
       const sent = await sendText(bot, chatId, command.text, { parse_mode: 'HTML' }, {
@@ -84,7 +94,17 @@ async function reconcileRunViewForTelegram(params) {
         index: command.index,
         isFinalState: command.isFinalState,
       });
-      messageIds[command.index] = sent && sent.message_id ? sent.message_id : null;
+      const sentMessageId = sent && sent.message_id ? sent.message_id : null;
+      messageIds[command.index] = sentMessageId;
+      if (typeof onMessagePersist === 'function' && sentMessageId) {
+        await onMessagePersist({
+          op: 'send',
+          messageId: sentMessageId,
+          index: command.index,
+          text: command.text,
+          isFinalState: command.isFinalState,
+        });
+      }
     } else if (command.op === 'delete') {
       if (command.messageId) {
         stats.deleteCount += 1;

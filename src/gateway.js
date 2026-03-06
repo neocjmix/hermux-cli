@@ -63,6 +63,7 @@ const RUNTIME_DIR = path.resolve(process.env.HERMUX_RUNTIME_DIR || DEFAULT_RUNTI
 const PID_PATH = path.join(RUNTIME_DIR, 'gateway.pid');
 const LOG_PATH = path.join(RUNTIME_DIR, 'gateway.log');
 const RESTART_NOTICE_PATH = path.join(RUNTIME_DIR, 'restart-notice.json');
+const REVERT_TARGETS_PATH = path.join(RUNTIME_DIR, 'revert-targets.json');
 const MERMAID_RENDER_DIR = '.hermux/mermaid';
 const STREAM_HEARTBEAT_MS = 1500;
 const REVERT_CONFIRM_TTL_MS = 10 * 60 * 1000;
@@ -79,6 +80,65 @@ let restartMutationQueue = Promise.resolve();
 let restartInProgress = false;
 const revertTargetsByChat = new Map();
 const revertConfirmByToken = new Map();
+let revertTargetsLoaded = false;
+
+function ensureRevertTargetsLoaded() {
+  if (revertTargetsLoaded) return;
+  revertTargetsLoaded = true;
+
+  const raw = readJsonOrDefault(REVERT_TARGETS_PATH, null);
+  if (!raw || typeof raw !== 'object') return;
+  const chats = raw.chats && typeof raw.chats === 'object' ? raw.chats : {};
+
+  for (const [chatId, entries] of Object.entries(chats)) {
+    if (!Array.isArray(entries) || entries.length === 0) continue;
+    const chatKey = String(chatId);
+    const map = new Map();
+
+    for (const entry of entries) {
+      if (!entry || typeof entry !== 'object') continue;
+      const messageId = Number(entry.telegramMessageId);
+      if (!Number.isInteger(messageId) || messageId <= 0) continue;
+      map.set(messageId, {
+        chatId: chatKey,
+        telegramMessageId: messageId,
+        repoName: entry.repoName ? String(entry.repoName) : '',
+        sessionId: entry.sessionId ? String(entry.sessionId) : '',
+        messageId: entry.messageId ? String(entry.messageId) : '',
+        partId: entry.partId ? String(entry.partId) : '',
+        createdAt: Number(entry.createdAt) > 0 ? Number(entry.createdAt) : Date.now(),
+      });
+    }
+
+    if (map.size === 0) continue;
+    if (map.size > REVERT_TARGET_LIMIT_PER_CHAT) {
+      const staleCount = map.size - REVERT_TARGET_LIMIT_PER_CHAT;
+      const keys = Array.from(map.keys()).slice(0, staleCount);
+      for (const key of keys) map.delete(key);
+    }
+    revertTargetsByChat.set(chatKey, map);
+  }
+}
+
+function persistRevertTargets() {
+  const chats = {};
+  for (const [chatId, map] of revertTargetsByChat.entries()) {
+    if (!(map instanceof Map) || map.size === 0) continue;
+    chats[chatId] = Array.from(map.values()).map((entry) => ({
+      chatId: String(entry.chatId || chatId),
+      telegramMessageId: Number(entry.telegramMessageId || 0),
+      repoName: String(entry.repoName || ''),
+      sessionId: String(entry.sessionId || ''),
+      messageId: String(entry.messageId || ''),
+      partId: String(entry.partId || ''),
+      createdAt: Number(entry.createdAt || Date.now()),
+    }));
+  }
+  writeJsonAtomic(REVERT_TARGETS_PATH, {
+    version: 1,
+    chats,
+  });
+}
 
 function summarizeAuditText(text) {
   const value = String(text || '').replace(/\s+/g, ' ').trim();
@@ -570,6 +630,7 @@ function generateRevertToken() {
 }
 
 function rememberRevertTarget(chatId, telegramMessageId, target) {
+  ensureRevertTargetsLoaded();
   const key = String(chatId);
   const messageId = Number(telegramMessageId);
   if (!Number.isInteger(messageId) || messageId <= 0) return;
@@ -579,11 +640,33 @@ function rememberRevertTarget(chatId, telegramMessageId, target) {
     map = new Map();
     revertTargetsByChat.set(key, map);
   }
-  map.set(messageId, {
-    ...target,
+  const previous = map.get(messageId) || null;
+  const next = {
+    ...(target || {}),
     chatId: key,
     telegramMessageId: messageId,
-    createdAt: Date.now(),
+    createdAt: previous && Number(previous.createdAt) > 0
+      ? Number(previous.createdAt)
+      : Date.now(),
+  };
+
+  const unchanged = previous
+    && previous.repoName === next.repoName
+    && previous.sessionId === next.sessionId
+    && previous.messageId === next.messageId
+    && previous.partId === next.partId;
+  if (unchanged) return;
+
+  map.set(messageId, next);
+
+  audit('revert.target.remember', {
+    chatId: key,
+    telegramMessageId: messageId,
+    mapSize: map.size,
+    repoName: target && target.repoName ? String(target.repoName) : '',
+    sessionId: target && target.sessionId ? String(target.sessionId) : '',
+    messageId: target && target.messageId ? String(target.messageId) : '',
+    partId: target && target.partId ? String(target.partId) : '',
   });
 
   if (map.size > REVERT_TARGET_LIMIT_PER_CHAT) {
@@ -591,15 +674,63 @@ function rememberRevertTarget(chatId, telegramMessageId, target) {
     const keys = Array.from(map.keys()).slice(0, staleCount);
     for (const k of keys) map.delete(k);
   }
+
+  persistRevertTargets();
+}
+
+function registerRevertTargetFromSentMessage(chatId, sentMessage, target) {
+  if (!sentMessage || !target) return;
+  const messageId = Number(sentMessage && sentMessage.message_id);
+  if (!Number.isInteger(messageId) || messageId <= 0) return;
+  rememberRevertTarget(chatId, messageId, target);
 }
 
 function resolveRevertReplyTarget(chatId, replyMessageId) {
+  ensureRevertTargetsLoaded();
   const key = String(chatId);
   const messageId = Number(replyMessageId);
-  if (!Number.isInteger(messageId) || messageId <= 0) return null;
+  if (!Number.isInteger(messageId) || messageId <= 0) {
+    audit('revert.target.resolve', {
+      chatId: key,
+      replyMessageId: messageId,
+      found: false,
+      reason: 'invalid_reply_message_id',
+      mapSize: 0,
+    });
+    return null;
+  }
   const map = revertTargetsByChat.get(key);
-  if (!map) return null;
-  return map.get(messageId) || null;
+  if (!map) {
+    audit('revert.target.resolve', {
+      chatId: key,
+      replyMessageId: messageId,
+      found: false,
+      reason: 'chat_map_missing',
+      mapSize: 0,
+    });
+    return null;
+  }
+  const target = map.get(messageId) || null;
+  audit('revert.target.resolve', {
+    chatId: key,
+    replyMessageId: messageId,
+    found: !!target,
+    mapSize: map.size,
+    repoName: target && target.repoName ? String(target.repoName) : '',
+    sessionId: target && target.sessionId ? String(target.sessionId) : '',
+    messageId: target && target.messageId ? String(target.messageId) : '',
+    partId: target && target.partId ? String(target.partId) : '',
+  });
+  return target;
+}
+
+function resetRevertTargetStoreForTest(options = {}) {
+  const removePersisted = !!(options && options.removePersisted);
+  revertTargetsByChat.clear();
+  revertTargetsLoaded = false;
+  if (removePersisted && fs.existsSync(REVERT_TARGETS_PATH)) {
+    fs.unlinkSync(REVERT_TARGETS_PATH);
+  }
 }
 
 function createPendingRevertConfirmation(payload) {
@@ -1620,7 +1751,7 @@ function collectMermaidBlocksFromTextSegments(segments) {
   return extractMermaidBlocks(merged);
 }
 
-async function sendMermaidArtifactsForRun({ bot, repo, chatId, textSegments, runAuditMeta }) {
+async function sendMermaidArtifactsForRun({ bot, repo, chatId, textSegments, runAuditMeta, revertTarget }) {
   const mermaidBlocks = collectMermaidBlocksFromTextSegments(textSegments);
   if (mermaidBlocks.length === 0) return false;
 
@@ -1644,24 +1775,27 @@ async function sendMermaidArtifactsForRun({ bot, repo, chatId, textSegments, run
     const artifact = artifacts[i];
     const caption = artifacts.length > 1 ? `Mermaid diagram ${i + 1}/${artifacts.length}` : 'Mermaid diagram';
     if (artifact.kind === 'svg') {
-      await safeSendDocument(bot, chatId, artifact.path, caption, {
+      const sent = await safeSendDocument(bot, chatId, artifact.path, caption, {
         ...(runAuditMeta || {}),
         channel: 'mermaid',
       });
+      registerRevertTargetFromSentMessage(chatId, sent, revertTarget);
       continue;
     }
     if (artifact.kind === 'png') {
-      await safeSendPhoto(bot, chatId, artifact.path, caption, {
+      const sent = await safeSendPhoto(bot, chatId, artifact.path, caption, {
         ...(runAuditMeta || {}),
         channel: 'mermaid',
       });
+      registerRevertTargetFromSentMessage(chatId, sent, revertTarget);
       continue;
     }
     if (artifact.kind === 'mmd') {
-      await safeSendDocument(bot, chatId, artifact.path, `${caption} (source, render failed)`, {
+      const sent = await safeSendDocument(bot, chatId, artifact.path, `${caption} (source, render failed)`, {
         ...(runAuditMeta || {}),
         channel: 'mermaid',
       });
+      registerRevertTargetFromSentMessage(chatId, sent, revertTarget);
       await safeSend(
         bot,
         chatId,
@@ -3162,7 +3296,7 @@ async function startPromptRun(bot, repo, state, runItem) {
           });
         }
         if (activeSessionId && lastFinalMessageRef.messageId) {
-          rememberRevertTarget(chatId, messageId, {
+          registerRevertTargetFromSentMessage(chatId, { message_id: messageId }, {
             repoName: repo.name,
             sessionId: activeSessionId,
             messageId: lastFinalMessageRef.messageId,
@@ -3181,7 +3315,7 @@ async function startPromptRun(bot, repo, state, runItem) {
       });
       finalUnitMessageIds[i] = sent && sent.message_id ? sent.message_id : null;
       if (activeSessionId && lastFinalMessageRef.messageId && finalUnitMessageIds[i]) {
-        rememberRevertTarget(chatId, finalUnitMessageIds[i], {
+        registerRevertTargetFromSentMessage(chatId, { message_id: finalUnitMessageIds[i] }, {
           repoName: repo.name,
           sessionId: activeSessionId,
           messageId: lastFinalMessageRef.messageId,
@@ -3295,6 +3429,15 @@ async function startPromptRun(bot, repo, state, runItem) {
       sendText: safeSend,
       editText: editHtml,
       deleteMessage: safeDeleteMessage,
+      onMessagePersist: async ({ messageId }) => {
+        if (!activeSessionId || !lastFinalMessageRef.messageId || !messageId) return;
+        registerRevertTargetFromSentMessage(chatId, { message_id: messageId }, {
+          repoName: repo.name,
+          sessionId: activeSessionId,
+          messageId: lastFinalMessageRef.messageId,
+          partId: lastFinalMessageRef.partId,
+        });
+      },
     });
     const nextMessageIds = Array.isArray(nextView && nextView.messageIds) ? nextView.messageIds : [];
     const nextStoredTexts = Array.isArray(nextView && nextView.texts) ? nextView.texts : [];
@@ -3331,6 +3474,14 @@ async function startPromptRun(bot, repo, state, runItem) {
         chatId,
         textSegments: safeNextTexts,
         runAuditMeta,
+        revertTarget: activeSessionId && lastFinalMessageRef.messageId
+          ? {
+            repoName: repo.name,
+            sessionId: activeSessionId,
+            messageId: lastFinalMessageRef.messageId,
+            partId: lastFinalMessageRef.partId,
+          }
+          : null,
       });
       if (delivered) {
         mermaidAttachmentDelivered = true;
@@ -3781,6 +3932,14 @@ async function startPromptRun(bot, repo, state, runItem) {
               chatId,
               textSegments: deferredMermaidSourceSegments,
               runAuditMeta,
+              revertTarget: activeSessionId && lastFinalMessageRef.messageId
+                ? {
+                  repoName: repo.name,
+                  sessionId: activeSessionId,
+                  messageId: lastFinalMessageRef.messageId,
+                  partId: lastFinalMessageRef.partId,
+                }
+                : null,
             });
             if (delivered) {
               mermaidAttachmentDelivered = true;
@@ -4057,6 +4216,9 @@ function main() {
       updateType: 'message',
       chatId: msg && msg.chat && msg.chat.id ? String(msg.chat.id) : '',
       messageId: msg && msg.message_id ? msg.message_id : null,
+      replyMessageId: msg && msg.reply_to_message && msg.reply_to_message.message_id
+        ? msg.reply_to_message.message_id
+        : null,
       textPreview: summarizeAuditText(msg && msg.text ? msg.text : ''),
     });
     await handleMessage(msg);
@@ -4145,6 +4307,10 @@ module.exports = {
     getImagePayloadFromMessage,
     formatRepoList,
     handleConnectCommand,
+    registerRevertTargetFromSentMessage,
+    resolveRevertReplyTarget,
+    resetRevertTargetStoreForTest,
+    REVERT_TARGETS_PATH,
     parseRawEventContent,
     formatRawEventPreview,
     resolveRawDeliveryPlan,

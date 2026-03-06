@@ -77,3 +77,41 @@ test('telegram view reconciler formats markdown to HTML and sends with parse_mod
   assert.equal(next.texts[0].includes('<b>bold</b>'), true);
   assert.equal(next.texts[0].includes('<code>code</code>'), true);
 });
+
+test('telegram view reconciler invokes onMessagePersist for edit and send', async () => {
+  const persisted = [];
+
+  await reconcileRunViewForTelegram({
+    bot: {},
+    chatId: '102',
+    runAuditMeta: { runId: 'r3' },
+    currentView: {
+      texts: ['old'],
+      messageIds: [41],
+    },
+    nextTexts: ['new', 'more'],
+    isFinalState: false,
+    sendText: async () => ({ message_id: 42 }),
+    editText: async () => {},
+    deleteMessage: async () => true,
+    onMessagePersist: async (info) => {
+      persisted.push(info);
+    },
+  });
+
+  assert.equal(persisted.length, 2);
+  assert.deepEqual(persisted[0], {
+    op: 'edit',
+    messageId: 41,
+    index: 0,
+    text: 'new',
+    isFinalState: false,
+  });
+  assert.deepEqual(persisted[1], {
+    op: 'send',
+    messageId: 42,
+    index: 1,
+    text: 'more',
+    isFinalState: false,
+  });
+});

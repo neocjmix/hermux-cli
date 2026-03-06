@@ -133,6 +133,52 @@ test('handleConnectCommand remaps chat and resets session continuity when confir
   }
 });
 
+test('registerRevertTargetFromSentMessage links sent message_id to revert target', () => {
+  _internal.resetRevertTargetStoreForTest({ removePersisted: true });
+  const chatId = '100';
+  const messageId = 98765;
+  const target = {
+    repoName: 'demo',
+    sessionId: 'ses-1',
+    messageId: 'msg-1',
+    partId: 'part-1',
+  };
+
+  _internal.registerRevertTargetFromSentMessage(chatId, { message_id: messageId }, target);
+
+  const resolved = _internal.resolveRevertReplyTarget(chatId, messageId);
+  assert.equal(resolved.repoName, 'demo');
+  assert.equal(resolved.sessionId, 'ses-1');
+  assert.equal(resolved.messageId, 'msg-1');
+  assert.equal(resolved.partId, 'part-1');
+
+  _internal.resetRevertTargetStoreForTest({ removePersisted: true });
+});
+
+test('resolveRevertReplyTarget survives empty in-memory store by loading persisted targets', () => {
+  _internal.resetRevertTargetStoreForTest({ removePersisted: true });
+
+  const chatId = '100';
+  const messageId = 24680;
+  const target = {
+    repoName: 'demo',
+    sessionId: 'ses-restore',
+    messageId: 'msg-restore',
+    partId: 'part-restore',
+  };
+
+  _internal.registerRevertTargetFromSentMessage(chatId, { message_id: messageId }, target);
+
+  _internal.resetRevertTargetStoreForTest({ removePersisted: false });
+  const restored = _internal.resolveRevertReplyTarget(chatId, messageId);
+  assert.equal(restored.repoName, 'demo');
+  assert.equal(restored.sessionId, 'ses-restore');
+  assert.equal(restored.messageId, 'msg-restore');
+  assert.equal(restored.partId, 'part-restore');
+
+  _internal.resetRevertTargetStoreForTest({ removePersisted: true });
+});
+
 test('splitByLimit splits long text near newline', () => {
   const input = 'line1\nline2\nline3\nline4';
   const out = _internal.splitByLimit(input, 9);
