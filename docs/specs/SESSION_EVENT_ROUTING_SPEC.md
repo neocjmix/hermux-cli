@@ -125,7 +125,19 @@ Extraction rule:
 - Global lane MAY update repo-level diagnostics/health snapshots.
 - Global lane events MAY be fully audited and observed but MUST NOT be auto-bound to any session.
 
-### 7.3 Stale Event Fencing
+### 7.3 Run Lifecycle Semantics
+
+- A provider `complete` signal MUST be treated as an in-run phase marker, not as run termination.
+- A run MUST remain lifecycle-active until either (a) the next run for the same session starts, or (b) the session ends explicitly.
+- The final run in a session MUST remain lifecycle-active until explicit session termination.
+- `run.complete` MUST NOT revoke session-event acceptance, session ownership, observer attachment, or session-log collection.
+- After `run.complete`, the run MUST no longer be an interrupt target.
+- After `run.complete`, the run MUST become eligible as a revert target.
+- Starting the next run for the same session MUST atomically terminate the prior run lifecycle and transfer ownership.
+- Session-resolved late events for the prior run MUST still be accepted until that atomic handoff occurs.
+- Explicit session-ending actions (`/reset`, remap, or equivalent session continuity clear) MUST terminate the final run lifecycle for that session.
+
+### 7.4 Stale Event Fencing
 
 Each event carries ingress metadata:
 
@@ -213,6 +225,7 @@ Non-blocking rule:
 - Server crash/restart: bump `serverEpoch`, recreate subscription, stale old-epoch events dropped.
 - Subscription disconnect: bump `subscriptionEpoch`, reconnect with backoff.
 - Duplicate callback delivery: resolved by side-effect dedupe key.
+- Session-end cleanup MUST be session-scoped; it MUST NOT be inferred solely from provider `complete`.
 
 Revised session-reuse rule:
 
@@ -237,3 +250,6 @@ Revised session-reuse rule:
 8. Within same session, out-of-order events are tolerated and audited without cross-session leakage.
 9. Session-resolved late events MUST still be accepted and rendered when `HERMUX_SDK_POST_COMPLETE_LINGER_MS=0`.
 10. Downstream delivery path MUST receive materialized run-view snapshots and MUST NOT require provider-specific raw event field knowledge.
+11. After `run.complete`, `/interrupt` no longer targets that run, while `/revert` remains valid until next-run handoff or explicit session-end cleanup.
+12. Starting the next run for the same session atomically terminates the previous run lifecycle without dropping late events accepted before handoff.
+13. If no next run starts, the last run stays lifecycle-active until explicit session termination.

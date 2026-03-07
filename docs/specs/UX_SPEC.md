@@ -58,6 +58,14 @@ Commands and expected effect:
 - `/revert`: must be executed as reply to a recent bot output message; requires callback confirmation before execution
 - `/unrevert`: restores current revert state only while `session.revert` is still present (before cleanup-triggering continuation)
 
+Lifecycle semantics:
+
+- `run.complete` is a phase change inside the current run, not the end of session lifecycle ownership.
+- After `run.complete`, `/interrupt` MUST behave as if there is no interruptible run for that session.
+- After `run.complete`, `/revert` MUST remain available for the completed run output until the next run is accepted or the session is ended explicitly.
+- `/unrevert` remains available only until the next continuation-cleanup action for that same session.
+- `/reset` and explicit session remap/end actions terminate the final run lifecycle for the cleared session.
+
 ## Unmapped Chat Behavior
 
 - setup commands remain available in unmapped chats

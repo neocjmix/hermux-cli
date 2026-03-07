@@ -48,7 +48,7 @@ Event ingress is unified at Telegram update level and then split into command/ca
 - Repo-bound dispatch: `createRepoMessageHandler` handles runtime commands (`/status`, `/models`, `/interrupt`, `/restart`) and prompt submission in `src/providers/downstream/telegram/gateway-repo-message-handler.js`.
 - Callback classification: `createCallbackQueryHandler` handles structured callback data (`connect:*`, `verbose:*`, model-layer callbacks) in `src/providers/downstream/telegram/gateway-callback-query-handler.js`.
 - Runtime event adapter: `runOpencode` in `src/lib/runner.js` normalizes SDK and command transports into internal event primitives (`step_start`, `text`, `tool_use`, `wait`, `raw`).
-- Finalization path: `startPromptRun` in `src/gateway.js` merges stream/meta final text, persists session mapping, updates status panels, and dequeues next prompt FIFO.
+- Completion path: `startPromptRun` in `src/gateway.js` records provider completion as an in-run phase, while run lifecycle termination occurs only at same-session next-run handoff or explicit session end.
 
 ### Run View Snapshot Boundary
 

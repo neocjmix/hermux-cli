@@ -125,6 +125,8 @@ Contract rules:
 - Downstream components MUST NOT parse provider raw event schemas.
 - Upstream components own provider event parsing and state projection.
 - Snapshot emission must allow last-snapshot application without semantic loss at downstream boundary.
+- `isFinal` marks provider phase completion for the emitting run snapshot; it MUST NOT be interpreted as session lifecycle termination.
+- `runId` remains a correlation field for rendering/audit, while lifecycle ownership still follows session-first routing and next-run/session-end termination semantics from `docs/specs/SESSION_EVENT_ROUTING_SPEC.md`.
 
 Current implementation anchors:
 
