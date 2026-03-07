@@ -23,6 +23,7 @@ function createRepoMessageHandler(deps) {
     SESSION_MAP_PATH,
     clearSessionId,
     clearSessionDelivery,
+    endSessionLifecycle,
     handleRestartCommand,
     getHelpText,
     sendTelegramFormattingShowcase,
@@ -104,6 +105,10 @@ function createRepoMessageHandler(deps) {
       if (state.running) {
         await safeSend(bot, chatId, 'Cannot reset while running. Wait for current task to finish.');
         return;
+      }
+      const lifecycleSessionId = String(state.activeSessionId || '').trim();
+      if (lifecycleSessionId && typeof endSessionLifecycle === 'function') {
+        await endSessionLifecycle(repo, lifecycleSessionId, 'session_reset');
       }
       if (typeof clearSessionDelivery === 'function') {
         await clearSessionDelivery(state, chatId);

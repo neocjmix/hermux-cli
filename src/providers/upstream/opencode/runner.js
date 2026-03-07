@@ -12,7 +12,6 @@ const SDK_PORT_RANGE_MAX = parseInt(process.env.HERMUX_SDK_PORT_RANGE_MAX || '43
 const SDK_PORT_PICK_ATTEMPTS = parseInt(process.env.HERMUX_SDK_PORT_PICK_ATTEMPTS || '60', 10);
 const SDK_IDLE_DRAIN_MS = parseInt(process.env.HERMUX_SDK_IDLE_DRAIN_MS || '220', 10);
 const SDK_POST_COMPLETE_LINGER_MS = parseInt(process.env.HERMUX_SDK_POST_COMPLETE_LINGER_MS || '2200', 10);
-const SDK_OBSERVER_IDLE_AFTER_DONE_MS = parseInt(process.env.HERMUX_SDK_OBSERVER_IDLE_AFTER_DONE_MS || '45000', 10);
 const SDK_RAW_PASSTHROUGH = true;
 
 const activeRuns = new Set();
@@ -241,6 +240,7 @@ async function createSdkRuntimeForScope(scopeKey) {
     eventStream: null,
     observersBySession: new Map(),
     sessionBuffers: new Map(),
+    runLifecycleBySession: new Map(),
     auditPath: '',
     auditQueue: Promise.resolve(),
   };
@@ -253,6 +253,7 @@ async function closeSdkRuntimeEntry(entry) {
   entry.eventStream = null;
   entry.observersBySession = new Map();
   entry.sessionBuffers = new Map();
+  entry.runLifecycleBySession = new Map();
   const runtime = entry.runtime;
   if (runtime && runtime.server && typeof runtime.server.close === 'function') {
     try {
@@ -330,6 +331,7 @@ function addSessionObserver(entry, sessionId, observer, instance, options) {
     throw new Error('cannot add session observer without session id');
   }
   const replayBuffered = !options || options.replayBuffered !== false;
+  const dropBufferedOnDetach = !!(options && options.dropBufferedOnDetach);
   let set = entry.observersBySession.get(sid);
   if (!set) {
     set = new Set();
@@ -356,9 +358,11 @@ function addSessionObserver(entry, sessionId, observer, instance, options) {
     let droppedBuffered = 0;
     if (cur.size === 0) {
       entry.observersBySession.delete(sid);
-      const buffered = entry.sessionBuffers.get(sid);
-      droppedBuffered = Array.isArray(buffered) ? buffered.length : 0;
-      entry.sessionBuffers.delete(sid);
+      if (dropBufferedOnDetach) {
+        const buffered = entry.sessionBuffers.get(sid);
+        droppedBuffered = Array.isArray(buffered) ? buffered.length : 0;
+        entry.sessionBuffers.delete(sid);
+      }
     }
     queueScopeAudit(entry, instance, 'router.observer.detach', {
       lane: 'session',
@@ -367,6 +371,31 @@ function addSessionObserver(entry, sessionId, observer, instance, options) {
       droppedBuffered,
     });
   };
+}
+
+function replaceRunLifecycleObserver(entry, sessionId, controller, instance) {
+  const sid = String(sessionId || '').trim();
+  if (!sid || !entry || typeof controller !== 'object' || controller === null) return;
+  const existing = entry.runLifecycleBySession.get(sid);
+  if (existing && existing !== controller && typeof existing.close === 'function') {
+    existing.close('next_run_start');
+  }
+  entry.runLifecycleBySession.set(sid, controller);
+}
+
+async function endSessionLifecycle(instance, sessionId, reason) {
+  const sid = String(sessionId || '').trim();
+  if (!sid) return false;
+  shouldUseSdk(instance);
+  const runtimeEntry = sdkRuntimes.get(getRuntimeScopeKey(instance));
+  if (!runtimeEntry) return false;
+  const controller = runtimeEntry.runLifecycleBySession.get(sid);
+  runtimeEntry.runLifecycleBySession.delete(sid);
+  if (controller && typeof controller.close === 'function') {
+    controller.close(String(reason || 'session_end'));
+  }
+  runtimeEntry.sessionBuffers.delete(sid);
+  return !!controller;
 }
 
 async function ensureSdkEventPump(instance, entry) {
@@ -637,10 +666,10 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
   let abortSession = null;
   let detachObserver = null;
   let boundRuntimeEntry = null;
+  let lifecycleSessionId = '';
   let eventQueue = Promise.resolve();
   let idleFinalizeTimer = null;
   let postCompleteTimer = null;
-  let observerDetachTimer = null;
   let idlePending = false;
   let settlePromiseResolve = null;
   const settlePromise = new Promise((resolve) => {
@@ -682,17 +711,9 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
     }
   }
 
-  function clearObserverDetachTimer() {
-    if (observerDetachTimer) {
-      clearTimeout(observerDetachTimer);
-      observerDetachTimer = null;
-    }
-  }
-
   function closeRunObserver(reason) {
     if (state.done) return;
     state.done = true;
-    clearObserverDetachTimer();
     clearIdleFinalizeTimer();
     clearPostCompleteTimer();
     clearTimeout(timeout);
@@ -701,6 +722,12 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
       detachObserver = null;
     }
     if (boundRuntimeEntry) {
+      if (lifecycleSessionId && boundRuntimeEntry.runLifecycleBySession.get(lifecycleSessionId)) {
+        const current = boundRuntimeEntry.runLifecycleBySession.get(lifecycleSessionId);
+        if (current && current.close === closeRunObserver) {
+          boundRuntimeEntry.runLifecycleBySession.delete(lifecycleSessionId);
+        }
+      }
       queueScopeAudit(boundRuntimeEntry, instance, 'router.run.observer_detach', {
         lane: 'run-observer',
         sessionId: state.sessionId,
@@ -711,20 +738,6 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
       logStream.end();
       logClosed = true;
     }
-  }
-
-  function scheduleObserverDetach(reason) {
-    if (!state.completed || state.done) return;
-    clearObserverDetachTimer();
-    observerDetachTimer = setTimeout(() => {
-      if (state.done || !state.completed) return;
-      trace('observer.detach.firing', {
-        reason: String(reason || 'idle_after_done'),
-        idleMs: Math.max(0, SDK_OBSERVER_IDLE_AFTER_DONE_MS),
-        finalTextLength: String(state.finalText || '').length,
-      });
-      closeRunObserver(reason || 'idle_after_done');
-    }, Math.max(0, SDK_OBSERVER_IDLE_AFTER_DONE_MS));
   }
 
   function schedulePostCompleteFinalize() {
@@ -845,7 +858,6 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
       settlePromiseResolve();
       settlePromiseResolve = null;
     }
-    scheduleObserverDetach('run_complete');
   }
 
   function fail(err) {
@@ -939,12 +951,11 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
 
     if (SDK_RAW_PASSTHROUGH) {
       state.hasCurrentRunActivity = true;
+      if (!state.completed && !state.done) {
+        schedulePostCompleteFinalize();
+      }
       if (idlePending) scheduleIdleFinalize();
       return;
-    }
-
-    if (state.completed) {
-      scheduleObserverDetach('post_complete_activity');
     }
 
     if (type === 'session.error') {
@@ -1177,12 +1188,16 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
       await ensureSdkEventPump(instance, runtimeEntry);
       let observerQueue = Promise.resolve();
       state.attachCursor = Number(runtimeEntry.eventCursor || 0);
+      lifecycleSessionId = String(state.sessionId || '').trim();
+      replaceRunLifecycleObserver(runtimeEntry, lifecycleSessionId, {
+        close: closeRunObserver,
+      }, instance);
       detachObserver = addSessionObserver(runtimeEntry, state.sessionId, {
         onEvent: (framed) => {
           observerQueue = observerQueue.then(() => processFramedEvent(framed));
           return observerQueue;
         },
-      }, instance, { replayBuffered: false });
+      }, instance, { replayBuffered: false, dropBufferedOnDetach: false });
       queueScopeAudit(runtimeEntry, instance, 'router.run.attach', {
         lane: 'run-observer',
         sessionId: state.sessionId,
@@ -1292,6 +1307,7 @@ async function subscribeSessionEvents(instance, sessionId, handlers) {
 module.exports = {
   runOpencode,
   subscribeSessionEvents,
+  endSessionLifecycle,
   runSessionRevert,
   runSessionUnrevert,
   stopAllRuntimeExecutors,

@@ -33,6 +33,7 @@ const downstreamProvider = resolveDownstreamProvider(providerSelection.downstrea
 const {
   runOpencode,
   subscribeSessionEvents,
+  endSessionLifecycle,
   runSessionRevert,
   runSessionUnrevert,
   stopAllRuntimeExecutors,
@@ -2705,6 +2706,20 @@ async function handleConnectCommand(bot, chatId, args, chatRouter, states) {
           const update = moveChatIdToRepo(requestedRepo, chatId);
           if (update.ok) {
             refreshRuntimeRouting(chatRouter, states);
+            const previousSessionId = getSessionId(String(result.existingRepo || ''), chatId);
+            const requestedSessionId = getSessionId(requestedRepo, chatId);
+            if (previousSessionId && typeof endSessionLifecycle === 'function') {
+              const previousRepo = availableRepos.find((repo) => repo && repo.name === String(result.existingRepo || ''));
+              if (previousRepo) {
+                endSessionLifecycle(previousRepo, previousSessionId, 'chat_remap').catch(() => {});
+              }
+            }
+            if (requestedSessionId && typeof endSessionLifecycle === 'function') {
+              const requestedRepoConfig = availableRepos.find((repo) => repo && repo.name === requestedRepo);
+              if (requestedRepoConfig) {
+                endSessionLifecycle(requestedRepoConfig, requestedSessionId, 'chat_remap').catch(() => {});
+              }
+            }
             clearSessionId(String(result.existingRepo || ''), chatId);
             clearSessionId(requestedRepo, chatId);
           }
@@ -4059,6 +4074,7 @@ const handleRepoMessage = createRepoMessageHandler({
   SESSION_MAP_PATH,
   clearSessionId,
   clearSessionDelivery,
+  endSessionLifecycle,
   handleRestartCommand,
   getHelpText,
   sendTelegramFormattingShowcase,
