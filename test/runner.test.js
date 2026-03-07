@@ -90,6 +90,149 @@ test('runOpencode sdk mode drains async onEvent work before onDone', async () =>
   assert.deepEqual(eventsAfterDone, []);
 });
 
+test('runOpencode sdk mode delays completion while raw activity continues', async () => {
+  const { runOpencode } = loadRunnerWithEnv({
+    HERMUX_MAX_PROCESS_SECONDS: 10,
+    HERMUX_EXECUTION_TRANSPORT: 'sdk',
+    HERMUX_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
+    HERMUX_SDK_POST_COMPLETE_LINGER_MS: 2200,
+  });
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runner-sdk-late-tail-'));
+  const eventsAfterDone = [];
+  const seenRaw = [];
+  let completed = false;
+  const startedAt = Date.now();
+
+  const done = await new Promise((resolve, reject) => {
+    runOpencode(
+      {
+        opencodeCommand: 'opencode sdk',
+        workdir: process.cwd(),
+        logFile: path.join(tmpDir, 'runner-sdk-late-tail.log'),
+      },
+      'delayed-tail',
+      {
+        onEvent: (evt) => {
+          if (evt.type === 'raw') {
+            const content = String(evt.content || '');
+            if (content.includes('warming-up') || content.includes('tail-arrived')) {
+              seenRaw.push(content);
+            }
+          }
+          if (completed) eventsAfterDone.push(evt.type);
+        },
+        onDone: (exitCode, timeoutMsg, meta) => {
+          completed = true;
+          resolve({ exitCode, timeoutMsg, meta, elapsedMs: Date.now() - startedAt });
+        },
+        onError: reject,
+        sessionId: '',
+      }
+    );
+  });
+
+  await new Promise((r) => setTimeout(r, 200));
+
+  assert.equal(done.exitCode, 0);
+  assert.equal(done.timeoutMsg, null);
+  assert.equal(done.elapsedMs >= 4500, true);
+  assert.equal(seenRaw.some((content) => content.includes('tail-arrived')), true);
+  assert.deepEqual(eventsAfterDone, []);
+});
+
+test('runOpencode sdk mode should keep accepting late session events after complete phase', async () => {
+  const { runOpencode } = loadRunnerWithEnv({
+    HERMUX_MAX_PROCESS_SECONDS: 10,
+    HERMUX_EXECUTION_TRANSPORT: 'sdk',
+    HERMUX_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
+    HERMUX_SDK_IDLE_DRAIN_MS: 0,
+    HERMUX_SDK_POST_COMPLETE_LINGER_MS: 0,
+    HERMUX_SDK_OBSERVER_IDLE_AFTER_DONE_MS: 20,
+  });
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runner-sdk-phase-complete-'));
+  const seenRaw = [];
+  let doneAt = 0;
+
+  await new Promise((resolve, reject) => {
+    runOpencode(
+      {
+        opencodeCommand: 'opencode sdk',
+        workdir: process.cwd(),
+        logFile: path.join(tmpDir, 'runner-sdk-phase-complete.log'),
+      },
+      'phase-complete-late',
+      {
+        onEvent: (evt) => {
+          if (evt.type === 'raw') {
+            const content = String(evt.content || '');
+            if (content.includes('phase-late-tail')) {
+              seenRaw.push({ content, at: Date.now() });
+            }
+          }
+        },
+        onDone: () => {
+          doneAt = Date.now();
+          resolve();
+        },
+        onError: reject,
+        sessionId: '',
+      }
+    );
+  });
+
+  await new Promise((r) => setTimeout(r, 600));
+
+  assert.equal(doneAt > 0, true);
+  assert.equal(seenRaw.length > 0, true);
+  assert.equal(seenRaw.some((evt) => evt.at > doneAt), true);
+});
+
+test('runOpencode sdk mode should stop accepting late session events after explicit session end', async () => {
+  const { runOpencode, endSessionLifecycle } = loadRunnerWithEnv({
+    HERMUX_MAX_PROCESS_SECONDS: 10,
+    HERMUX_EXECUTION_TRANSPORT: 'sdk',
+    HERMUX_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
+    HERMUX_SDK_IDLE_DRAIN_MS: 0,
+    HERMUX_SDK_POST_COMPLETE_LINGER_MS: 0,
+  });
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runner-sdk-session-end-'));
+  const seenRaw = [];
+
+  const done = await new Promise((resolve, reject) => {
+    runOpencode(
+      {
+        opencodeCommand: 'opencode sdk',
+        workdir: process.cwd(),
+        logFile: path.join(tmpDir, 'runner-sdk-session-end.log'),
+      },
+      'phase-complete-late',
+      {
+        onEvent: (evt) => {
+          if (evt.type === 'raw' && String(evt.content || '').includes('phase-late-tail')) {
+            seenRaw.push(evt);
+          }
+        },
+        onDone: (exitCode, timeoutMsg, meta) => resolve({ exitCode, timeoutMsg, meta }),
+        onError: reject,
+        sessionId: '',
+      }
+    );
+  });
+
+  assert.equal(done.exitCode, 0);
+  assert.equal(typeof endSessionLifecycle, 'function');
+  await endSessionLifecycle({
+    opencodeCommand: 'opencode sdk',
+    workdir: process.cwd(),
+    logFile: path.join(tmpDir, 'runner-sdk-session-end.log'),
+  }, done.meta.sessionId, 'test_session_end');
+  await new Promise((r) => setTimeout(r, 600));
+
+  assert.deepEqual(seenRaw, []);
+});
+
 test('runOpencode sdk mode reuses provided session id when valid', async () => {
   const { runOpencode } = loadRunnerWithEnv({
     HERMUX_MAX_PROCESS_SECONDS: 10,

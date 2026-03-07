@@ -88,6 +88,79 @@ async function createOpencode() {
             : null;
           const promptText = String((textPart && textPart.text) || '');
 
+          if (promptText === 'delayed-tail') {
+            queue.push({
+              type: 'session.status',
+              properties: {
+                sessionID: id,
+                status: { type: 'busy' },
+              },
+            });
+            setTimeout(() => {
+              queue.push({
+                type: 'message.part.updated',
+                properties: {
+                  part: {
+                    id: 'text-delayed-step',
+                    sessionID: id,
+                    messageID: 'msg-delayed',
+                    type: 'text',
+                    text: 'warming-up',
+                    index: 0,
+                  },
+                },
+              });
+            }, 1000);
+            setTimeout(() => {
+              queue.push({
+                type: 'message.part.updated',
+                properties: {
+                  part: {
+                    id: 'text-delayed-final',
+                    sessionID: id,
+                    messageID: 'msg-delayed',
+                    type: 'text',
+                    text: 'tail-arrived',
+                    index: 1,
+                  },
+                },
+              });
+            }, 2500);
+            return { data: undefined, error: undefined };
+          }
+
+          if (promptText === 'phase-complete-late') {
+            queue.push({
+              type: 'session.status',
+              properties: {
+                sessionID: id,
+                status: { type: 'busy' },
+              },
+            });
+            queue.push({
+              type: 'session.idle',
+              properties: {
+                sessionID: id,
+              },
+            });
+            setTimeout(() => {
+              queue.push({
+                type: 'message.part.updated',
+                properties: {
+                  part: {
+                    id: 'phase-late-text',
+                    sessionID: id,
+                    messageID: 'msg-phase-late',
+                    type: 'text',
+                    text: 'phase-late-tail',
+                    index: 0,
+                  },
+                },
+              });
+            }, 250);
+            return { data: undefined, error: undefined };
+          }
+
           queue.push({
             type: 'session.status',
             properties: {
