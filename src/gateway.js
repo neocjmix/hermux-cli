@@ -3628,6 +3628,7 @@ async function startPromptRun(bot, repo, state, runItem) {
             isFinal: false,
             viewMode: state.verbose ? 'verbose' : 'normal',
             repoName: repo.name,
+            queueLength: Array.isArray(state.queue) ? state.queue.length : 0,
           });
         }
         const next = snapshotState && snapshotState.renderState ? snapshotState.renderState : null;

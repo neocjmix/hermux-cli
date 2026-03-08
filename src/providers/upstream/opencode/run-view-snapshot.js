@@ -38,12 +38,14 @@ function applyPayloadToRunViewSnapshot(state, payload, renderSeq, options) {
   const isFinal = !!safeOptions.isFinal;
   const viewMode = toText(safeOptions.viewMode).trim().toLowerCase() || 'normal';
   const repoName = toText(safeOptions.repoName).trim();
+  const queueLength = Number(safeOptions.queueLength || 0) || 0;
 
   const messages = buildRunViewFromRenderState(nextRenderState, splitByLimit, maxLen, {
     runId,
     minMessageTimeMs,
     viewMode,
     repoName,
+    queueLength,
   });
 
   return {
