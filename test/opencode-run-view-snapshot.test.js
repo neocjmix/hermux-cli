@@ -63,7 +63,7 @@ test('run view snapshot materializer converts raw payload to provider-agnostic s
   assert.equal(state.snapshot.sessionId, 'ses-a');
   assert.equal(Array.isArray(state.snapshot.messages), true);
   // Normal mode format: emoji-based compact status
-  assert.match(state.snapshot.messages[0], /✅\s+repo/);
+  assert.match(state.snapshot.messages[0], /📂\s+repo/);
   assert.match(state.snapshot.messages[0], /💬\s*`ses-a`/);
   assert.equal(state.snapshot.messages[1], 'hello snapshot');
   assert.equal(state.snapshot.isFinal, false);
@@ -128,4 +128,26 @@ test('run view snapshot materializer keeps state and applies trailing payload as
 
   assert.equal(state.snapshot.isFinal, true);
   assert.equal(state.snapshot.messages[1], 'first text +delta');
+});
+
+test('run view snapshot materializer includes queued prompt count in status pane', () => {
+  let state = createRunViewSnapshotState('ses-q');
+
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'session.status',
+    properties: {
+      sessionID: 'ses-q',
+      status: { type: 'busy' },
+    },
+  }), 1, {
+    splitByLimit,
+    maxLen: 4000,
+    runId: 'run-q',
+    minMessageTimeMs: 0,
+    isFinal: false,
+    repoName: 'repo-q',
+    queueLength: 2,
+  });
+
+  assert.match(state.snapshot.messages[0], /🔜 2/);
 });

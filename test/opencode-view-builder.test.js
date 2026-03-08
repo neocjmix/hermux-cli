@@ -66,10 +66,32 @@ test('opencode view builder emits status pane first and assistant text after', (
   const view = buildRunViewFromRenderState(state, splitByLimit, 4000, { runId: 'run-123', repoName: 'my-repo' });
   assert.equal(view.length >= 2, true);
   // Normal mode format: emoji-based compact status
-  assert.match(view[0], /✅\s+my-repo/);
+  assert.match(view[0], /📂\s+my-repo/);
   assert.match(view[0], /💬\s*`ses-a`/);
   assert.match(view[0], /🔴.*busy/);
   assert.equal(view[1], 'hello');
+});
+
+test('opencode view builder shows queued prompt count in status pane when queue is non-empty', () => {
+  let state = createRenderState('ses-q');
+
+  state = applyEvent(state, {
+    type: 'session.status',
+    properties: { sessionID: 'ses-q', status: { type: 'busy' } },
+  }, 1);
+
+  const normalView = buildRunViewFromRenderState(state, splitByLimit, 4000, {
+    repoName: 'my-repo',
+    queueLength: 3,
+  });
+  assert.match(normalView[0], /🔜 3/);
+
+  const verboseView = buildRunViewFromRenderState(state, splitByLimit, 4000, {
+    runId: 'run-q',
+    viewMode: 'verbose',
+    queueLength: 3,
+  });
+  assert.match(verboseView[0], /🔜\s*`3`/);
 });
 
 test('opencode view builder includes all assistant messages in order', () => {
