@@ -49,11 +49,10 @@ function formatStatusPaneNormal(renderState, _maxLen, options) {
 
   const statusEmoji = status === 'busy' ? '🔴' : status === 'idle' ? '🟢' : '⚪';
   const lines = [
-    `📂 ${repoName}`,
+    `📂 ${repoName} ${statusEmoji} ${status}`,
+    `👣${stepCount} 🛠️${toolCount}${queueLength > 0 ? ` 🔜 ${queueLength}` : ''}`,
     `💬 ${formatInlineCode(sessionId || '-')}`,
-    `${statusEmoji} ${status} 👣${stepCount} 🛠️${toolCount}`,
   ];
-  if (queueLength > 0) lines.push(`🔜 ${queueLength}`);
   if (latestReasoningText) lines.push(`🤔 ${clamp(latestReasoningText, 120)}`);
 
   return lines.join('\n');
