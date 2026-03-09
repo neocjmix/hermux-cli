@@ -66,9 +66,10 @@ test('opencode view builder emits status pane first and assistant text after', (
   const view = buildRunViewFromRenderState(state, splitByLimit, 4000, { runId: 'run-123', repoName: 'my-repo' });
   assert.equal(view.length >= 2, true);
   // Normal mode format: emoji-based compact status
-  assert.match(view[0], /📂\s+my-repo/);
-  assert.match(view[0], /💬\s*`ses-a`/);
-  assert.match(view[0], /🔴.*busy/);
+  const statusLines = String(view[0]).split('\n');
+  assert.match(statusLines[0], /📂\s+my-repo\s+🔴\s+busy/);
+  assert.match(statusLines[1], /👣0\s+🛠️0/);
+  assert.match(statusLines[2], /💬\s*`ses-a`/);
   assert.equal(view[1], 'hello');
 });
 
@@ -84,7 +85,10 @@ test('opencode view builder shows queued prompt count in status pane when queue 
     repoName: 'my-repo',
     queueLength: 3,
   });
-  assert.match(normalView[0], /🔜 3/);
+  const normalLines = String(normalView[0]).split('\n');
+  assert.match(normalLines[0], /📂\s+my-repo\s+🔴\s+busy/);
+  assert.match(normalLines[1], /👣0\s+🛠️0\s+🔜 3/);
+  assert.match(normalLines[2], /💬\s*`ses-q`/);
 
   const verboseView = buildRunViewFromRenderState(state, splitByLimit, 4000, {
     runId: 'run-q',
