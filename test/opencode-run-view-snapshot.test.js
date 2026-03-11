@@ -64,9 +64,8 @@ test('run view snapshot materializer converts raw payload to provider-agnostic s
   assert.equal(Array.isArray(state.snapshot.messages), true);
   // Normal mode format: emoji-based compact status
   const statusLines = String(state.snapshot.messages[0]).split('\n');
-  assert.match(statusLines[0], /📂\s+repo\s+🟢\s+idle/);
-  assert.match(statusLines[1], /👣0\s+🛠️0/);
-  assert.match(statusLines[2], /💬\s*`ses-a`/);
+  assert.match(statusLines[0], /📂\s+repo\s+🟢\s+idle\s+👣\s+0\s+🛠️\s+0/);
+  assert.equal(statusLines[1], '`ses-a`');
   assert.equal(state.snapshot.messages[1], 'hello snapshot');
   assert.equal(state.snapshot.isFinal, false);
 });
@@ -152,7 +151,6 @@ test('run view snapshot materializer includes queued prompt count in status pane
   });
 
   const queueLines = String(state.snapshot.messages[0]).split('\n');
-  assert.match(queueLines[0], /📂\s+repo-q\s+🔴\s+busy/);
-  assert.match(queueLines[1], /👣0\s+🛠️0\s+🔜 2/);
-  assert.match(queueLines[2], /💬\s*`ses-q`/);
+  assert.match(queueLines[0], /📂\s+repo-q\s+🔴\s+busy\s+👣\s+0\s+🛠️\s+0\s+🔜 2/);
+  assert.equal(queueLines[1], '`ses-q`');
 });

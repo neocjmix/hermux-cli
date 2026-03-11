@@ -67,9 +67,8 @@ test('opencode view builder emits status pane first and assistant text after', (
   assert.equal(view.length >= 2, true);
   // Normal mode format: emoji-based compact status
   const statusLines = String(view[0]).split('\n');
-  assert.match(statusLines[0], /📂\s+my-repo\s+🔴\s+busy/);
-  assert.match(statusLines[1], /👣0\s+🛠️0/);
-  assert.match(statusLines[2], /💬\s*`ses-a`/);
+  assert.match(statusLines[0], /📂\s+my-repo\s+🔴\s+busy\s+👣\s+0\s+🛠️\s+0/);
+  assert.equal(statusLines[1], '`ses-a`');
   assert.equal(view[1], 'hello');
 });
 
@@ -86,9 +85,8 @@ test('opencode view builder shows queued prompt count in status pane when queue 
     queueLength: 3,
   });
   const normalLines = String(normalView[0]).split('\n');
-  assert.match(normalLines[0], /📂\s+my-repo\s+🔴\s+busy/);
-  assert.match(normalLines[1], /👣0\s+🛠️0\s+🔜 3/);
-  assert.match(normalLines[2], /💬\s*`ses-q`/);
+  assert.match(normalLines[0], /📂\s+my-repo\s+🔴\s+busy\s+👣\s+0\s+🛠️\s+0\s+🔜 3/);
+  assert.equal(normalLines[1], '`ses-q`');
 
   const verboseView = buildRunViewFromRenderState(state, splitByLimit, 4000, {
     runId: 'run-q',
@@ -202,7 +200,7 @@ test('opencode view builder verbose mode shows detailed status', () => {
   assert.match(view[0], /status:\s*`busy`/i);
 });
 
-test('opencode view builder includes latest reasoning in status pane', () => {
+test('opencode view builder does not include reasoning in status pane', () => {
   let state = createRenderState('ses-a');
 
   state = applyEvent(state, {
@@ -236,7 +234,7 @@ test('opencode view builder includes latest reasoning in status pane', () => {
   }, 3);
 
   const normalView = buildRunViewFromRenderState(state, splitByLimit, 4000, { repoName: 'my-repo' });
-  assert.match(normalView[0], /🤔\s+thinking through edge cases/);
+  assert.doesNotMatch(normalView[0], /🤔\s+thinking through edge cases/);
 
   const verboseView = buildRunViewFromRenderState(state, splitByLimit, 4000, {
     runId: 'run-123',
@@ -278,6 +276,6 @@ test('opencode view builder step and tool counters', () => {
   const view = buildRunViewFromRenderState(state, splitByLimit, 4000, { repoName: 'test-repo' });
   assert.equal(view.length >= 1, true);
   // Check counters are shown
-  assert.match(view[0], /👣1/); // 1 step
-  assert.match(view[0], /🛠️1/); // 1 tool
+  assert.match(view[0], /👣\s+1/); // 1 step
+  assert.match(view[0], /🛠️\s+1/); // 1 tool
 });

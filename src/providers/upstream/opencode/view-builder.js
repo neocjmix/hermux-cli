@@ -44,16 +44,13 @@ function formatStatusPaneNormal(renderState, _maxLen, options) {
   const repoName = toText(options && options.repoName).trim() || 'repo';
   const stepCount = Number(renderState.session && renderState.session.stepCount) || 0;
   const toolCount = Number(renderState.session && renderState.session.toolCount) || 0;
-  const latestReasoningText = toText(renderState.render && renderState.render.latestReasoningText).trim();
   const queueLength = Number(options && options.queueLength) || 0;
 
   const statusEmoji = status === 'busy' ? '🔴' : status === 'idle' ? '🟢' : '⚪';
   const lines = [
-    `📂 ${repoName} ${statusEmoji} ${status}`,
-    `👣${stepCount} 🛠️${toolCount}${queueLength > 0 ? ` 🔜 ${queueLength}` : ''}`,
-    `💬 ${formatInlineCode(sessionId || '-')}`,
+    `📂 ${repoName} ${statusEmoji} ${status} 👣 ${stepCount} 🛠️ ${toolCount}${queueLength > 0 ? ` 🔜 ${queueLength}` : ''}`,
+    `${formatInlineCode(sessionId || '-')}`,
   ];
-  if (latestReasoningText) lines.push(`🤔 ${clamp(latestReasoningText, 120)}`);
 
   return lines.join('\n');
 }
