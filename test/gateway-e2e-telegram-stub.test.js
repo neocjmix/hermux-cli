@@ -1710,6 +1710,92 @@ test('gateway e2e complete phase should disable interrupt and enable revert for 
   }
 });
 
+test('gateway e2e coalesces reasoning burst updates when Telegram edits are slow', async () => {
+  const cfgSnapshot = backupFile(config.CONFIG_PATH);
+  const token = 'test-token';
+  const telegram = createTelegramMockServer();
+  const started = await telegram.start(0);
+  const fixturePath = path.resolve(__dirname, 'fixtures', 'fake-opencode-sdk-reasoning-burst.js');
+
+  await httpJson({
+    method: 'POST',
+    url: `${started.controlUrl}/scenarios`,
+    body: {
+      method: 'editMessageText',
+      times: 20,
+      delay_ms: 250,
+    },
+  });
+
+  config.save({
+    global: { telegramBotToken: token },
+    repos: [{
+      name: 'demo',
+      enabled: true,
+      workdir: '/tmp/demo',
+      chatIds: ['100'],
+      opencodeCommand: 'opencode sdk',
+      logFile: './logs/demo.log',
+    }],
+  });
+
+  const runtime = startGateway({
+    HERMUX_TELEGRAM_BASE_API_URL: started.baseApiUrl,
+    HERMUX_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
+    HERMUX_OPENCODE_SDK_SHIM: fixturePath,
+  });
+
+  let stopped = false;
+  try {
+    await waitForBootstrapAndClearRequests(started.controlUrl);
+
+    await httpJson({
+      method: 'POST',
+      url: `${started.controlUrl}/updates`,
+      body: {
+        token,
+        update: {
+          update_id: 49,
+          message: {
+            message_id: 49,
+            date: Math.floor(Date.now() / 1000),
+            text: 'reasoning burst',
+            chat: { id: 100, type: 'private' },
+            from: { id: 200, is_bot: false, first_name: 'Tester' },
+          },
+        },
+      },
+    });
+
+    const requests = await waitFor(async () => {
+      const reqs = await httpJson({ method: 'GET', url: `${started.controlUrl}/requests` });
+      const finalMessage = reqs.body.requests.find((r) => String((r.params && r.params.text) || '').includes('final:reasoning burst'));
+      return finalMessage ? reqs.body.requests : null;
+    }, { timeoutMs: 10000, stepMs: 100 });
+
+    const reasoningRequests = requests.filter((r) => (
+      (r.method === 'sendMessage' || r.method === 'editMessageText')
+      && String((r.params && r.params.text) || '').includes('Crafting the burst answer')
+    ));
+    const finalRequests = requests.filter((r) => (
+      (r.method === 'sendMessage' || r.method === 'editMessageText')
+      && String((r.params && r.params.text) || '').includes('final:reasoning burst')
+    ));
+
+    assert.equal(finalRequests.length >= 1, true);
+    assert.equal(reasoningRequests.length <= 4, true);
+
+    await stopGateway(runtime, { controlUrl: started.controlUrl, testName: 'reasoning-burst-coalesce', status: 'ok' });
+    stopped = true;
+  } finally {
+    if (!stopped) {
+      await stopGateway(runtime, { controlUrl: started.controlUrl, testName: 'reasoning-burst-coalesce', status: 'teardown' });
+    }
+    await telegram.stop();
+    restoreFile(config.CONFIG_PATH, cfgSnapshot);
+  }
+});
+
 test('gateway e2e incident replay should deliver second run text despite post-complete late events', async () => {
   const cfgSnapshot = backupFile(config.CONFIG_PATH);
   const token = 'test-token';

@@ -3738,7 +3738,13 @@ async function startPromptRun(bot, repo, state, runItem) {
     }
     const processor = getSessionApplyProcessor(sid);
     if (!processor) return;
-    await processor(payload);
+    Promise.resolve(processor(payload)).catch((err) => {
+      auditRun('run.session_event.apply.error', {
+        sid,
+        reason: 'processor_enqueue_failed',
+        error: String(err && (err.stack || err.message || err) || ''),
+      });
+    });
   };
   const handleSessionEvent = createSessionEventHandler({
     sendRawTelegram,
