@@ -49,6 +49,7 @@ const {
   createCallbackQueryHandler,
   reconcileRunViewForTelegram,
 } = downstreamProvider;
+const { splitTelegramHtml } = require('./providers/downstream/telegram/html-chunker');
 
 const TG_MAX_LEN = 4000;
 const IMAGE_UPLOAD_DIR = '.hermux/uploads';
@@ -72,7 +73,7 @@ const REVERT_TARGET_LIMIT_PER_CHAT = 240;
 const OPENCODE_CONFIG_PATH = process.env.HERMUX_OPENCODE_CONFIG_PATH || path.join(process.env.HOME || '', '.config', 'opencode', 'opencode.json');
 const OMO_CONFIG_PATH = process.env.HERMUX_OMO_CONFIG_PATH || path.join(process.env.HOME || '', '.config', 'opencode', 'oh-my-opencode.json');
 const AUDIT_STRING_MAX = parseInt(process.env.HERMUX_AUDIT_STRING_MAX || '16000', 10);
-const APPLY_PAYLOAD_THROTTLE_MS = parseInt(process.env.HERMUX_APPLY_PAYLOAD_THROTTLE_MS || '10', 10);
+const APPLY_PAYLOAD_THROTTLE_MS = parseInt(process.env.HERMUX_APPLY_PAYLOAD_THROTTLE_MS || '500', 10);
 const TRACE_RUNVIEW_DIAGNOSTICS = true;
 const TRACE_SESSION_ID = String(process.env.HERMUX_TRACE_SESSION_ID || '').trim();
 const auditLogger = makeAuditLogger(RUNTIME_DIR);
@@ -1377,6 +1378,17 @@ async function safeSend(bot, chatId, text, opts, auditMeta) {
     const retryAfterSeconds = getTelegramRetryAfterSeconds(primaryErr);
     if (retryAfterSeconds > 0) {
       const waitMs = (retryAfterSeconds * 1000) + Math.floor(Math.random() * 250);
+      audit('telegram.send', {
+        ok: false,
+        stage: 'retry_after_pending',
+        chatId: String(chatId),
+        parseMode,
+        error: String(primaryErr && (primaryErr.code || primaryErr.message || primaryErr) || ''),
+        retryAfterSeconds,
+        waitMs,
+        textPreview: preview,
+        meta: auditMeta || null,
+      });
       await sleep(waitMs);
       try {
         const retryMessage = await bot.sendMessage(chatId, text, opts);
@@ -1435,7 +1447,7 @@ async function safeSend(bot, chatId, text, opts, auditMeta) {
 }
 
 async function sendHtml(bot, chatId, html, auditMeta) {
-  const chunks = splitByLimit(html, TG_MAX_LEN);
+  const chunks = splitTelegramHtml(html, TG_MAX_LEN);
   let lastMsg = null;
   for (let i = 0; i < chunks.length; i++) {
     const c = chunks[i];
@@ -1454,10 +1466,9 @@ async function sendMarkdownAsHtml(bot, chatId, markdown, auditMeta) {
 }
 
 async function editHtml(bot, chatId, messageId, html, auditMeta) {
-  const truncated = html.length > TG_MAX_LEN ? html.slice(0, TG_MAX_LEN - 3) + '...' : html;
-  const preview = summarizeAuditText(truncated);
+  const preview = summarizeAuditText(html);
   try {
-    await bot.editMessageText(truncated, { chat_id: chatId, message_id: messageId, parse_mode: 'HTML' });
+    await bot.editMessageText(html, { chat_id: chatId, message_id: messageId, parse_mode: 'HTML' });
     audit('telegram.edit', {
       ok: true,
       stage: 'primary',
@@ -1485,9 +1496,21 @@ async function editHtml(bot, chatId, messageId, html, auditMeta) {
     const retryAfterSeconds = getTelegramRetryAfterSeconds(primaryErr);
     if (retryAfterSeconds > 0) {
       const waitMs = (retryAfterSeconds * 1000) + Math.floor(Math.random() * 250);
+      audit('telegram.edit', {
+        ok: false,
+        stage: 'retry_after_pending',
+        chatId: String(chatId),
+        messageId,
+        parseMode: 'HTML',
+        error: String(primaryErr && (primaryErr.code || primaryErr.message || primaryErr) || ''),
+        retryAfterSeconds,
+        waitMs,
+        textPreview: preview,
+        meta: auditMeta || null,
+      });
       await sleep(waitMs);
       try {
-        await bot.editMessageText(truncated, { chat_id: chatId, message_id: messageId, parse_mode: 'HTML' });
+        await bot.editMessageText(html, { chat_id: chatId, message_id: messageId, parse_mode: 'HTML' });
         audit('telegram.edit', {
           ok: true,
           stage: 'retry_after',
@@ -1516,7 +1539,7 @@ async function editHtml(bot, chatId, messageId, html, auditMeta) {
         meta: auditMeta || null,
       });
       try {
-        await bot.editMessageText(truncated, { chat_id: chatId, message_id: messageId });
+        await bot.editMessageText(html, { chat_id: chatId, message_id: messageId });
         audit('telegram.edit', {
           ok: true,
           stage: 'fallback_plain',
@@ -1544,10 +1567,9 @@ async function editHtml(bot, chatId, messageId, html, auditMeta) {
 }
 
 async function editPlain(bot, chatId, messageId, text, auditMeta) {
-  const truncated = text.length > TG_MAX_LEN ? text.slice(0, TG_MAX_LEN - 3) + '...' : text;
-  const preview = summarizeAuditText(truncated);
+  const preview = summarizeAuditText(text);
   try {
-    await bot.editMessageText(truncated, { chat_id: chatId, message_id: messageId });
+    await bot.editMessageText(text, { chat_id: chatId, message_id: messageId });
     audit('telegram.edit', {
       ok: true,
       stage: 'plain',
@@ -3297,7 +3319,7 @@ async function startPromptRun(bot, repo, state, runItem) {
       ? String(explicitText || '').trim()
       : String(outputSnapshot.canonicalFinal || outputSnapshot.finalSeen || outputSnapshot.finalText || outputSnapshot.finalCandidate || '').trim();
 
-    const chunks = candidate ? splitByLimit(md2html(candidate), TG_MAX_LEN) : [];
+    const chunks = candidate ? splitTelegramHtml(md2html(candidate), TG_MAX_LEN) : [];
     auditRun('run.ui.final_unit.plan', {
       force: !!force,
       candidateLength: candidate.length,
@@ -3448,6 +3470,7 @@ async function startPromptRun(bot, repo, state, runItem) {
       isFinalState,
       expectedRunId: targetRunId,
       currentRunId: view.runId,
+      runViewLockWaitMs: Number(options && options.runViewLockWaitMs ? options.runViewLockWaitMs : 0) || 0,
       currentTextCount: Array.isArray(view.texts) ? view.texts.length : 0,
       nextTextCount: safeNextTexts.length,
       nextPreview: safeNextTexts.slice(0, 2),
@@ -3461,6 +3484,7 @@ async function startPromptRun(bot, repo, state, runItem) {
         messageIds: currentViewMessageIds,
       },
       nextTexts: safeNextTexts,
+      maxLen: TG_MAX_LEN,
       isFinalState,
       sendText: safeSend,
       editText: editHtml,
@@ -3490,6 +3514,7 @@ async function startPromptRun(bot, repo, state, runItem) {
       isFinalState,
       expectedRunId: targetRunId,
       currentRunId: view.runId,
+      runViewLockWaitMs: Number(options && options.runViewLockWaitMs ? options.runViewLockWaitMs : 0) || 0,
       messageIdCount: nextMessageIds.length,
       textCount: nextStoredTexts.length,
       messageIds: nextMessageIds.slice(),
@@ -3540,8 +3565,10 @@ async function startPromptRun(bot, repo, state, runItem) {
   const reconcileRunView = async (nextTexts, options) => {
     const normalizedNextTexts = Array.isArray(nextTexts) ? nextTexts.slice() : [];
     const requestedFinalState = !!(options && options.isFinalState);
+    const lockRequestedAt = Date.now();
 
     return withRunViewDispatchLock(state, async () => {
+      const runViewLockWaitMs = Math.max(0, Date.now() - lockRequestedAt);
       const currentViewTexts = state.runView && Array.isArray(state.runView.texts) ? state.runView.texts : [];
 
       if (!requestedFinalState && areTextArraysEqual(currentViewTexts, normalizedNextTexts)) {
@@ -3560,7 +3587,11 @@ async function startPromptRun(bot, repo, state, runItem) {
       };
 
       runMetrics.downstreamApplyRequested += 1;
-      await applyRunViewSnapshot(normalizedNextTexts, { isFinalState: requestedFinalState, currentView });
+      await applyRunViewSnapshot(normalizedNextTexts, {
+        isFinalState: requestedFinalState,
+        currentView,
+        runViewLockWaitMs,
+      });
     });
   };
 
@@ -3606,11 +3637,25 @@ async function startPromptRun(bot, repo, state, runItem) {
         if (!(state.sessionProjectedTexts instanceof Map)) {
           state.sessionProjectedTexts = new Map();
         }
-        const payloads = Array.isArray(payloadBatch) ? payloadBatch : [payloadBatch];
+        const batchEntries = Array.isArray(payloadBatch) ? payloadBatch : [payloadBatch];
+        const oldestPendingEnqueuedAt = batchEntries.reduce((min, entry) => {
+          const candidate = Number(entry && entry.enqueuedAt ? entry.enqueuedAt : 0) || 0;
+          if (candidate <= 0) return min;
+          if (min <= 0) return candidate;
+          return Math.min(min, candidate);
+        }, 0);
+        const oldestPendingAgeMs = oldestPendingEnqueuedAt > 0
+          ? Math.max(0, Date.now() - oldestPendingEnqueuedAt)
+          : 0;
+        const payloads = batchEntries.map((entry) => (entry && Object.prototype.hasOwnProperty.call(entry, 'payload')
+          ? entry.payload
+          : entry));
         let snapshotState = state.sessionRenderStates.get(key) || createRunViewSnapshotState(key);
         auditRun('run.session_event.apply.batch.begin', {
           sid: key,
           batchSize: payloads.length,
+          oldestPendingAgeMs,
+          throttleIntervalMs: APPLY_PAYLOAD_THROTTLE_MS,
         });
         for (const payload of payloads) {
           renderSeq += 1;
@@ -3738,7 +3783,7 @@ async function startPromptRun(bot, repo, state, runItem) {
     }
     const processor = getSessionApplyProcessor(sid);
     if (!processor) return;
-    Promise.resolve(processor(payload)).catch((err) => {
+    Promise.resolve(processor({ payload, enqueuedAt: Date.now() })).catch((err) => {
       auditRun('run.session_event.apply.error', {
         sid,
         reason: 'processor_enqueue_failed',
