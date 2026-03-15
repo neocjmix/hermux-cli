@@ -1,11 +1,5 @@
 'use strict';
 
-function clamp(text, maxLen) {
-  const value = String(text == null ? '' : text);
-  if (value.length <= maxLen) return value;
-  return `${value.slice(0, Math.max(0, maxLen - 3))}...`;
-}
-
 function toText(value) {
   return String(value == null ? '' : value);
 }
@@ -34,7 +28,7 @@ function formatStatusPaneVerbose(renderState, _maxLen, options) {
   ];
   if (queueLength > 0) lines.push(`🔜 ${formatInlineCode(String(queueLength))}`);
   if (latestAssistantMessageId) lines.push(`assistant_message: ${formatInlineCode(latestAssistantMessageId)}`);
-  if (latestReasoningText) lines.push(`reasoning: ${formatInlineCode(clamp(latestReasoningText, 120))}`);
+  if (latestReasoningText) lines.push(`reasoning: ${formatInlineCode(latestReasoningText)}`);
   return lines.join('\n');
 }
 
@@ -108,12 +102,10 @@ function collectAssistantMessages(renderState, options) {
   return out;
 }
 
-function buildRunViewFromRenderState(renderState, splitByLimit, maxLen, options) {
+function buildRunViewFromRenderState(renderState, options) {
   if (!renderState || typeof renderState !== 'object') return [];
-  if (typeof splitByLimit !== 'function') return [];
-  const safeMaxLen = Number(maxLen || 0) > 0 ? Number(maxLen) : 4000;
   const out = [];
-  out.push(formatStatusPane(renderState, safeMaxLen, options));
+  out.push(formatStatusPane(renderState, 0, options));
 
   const messages = collectAssistantMessages(renderState, options);
   if (messages.length === 0) {
@@ -121,20 +113,14 @@ function buildRunViewFromRenderState(renderState, splitByLimit, maxLen, options)
     if (!latestOnly) return out;
     const text = toText(latestOnly.renderText).trim();
     if (!text) return out;
-    const chunks = splitByLimit(text, safeMaxLen);
-    for (let i = 0; i < chunks.length; i++) {
-      out.push(clamp(chunks[i], safeMaxLen));
-    }
+    out.push(text);
     return out;
   }
 
   for (let m = 0; m < messages.length; m += 1) {
     const text = toText(messages[m].renderText).trim();
     if (!text) continue;
-    const chunks = splitByLimit(text, safeMaxLen);
-    for (let i = 0; i < chunks.length; i++) {
-      out.push(clamp(chunks[i], safeMaxLen));
-    }
+    out.push(text);
   }
 
   return out;

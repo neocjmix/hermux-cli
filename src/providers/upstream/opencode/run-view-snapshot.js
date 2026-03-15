@@ -31,8 +31,6 @@ function applyPayloadToRunViewSnapshot(state, payload, renderSeq, options) {
 
   const nextRenderState = applyPayload(currentRenderState, payload, renderSeq);
   const safeOptions = options && typeof options === 'object' ? options : {};
-  const splitByLimit = typeof safeOptions.splitByLimit === 'function' ? safeOptions.splitByLimit : ((text) => [String(text || '')]);
-  const maxLen = Number(safeOptions.maxLen || 0) > 0 ? Number(safeOptions.maxLen) : 4000;
   const runId = toText(safeOptions.runId).trim();
   const minMessageTimeMs = Number(safeOptions.minMessageTimeMs || 0) || 0;
   const isFinal = !!safeOptions.isFinal;
@@ -40,7 +38,7 @@ function applyPayloadToRunViewSnapshot(state, payload, renderSeq, options) {
   const repoName = toText(safeOptions.repoName).trim();
   const queueLength = Number(safeOptions.queueLength || 0) || 0;
 
-  const messages = buildRunViewFromRenderState(nextRenderState, splitByLimit, maxLen, {
+  const messages = buildRunViewFromRenderState(nextRenderState, {
     runId,
     minMessageTimeMs,
     viewMode,

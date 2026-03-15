@@ -8,17 +8,6 @@ const {
   applyPayloadToRunViewSnapshot,
 } = require('../src/providers/upstream/opencode/run-view-snapshot');
 
-function splitByLimit(text, maxLen) {
-  const out = [];
-  let rest = String(text || '');
-  while (rest.length > maxLen) {
-    out.push(rest.slice(0, maxLen));
-    rest = rest.slice(maxLen);
-  }
-  out.push(rest);
-  return out;
-}
-
 test('run view snapshot materializer converts raw payload to provider-agnostic snapshot', () => {
   let state = createRunViewSnapshotState('ses-a');
 
@@ -33,8 +22,6 @@ test('run view snapshot materializer converts raw payload to provider-agnostic s
       },
     },
   }), 1, {
-    splitByLimit,
-    maxLen: 4000,
     runId: 'run-1',
     minMessageTimeMs: 0,
     isFinal: false,
@@ -52,8 +39,6 @@ test('run view snapshot materializer converts raw payload to provider-agnostic s
       },
     },
   }), 2, {
-    splitByLimit,
-    maxLen: 4000,
     runId: 'run-1',
     minMessageTimeMs: 0,
     isFinal: false,
@@ -84,8 +69,6 @@ test('run view snapshot materializer keeps state and applies trailing payload as
       },
     },
   }), 1, {
-    splitByLimit,
-    maxLen: 4000,
     runId: 'run-2',
     minMessageTimeMs: 0,
     isFinal: false,
@@ -103,8 +86,6 @@ test('run view snapshot materializer keeps state and applies trailing payload as
       },
     },
   }), 2, {
-    splitByLimit,
-    maxLen: 4000,
     runId: 'run-2',
     minMessageTimeMs: 0,
     isFinal: false,
@@ -120,8 +101,6 @@ test('run view snapshot materializer keeps state and applies trailing payload as
       delta: ' +delta',
     },
   }), 3, {
-    splitByLimit,
-    maxLen: 4000,
     runId: 'run-2',
     minMessageTimeMs: 0,
     isFinal: true,
@@ -141,8 +120,6 @@ test('run view snapshot materializer includes queued prompt count in status pane
       status: { type: 'busy' },
     },
   }), 1, {
-    splitByLimit,
-    maxLen: 4000,
     runId: 'run-q',
     minMessageTimeMs: 0,
     isFinal: false,
@@ -153,4 +130,44 @@ test('run view snapshot materializer includes queued prompt count in status pane
   const queueLines = String(state.snapshot.messages[0]).split('\n');
   assert.match(queueLines[0], /📂\s+repo-q\s+🔴\s+busy\s+👣\s+0\s+🛠️\s+0\s+🔜 2/);
   assert.equal(queueLines[1], '`ses-q`');
+});
+
+test('run view snapshot materializer keeps logical blocks even when maxLen is smaller than content', () => {
+  let state = createRunViewSnapshotState('ses-long');
+
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'message.updated',
+    properties: {
+      info: {
+        id: 'msg-long',
+        sessionID: 'ses-long',
+        role: 'assistant',
+        time: { created: 10 },
+      },
+    },
+  }), 1, {
+    runId: 'run-long',
+    minMessageTimeMs: 0,
+    isFinal: false,
+  });
+
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'message.part.updated',
+    properties: {
+      part: {
+        id: 'part-long',
+        sessionID: 'ses-long',
+        messageID: 'msg-long',
+        type: 'text',
+        text: 'abcdefghij',
+      },
+    },
+  }), 2, {
+    runId: 'run-long',
+    minMessageTimeMs: 0,
+    isFinal: false,
+  });
+
+  assert.equal(state.snapshot.messages.length, 2);
+  assert.equal(state.snapshot.messages[1], 'abcdefghij');
 });

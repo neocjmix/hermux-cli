@@ -6,17 +6,6 @@ const assert = require('node:assert/strict');
 const { createRenderState, applyEvent } = require('../src/providers/upstream/opencode/render-state');
 const { buildRunViewFromRenderState } = require('../src/providers/upstream/opencode/view-builder');
 
-function splitByLimit(text, maxLen) {
-  const out = [];
-  let rest = String(text || '');
-  while (rest.length > maxLen) {
-    out.push(rest.slice(0, maxLen));
-    rest = rest.slice(maxLen);
-  }
-  out.push(rest);
-  return out;
-}
-
 test('opencode view builder emits status pane first and assistant text after', () => {
   let state = createRenderState('ses-a');
 
@@ -63,7 +52,7 @@ test('opencode view builder emits status pane first and assistant text after', (
     },
   }, 4);
 
-  const view = buildRunViewFromRenderState(state, splitByLimit, 4000, { runId: 'run-123', repoName: 'my-repo' });
+  const view = buildRunViewFromRenderState(state, { runId: 'run-123', repoName: 'my-repo' });
   assert.equal(view.length >= 2, true);
   // Normal mode format: emoji-based compact status
   const statusLines = String(view[0]).split('\n');
@@ -80,7 +69,7 @@ test('opencode view builder shows queued prompt count in status pane when queue 
     properties: { sessionID: 'ses-q', status: { type: 'busy' } },
   }, 1);
 
-  const normalView = buildRunViewFromRenderState(state, splitByLimit, 4000, {
+  const normalView = buildRunViewFromRenderState(state, {
     repoName: 'my-repo',
     queueLength: 3,
   });
@@ -88,7 +77,7 @@ test('opencode view builder shows queued prompt count in status pane when queue 
   assert.match(normalLines[0], /📂\s+my-repo\s+🔴\s+busy\s+👣\s+0\s+🛠️\s+0\s+🔜 3/);
   assert.equal(normalLines[1], '`ses-q`');
 
-  const verboseView = buildRunViewFromRenderState(state, splitByLimit, 4000, {
+  const verboseView = buildRunViewFromRenderState(state, {
     runId: 'run-q',
     viewMode: 'verbose',
     queueLength: 3,
@@ -174,7 +163,7 @@ test('opencode view builder includes all assistant messages in order', () => {
     },
   }, 6);
 
-  const view = buildRunViewFromRenderState(state, splitByLimit, 4000);
+  const view = buildRunViewFromRenderState(state);
   assert.equal(view[1], 'old answer');
   assert.equal(view[2], 'latest answer');
   assert.equal(view.includes('user prompt'), false);
@@ -188,7 +177,7 @@ test('opencode view builder verbose mode shows detailed status', () => {
     properties: { sessionID: 'ses-a', status: { type: 'busy' } },
   }, 1);
 
-  const view = buildRunViewFromRenderState(state, splitByLimit, 4000, {
+  const view = buildRunViewFromRenderState(state, {
     runId: 'run-123',
     viewMode: 'verbose',
   });
@@ -233,14 +222,57 @@ test('opencode view builder does not include reasoning in status pane', () => {
     },
   }, 3);
 
-  const normalView = buildRunViewFromRenderState(state, splitByLimit, 4000, { repoName: 'my-repo' });
+  const normalView = buildRunViewFromRenderState(state, { repoName: 'my-repo' });
   assert.doesNotMatch(normalView[0], /🤔\s+thinking through edge cases/);
 
-  const verboseView = buildRunViewFromRenderState(state, splitByLimit, 4000, {
+  const verboseView = buildRunViewFromRenderState(state, {
     runId: 'run-123',
     viewMode: 'verbose',
   });
   assert.match(verboseView[0], /reasoning:\s*`thinking through edge cases`/i);
+});
+
+test('opencode view builder verbose mode does not truncate reasoning preview', () => {
+  let state = createRenderState('ses-a');
+  const longReasoning = 'long-reasoning-'.repeat(12);
+
+  state = applyEvent(state, {
+    type: 'session.status',
+    properties: { sessionID: 'ses-a', status: { type: 'busy' } },
+  }, 1);
+
+  state = applyEvent(state, {
+    type: 'message.updated',
+    properties: {
+      info: {
+        id: 'msg-a',
+        sessionID: 'ses-a',
+        role: 'assistant',
+        time: { created: 10 },
+      },
+    },
+  }, 2);
+
+  state = applyEvent(state, {
+    type: 'message.part.updated',
+    properties: {
+      part: {
+        id: 'prt-r-long',
+        sessionID: 'ses-a',
+        messageID: 'msg-a',
+        type: 'reasoning',
+        text: longReasoning,
+      },
+    },
+  }, 3);
+
+  const verboseView = buildRunViewFromRenderState(state, {
+    runId: 'run-123',
+    viewMode: 'verbose',
+  });
+
+  assert.match(verboseView[0], new RegExp(`reasoning:\\s*\`${longReasoning}\``));
+  assert.equal(verboseView[0].includes('...'), false);
 });
 
 test('opencode view builder step and tool counters', () => {
@@ -273,9 +305,42 @@ test('opencode view builder step and tool counters', () => {
     },
   }, 2);
 
-  const view = buildRunViewFromRenderState(state, splitByLimit, 4000, { repoName: 'test-repo' });
+  const view = buildRunViewFromRenderState(state, { repoName: 'test-repo' });
   assert.equal(view.length >= 1, true);
   // Check counters are shown
   assert.match(view[0], /👣\s+1/); // 1 step
   assert.match(view[0], /🛠️\s+1/); // 1 tool
+});
+
+test('opencode view builder keeps assistant content as logical blocks without upstream size chunking', () => {
+  let state = createRenderState('ses-long');
+
+  state = applyEvent(state, {
+    type: 'message.updated',
+    properties: {
+      info: {
+        id: 'msg-long',
+        sessionID: 'ses-long',
+        role: 'assistant',
+        time: { created: 10 },
+      },
+    },
+  }, 1);
+
+  state = applyEvent(state, {
+    type: 'message.part.updated',
+    properties: {
+      part: {
+        id: 'prt-long',
+        sessionID: 'ses-long',
+        messageID: 'msg-long',
+        type: 'text',
+        text: 'abcdefghij',
+      },
+    },
+  }, 2);
+
+  const view = buildRunViewFromRenderState(state, { repoName: 'my-repo' });
+  assert.equal(view.length, 2);
+  assert.equal(view[1], 'abcdefghij');
 });
