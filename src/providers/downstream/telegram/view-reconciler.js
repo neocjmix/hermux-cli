@@ -1,9 +1,19 @@
 'use strict';
 
 const { md2html } = require('../../../lib/md2html');
+const { splitTelegramHtml } = require('./html-chunker');
 
 function formatRunViewTextForTelegram(text) {
   return md2html(String(text == null ? '' : text));
+}
+
+function expandRunViewTextsToTelegramSlots(texts, maxLen) {
+  if (!Array.isArray(texts)) return [];
+  return texts.flatMap((text) => {
+    const html = formatRunViewTextForTelegram(text);
+    if (!html) return [];
+    return splitTelegramHtml(html, maxLen);
+  });
 }
 
 function buildRunViewReconcileCommands(currentTexts, currentMessageIds, nextTexts, isFinalState) {
@@ -47,6 +57,7 @@ async function reconcileRunViewForTelegram(params) {
     runAuditMeta,
     currentView,
     nextTexts,
+    maxLen,
     isFinalState,
     sendText,
     editText,
@@ -56,9 +67,7 @@ async function reconcileRunViewForTelegram(params) {
 
   const currentTexts = Array.isArray(currentView && currentView.texts) ? currentView.texts : [];
   const messageIds = Array.isArray(currentView && currentView.messageIds) ? currentView.messageIds.slice() : [];
-  const targetTexts = Array.isArray(nextTexts)
-    ? nextTexts.map((text) => formatRunViewTextForTelegram(text))
-    : [];
+  const targetTexts = expandRunViewTextsToTelegramSlots(nextTexts, maxLen);
   const commands = buildRunViewReconcileCommands(currentTexts, messageIds, targetTexts, isFinalState);
   const stats = {
     commandCount: commands.length,
@@ -132,5 +141,6 @@ module.exports = {
   reconcileRunViewForTelegram,
   _internal: {
     buildRunViewReconcileCommands,
+    expandRunViewTextsToTelegramSlots,
   },
 };

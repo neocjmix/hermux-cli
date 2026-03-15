@@ -115,3 +115,100 @@ test('telegram view reconciler invokes onMessagePersist for edit and send', asyn
     isFinalState: false,
   });
 });
+
+test('telegram view reconciler splits formatted HTML on visible boundaries and keeps tags balanced', async () => {
+  const calls = [];
+
+  const next = await reconcileRunViewForTelegram({
+    bot: {},
+    chatId: '103',
+    runAuditMeta: { runId: 'r4' },
+    currentView: {
+      texts: [],
+      messageIds: [],
+    },
+    nextTexts: ['**bold**'],
+    isFinalState: false,
+    maxLen: 2,
+    sendText: async (_bot, _chatId, text, opts, meta) => {
+      calls.push({ op: 'send', text, opts, meta });
+      return { message_id: calls.length + 50 };
+    },
+    editText: async () => {},
+    deleteMessage: async () => true,
+  });
+
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].opts && calls[0].opts.parse_mode, 'HTML');
+  assert.deepEqual(calls.map((call) => call.text), ['<b>bo</b>', '<b>ld</b>']);
+  assert.deepEqual(next.texts, ['<b>bo</b>', '<b>ld</b>']);
+});
+
+test('telegram view reconciler keeps HTML entities intact when splitting after formatting', async () => {
+  const calls = [];
+
+  const next = await reconcileRunViewForTelegram({
+    bot: {},
+    chatId: '104',
+    runAuditMeta: { runId: 'r5' },
+    currentView: {
+      texts: [],
+      messageIds: [],
+    },
+    nextTexts: ['a & b'],
+    isFinalState: false,
+    maxLen: 3,
+    sendText: async (_bot, _chatId, text, opts, meta) => {
+      calls.push({ op: 'send', text, opts, meta });
+      return { message_id: calls.length + 60 };
+    },
+    editText: async () => {},
+    deleteMessage: async () => true,
+  });
+
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls.map((call) => call.text), ['a &amp;', ' b']);
+  assert.deepEqual(next.texts, ['a &amp;', ' b']);
+});
+
+test('telegram view reconciler expands one logical block into multiple slots without truncating edits', async () => {
+  const calls = [];
+
+  const next = await reconcileRunViewForTelegram({
+    bot: {},
+    chatId: '105',
+    runAuditMeta: { runId: 'r6' },
+    currentView: {
+      texts: ['<b>xy</b>'],
+      messageIds: [71],
+    },
+    nextTexts: ['**abcd**'],
+    isFinalState: false,
+    maxLen: 2,
+    sendText: async (_bot, _chatId, text, opts, meta) => {
+      calls.push({ op: 'send', text, opts, meta });
+      return { message_id: 72 };
+    },
+    editText: async (_bot, _chatId, messageId, text, meta) => {
+      calls.push({ op: 'edit', messageId, text, meta });
+    },
+    deleteMessage: async () => true,
+  });
+
+  assert.deepEqual(calls, [
+    {
+      op: 'edit',
+      messageId: 71,
+      text: '<b>ab</b>',
+      meta: { runId: 'r6', channel: 'run_view_edit', index: 0, isFinalState: false },
+    },
+    {
+      op: 'send',
+      text: '<b>cd</b>',
+      opts: { parse_mode: 'HTML' },
+      meta: { runId: 'r6', channel: 'run_view_send', index: 1, isFinalState: false },
+    },
+  ]);
+  assert.deepEqual(next.messageIds, [71, 72]);
+  assert.deepEqual(next.texts, ['<b>ab</b>', '<b>cd</b>']);
+});
