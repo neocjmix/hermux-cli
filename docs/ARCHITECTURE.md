@@ -54,8 +54,8 @@ Event ingress is unified at Telegram update level and then split into command/ca
 
 The canonical upstream->downstream rendering boundary is `RunViewSnapshot`.
 
-- Upstream responsibility: parse provider-specific raw events and materialize snapshot state.
-- Downstream responsibility: consume snapshot text blocks and apply channel diff/send/edit/delete.
+- Upstream responsibility: parse provider-specific raw events and materialize snapshot state as logical render blocks.
+- Downstream responsibility: consume snapshot text blocks, apply channel formatting, then perform channel-safe diff/send/edit/delete and any required post-format chunking.
 
 Current module mapping:
 
@@ -67,7 +67,8 @@ Current module mapping:
 Boundary rule:
 
 - Downstream modules MUST NOT depend on OpenCode raw event fields (`message.part.delta`, `session.status`, etc.).
-- Gateway orchestrates snapshot flow and MUST pass provider-agnostic snapshot messages into downstream reconcile.
+- Gateway orchestrates snapshot flow and MUST pass provider-agnostic logical snapshot messages into downstream reconcile.
+- Transport-size chunking is a downstream concern and MUST NOT leak back into upstream snapshot construction.
 
 ### Event Concurrency Contract
 

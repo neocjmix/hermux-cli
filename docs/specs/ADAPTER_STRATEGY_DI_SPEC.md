@@ -90,7 +90,7 @@ Required shape:
 
 - `runId: string`
 - `sessionId: string`
-- `messages: string[]` (ordered raw text blocks ready for channel diff/send)
+- `messages: string[]` (ordered logical text blocks ready for downstream formatting and diff/send)
 - `isFinal: boolean`
 
 Optional metadata:
@@ -104,6 +104,10 @@ Rules:
 - Downstream adapters MUST NOT parse provider-specific raw event schemas (for example OpenCode `message.part.delta`, `session.status`, etc.).
 - Provider/event-specific parsing MUST remain in upstream adapter/normalizer layer.
 - Last-snapshot application MUST be safe because snapshot is already materialized view state.
+- Upstream snapshot builders MUST NOT split or truncate `messages` for Telegram or any other downstream transport limit.
+- Downstream adapters MAY apply presentation formatting per channel, but any transport-size chunking MUST occur after that formatting step.
+- For Telegram delivery, HTML formatting MUST happen before max-size chunking for visible run-view/final-answer delivery.
+- Visible content MUST be preserved by chunk splitting rather than silent truncation when a downstream transport limit is exceeded.
 
 ### 3.3 SessionRoutingPolicy
 
