@@ -59,6 +59,8 @@ function createRenderState(sessionId) {
     },
     render: {
       latestAssistantMessageId: '',
+      latestAssistantPartId: '',
+      latestAssistantTailMaterializeHint: null,
       latestAssistantText: '',
       latestReasoningText: '',
       busy: false,
@@ -114,6 +116,9 @@ function ensurePart(message, partId, sessionId) {
       metadata: null,
       sessionID: sessionId || message.sessionID,
       messageID: message.id,
+      sawTextDelta: false,
+      sawNonEmptyTextUpdate: false,
+      textUpdatedAfterDelta: false,
     };
   }
   return message.parts.byId[pid];
@@ -185,8 +190,28 @@ function updateGlobalRender(state) {
   }
 
   state.render.latestAssistantMessageId = best ? best.id : '';
+  state.render.latestAssistantPartId = '';
+  state.render.latestAssistantTailMaterializeHint = null;
   state.render.latestAssistantText = best ? toText(best.renderText) : '';
   state.render.latestReasoningText = best ? toText(best.renderReasoningText) : '';
+  if (best) {
+    for (let i = best.parts.order.length - 1; i >= 0; i -= 1) {
+      const pid = best.parts.order[i];
+      const part = best.parts.byId[pid];
+      if (!part || part.type !== 'text' || !toText(part.text).trim()) continue;
+      state.render.latestAssistantPartId = toText(part.id).trim();
+      if (part.sawNonEmptyTextUpdate) {
+        state.render.latestAssistantTailMaterializeHint = {
+          messageId: toText(best.id).trim(),
+          partId: toText(part.id).trim(),
+          reason: part.textUpdatedAfterDelta
+            ? 'text_part_updated_after_delta'
+            : 'text_part_non_empty_updated',
+        };
+      }
+      break;
+    }
+  }
   state.render.busy = state.session.status === 'busy';
 }
 
@@ -241,11 +266,23 @@ function mergePartUpdated(state, event, seq) {
   if (!part) return;
   const message = ensureMessage(state, part.messageID);
   if (!message) return;
+  if (!String(message.role || '').trim()) {
+    message.role = 'assistant';
+  }
   const entry = ensurePart(message, part.id, part.sessionID);
   if (!entry) return;
 
   entry.type = toText(part.type || entry.type);
-  if (Object.prototype.hasOwnProperty.call(part, 'text')) entry.text = toText(part.text);
+  if (Object.prototype.hasOwnProperty.call(part, 'text')) {
+    entry.text = toText(part.text);
+    if (entry.type === 'text') {
+      const hasNonEmptyText = entry.text.trim().length > 0;
+      entry.sawNonEmptyTextUpdate = entry.sawNonEmptyTextUpdate || hasNonEmptyText;
+      if (hasNonEmptyText && entry.sawTextDelta) {
+        entry.textUpdatedAfterDelta = true;
+      }
+    }
+  }
   if (Object.prototype.hasOwnProperty.call(part, 'reason')) entry.reason = part.reason;
   if (Object.prototype.hasOwnProperty.call(part, 'cost')) entry.cost = part.cost;
   if (part.tokens && typeof part.tokens === 'object') entry.tokens = deepMerge(entry.tokens, part.tokens);
@@ -287,6 +324,9 @@ function mergePartDelta(state, event, seq) {
   const field = toText(props.field).trim();
   const message = ensureMessage(state, props.messageID);
   if (!message) return;
+  if (!String(message.role || '').trim()) {
+    message.role = 'assistant';
+  }
   const entry = ensurePart(message, props.partID, props.sessionID);
   if (!entry) return;
 
@@ -299,6 +339,7 @@ function mergePartDelta(state, event, seq) {
   if (field === 'text') {
     entry.type = entry.type || 'text';
     entry.text = `${toText(entry.text)}${toText(props.delta)}`;
+    entry.sawTextDelta = true;
     const textSeq = Number(seq || 0) || 0;
     if (textSeq > 0) {
       message.lastTextSeq = Math.max(Number(message.lastTextSeq || 0), textSeq);

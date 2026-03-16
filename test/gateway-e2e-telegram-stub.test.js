@@ -277,7 +277,7 @@ test('gateway e2e uses telegram stub for mapped /start command flow', async () =
     const sendReq = await waitFor(async () => {
       const reqs = await httpJson({ method: 'GET', url: `${started.controlUrl}/requests?method=sendMessage` });
       return reqs.body.requests.find((r) => String(r.params.chat_id || '') === '100');
-    });
+    }, { timeoutMs: 15000, stepMs: 100 });
 
     assert.match(String(sendReq.params.text || ''), /opencode gateway \[demo\]/);
     assert.match(String(sendReq.params.text || ''), /Send any prompt to run opencode/);
@@ -1297,10 +1297,10 @@ test('gateway e2e should render second run assistant output even when it arrives
         return content.includes('second-late-answer');
       });
       const hasRunViewSecond = rows.some((r) => (
-        (r.kind === 'telegram.send' || r.kind === 'telegram.edit')
+        (r.kind === 'telegram.send' || r.kind === 'telegram.edit' || r.kind === 'telegram.draft')
         && r.payload
         && r.payload.meta
-        && (r.payload.meta.channel === 'run_view_send' || r.payload.meta.channel === 'run_view_edit')
+        && (r.payload.meta.channel === 'run_view_send' || r.payload.meta.channel === 'run_view_edit' || r.payload.meta.channel === 'run_view_draft')
         && String(r.payload.textPreview || '').includes('second-late-answer')
       ));
       return completed.length >= 2 && hasLateSecond && hasRunViewSecond ? rows : null;
@@ -1336,12 +1336,12 @@ test('gateway e2e should render second run assistant output even when it arrives
 
     const secondRunRenderedAfterComplete = records.some((r, idx) => {
       if (idx <= secondRunCompleteIndex) return false;
-      if (r.kind !== 'telegram.send' && r.kind !== 'telegram.edit') return false;
+      if (r.kind !== 'telegram.send' && r.kind !== 'telegram.edit' && r.kind !== 'telegram.draft') return false;
       const meta = (r && r.payload && r.payload.meta) || {};
       const metaRunId = String(meta.runId || '');
       const channel = String(meta.channel || '');
       if (metaRunId !== secondRunId) return false;
-      if (channel !== 'run_view_send' && channel !== 'run_view_edit') return false;
+      if (channel !== 'run_view_send' && channel !== 'run_view_edit' && channel !== 'run_view_draft') return false;
       const preview = String((r.payload && r.payload.textPreview) || '');
       return preview.includes('second-late-answer');
     });
@@ -1355,10 +1355,10 @@ test('gateway e2e should render second run assistant output even when it arrives
 
     const secondRunText = secondRunRows
       .filter((r) => (
-        (r.kind === 'telegram.send' || r.kind === 'telegram.edit')
+        (r.kind === 'telegram.send' || r.kind === 'telegram.edit' || r.kind === 'telegram.draft')
         && r.payload
         && r.payload.meta
-        && (r.payload.meta.channel === 'run_view_send' || r.payload.meta.channel === 'run_view_edit')
+        && (r.payload.meta.channel === 'run_view_send' || r.payload.meta.channel === 'run_view_edit' || r.payload.meta.channel === 'run_view_draft')
       ))
       .map((r) => String(r.payload && r.payload.textPreview || ''))
       .join('\n');
@@ -1430,10 +1430,10 @@ test('gateway e2e final run should keep rendering late session events after comp
       const rows = readJsonlRecords(auditPath);
       const hasComplete = rows.some((r) => r.kind === 'run.complete');
       const hasLateRender = rows.some((r) => (
-        (r.kind === 'telegram.send' || r.kind === 'telegram.edit')
+        (r.kind === 'telegram.send' || r.kind === 'telegram.edit' || r.kind === 'telegram.draft')
         && r.payload
         && r.payload.meta
-        && (r.payload.meta.channel === 'run_view_send' || r.payload.meta.channel === 'run_view_edit')
+        && (r.payload.meta.channel === 'run_view_send' || r.payload.meta.channel === 'run_view_edit' || r.payload.meta.channel === 'run_view_draft')
         && String(r.payload.textPreview || '').includes('final-run-late-answer')
       ));
       return hasComplete && hasLateRender ? rows : null;
@@ -1452,12 +1452,20 @@ test('gateway e2e final run should keep rendering late session events after comp
     assert.equal(completeIndex >= 0, true);
     const lateRenderAfterComplete = runRows.some((r, idx) => {
       if (idx <= completeIndex) return false;
-      if (r.kind !== 'telegram.send' && r.kind !== 'telegram.edit') return false;
+      if (r.kind !== 'telegram.send' && r.kind !== 'telegram.edit' && r.kind !== 'telegram.draft') return false;
       const meta = (r.payload && r.payload.meta) || {};
-      if (meta.channel !== 'run_view_send' && meta.channel !== 'run_view_edit') return false;
+      if (meta.channel !== 'run_view_send' && meta.channel !== 'run_view_edit' && meta.channel !== 'run_view_draft') return false;
       return String(r.payload && r.payload.textPreview || '').includes('final-run-late-answer');
     });
     assert.equal(lateRenderAfterComplete, true);
+
+    assert.ok(runRows.some((r) => (
+      r.kind === 'run.view.preview.policy'
+      && r.payload
+      && r.payload.reason === 'active_run_preview'
+      && r.payload.previewDraftEnabled === true
+      && r.payload.materializeStaleDraft === false
+    )));
 
     await stopGateway(runtime, { controlUrl: started.controlUrl, testName: 'final-run-complete-phase', status: 'ok' });
     stopped = true;
@@ -1624,17 +1632,24 @@ test('gateway e2e complete phase should disable interrupt and enable revert for 
       },
     });
 
-    const outputReq = await waitFor(async () => {
+    await waitFor(async () => {
       const reqs = await httpJson({ method: 'GET', url: `${started.controlUrl}/requests` });
-      return reqs.body.requests.find((r) => {
-        if (r.method !== 'sendMessage' && r.method !== 'editMessageText') return false;
-        return String((r.params && r.params.text) || '').includes('final-run-late-answer');
-      }) || null;
+      const hasLateRender = reqs.body.requests.some((r) => (
+        (r.method === 'sendMessage' || r.method === 'editMessageText' || r.method === 'sendMessageDraft')
+        && String((r.params && r.params.text) || '').includes('final-run-late-answer')
+      ));
+      return hasLateRender ? reqs.body.requests : null;
+    }, { timeoutMs: 10000, stepMs: 120 });
+
+    const statusReq = await waitFor(async () => {
+      const reqs = await httpJson({ method: 'GET', url: `${started.controlUrl}/requests?method=sendMessage` });
+      return reqs.body.requests[0] || null;
     }, { timeoutMs: 10000, stepMs: 120 });
 
     const repliedMessageId = Number(
-      (outputReq.response && outputReq.response.result && outputReq.response.result.message_id)
-      || (outputReq.response && outputReq.response.message_id)
+      (statusReq.response && statusReq.response.result && statusReq.response.result.message_id)
+      || (statusReq.response && statusReq.response.message_id)
+      || (statusReq.params && statusReq.params.message_id)
       || 0
     );
     assert.equal(Number.isInteger(repliedMessageId) && repliedMessageId > 0, true);
@@ -1774,11 +1789,11 @@ test('gateway e2e coalesces reasoning burst updates when Telegram edits are slow
     }, { timeoutMs: 10000, stepMs: 100 });
 
     const reasoningRequests = requests.filter((r) => (
-      (r.method === 'sendMessage' || r.method === 'editMessageText')
+      (r.method === 'sendMessage' || r.method === 'editMessageText' || r.method === 'sendMessageDraft')
       && String((r.params && r.params.text) || '').includes('Crafting the burst answer')
     ));
     const finalRequests = requests.filter((r) => (
-      (r.method === 'sendMessage' || r.method === 'editMessageText')
+      (r.method === 'sendMessage' || r.method === 'editMessageText' || r.method === 'sendMessageDraft')
       && String((r.params && r.params.text) || '').includes('final:reasoning burst')
     ));
 
@@ -1790,6 +1805,210 @@ test('gateway e2e coalesces reasoning burst updates when Telegram edits are slow
   } finally {
     if (!stopped) {
       await stopGateway(runtime, { controlUrl: started.controlUrl, testName: 'reasoning-burst-coalesce', status: 'teardown' });
+    }
+    await telegram.stop();
+    restoreFile(config.CONFIG_PATH, cfgSnapshot);
+  }
+});
+
+test('gateway e2e defers non-final run-view edits on Telegram retry_after and still delivers final output', async () => {
+  const cfgSnapshot = backupFile(config.CONFIG_PATH);
+  const token = 'test-token';
+  const telegram = createTelegramMockServer();
+  const started = await telegram.start(0);
+  const fixturePath = path.resolve(__dirname, 'fixtures', 'fake-opencode-sdk-reasoning-burst.js');
+
+  await httpJson({
+    method: 'POST',
+    url: `${started.controlUrl}/scenarios`,
+    body: {
+      method: 'editMessageText',
+      times: 2,
+      response: {
+        error_code: 429,
+        description: 'Too Many Requests: retry later',
+        parameters: { retry_after: 6 },
+      },
+    },
+  });
+
+  config.save({
+    global: { telegramBotToken: token },
+    repos: [{
+      name: 'demo',
+      enabled: true,
+      workdir: '/tmp/demo',
+      chatIds: ['100'],
+      opencodeCommand: 'opencode sdk',
+      logFile: './logs/demo.log',
+    }],
+  });
+
+  const runtime = startGateway({
+    HERMUX_TELEGRAM_BASE_API_URL: started.baseApiUrl,
+    HERMUX_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
+    HERMUX_OPENCODE_SDK_SHIM: fixturePath,
+  });
+
+  let stopped = false;
+  try {
+    await waitForBootstrapAndClearRequests(started.controlUrl);
+
+    await httpJson({
+      method: 'POST',
+      url: `${started.controlUrl}/updates`,
+      body: {
+        token,
+        update: {
+          update_id: 50,
+          message: {
+            message_id: 50,
+            date: Math.floor(Date.now() / 1000),
+            text: 'reasoning retry-after',
+            chat: { id: 100, type: 'private' },
+            from: { id: 200, is_bot: false, first_name: 'Tester' },
+          },
+        },
+      },
+    });
+
+    const auditPath = path.join(runtime.runtimeDir, 'audit-events.jsonl');
+    const records = await waitFor(() => {
+      const rows = readJsonlRecords(auditPath);
+      const hasDeferredEdit = rows.some((r) => {
+        if (r.kind !== 'telegram.edit') return false;
+        const payload = r.payload || {};
+        const meta = payload.meta || {};
+        return payload.stage === 'retry_after_deferred'
+          && meta.channel === 'run_view_edit'
+          && meta.isFinalState === false;
+      });
+      const hasFinalMessage = rows.some((r) => {
+        if (r.kind !== 'telegram.send' && r.kind !== 'telegram.edit') return false;
+        return String((r.payload && r.payload.textPreview) || '').includes('final:reasoning retry-after');
+      });
+      return hasDeferredEdit && hasFinalMessage ? rows : null;
+    }, { timeoutMs: 10000, stepMs: 100 });
+
+    const deferredEdits = records.filter((r) => {
+      if (r.kind !== 'telegram.edit') return false;
+      const payload = r.payload || {};
+      const meta = payload.meta || {};
+      return payload.stage === 'retry_after_deferred'
+        && meta.channel === 'run_view_edit'
+        && meta.isFinalState === false;
+    });
+    assert.equal(deferredEdits.length >= 1, true);
+
+    const finalRecords = records.filter((r) => (
+      (r.kind === 'telegram.send' || r.kind === 'telegram.edit')
+      && String((r.payload && r.payload.textPreview) || '').includes('final:reasoning retry-after')
+    ));
+    assert.equal(finalRecords.length >= 1, true);
+
+    await stopGateway(runtime, { controlUrl: started.controlUrl, testName: 'run-view-retry-after-deferred', status: 'ok' });
+    stopped = true;
+  } finally {
+    if (!stopped) {
+      await stopGateway(runtime, { controlUrl: started.controlUrl, testName: 'run-view-retry-after-deferred', status: 'teardown' });
+    }
+    await telegram.stop();
+    restoreFile(config.CONFIG_PATH, cfgSnapshot);
+  }
+});
+
+test('gateway e2e uses sendMessageDraft for non-final private-chat assistant tail preview', async () => {
+  const cfgSnapshot = backupFile(config.CONFIG_PATH);
+  const token = 'test-token';
+  const telegram = createTelegramMockServer();
+  const started = await telegram.start(0);
+  const fixturePath = path.resolve(__dirname, 'fixtures', 'fake-opencode-sdk-reasoning-burst.js');
+
+  config.save({
+    global: { telegramBotToken: token },
+    repos: [{
+      name: 'demo',
+      enabled: true,
+      workdir: '/tmp/demo',
+      chatIds: ['100'],
+      opencodeCommand: 'opencode sdk',
+      logFile: './logs/demo.log',
+    }],
+  });
+
+  const runtime = startGateway({
+    HERMUX_TELEGRAM_BASE_API_URL: started.baseApiUrl,
+    HERMUX_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
+    HERMUX_OPENCODE_SDK_SHIM: fixturePath,
+  });
+
+  let stopped = false;
+  try {
+    await waitForBootstrapAndClearRequests(started.controlUrl);
+
+    await httpJson({
+      method: 'POST',
+      url: `${started.controlUrl}/updates`,
+      body: {
+        token,
+        update: {
+          update_id: 53,
+          message: {
+            message_id: 53,
+            date: Math.floor(Date.now() / 1000),
+            text: 'draft-preview',
+            chat: { id: 100, type: 'private' },
+            from: { id: 200, is_bot: false, first_name: 'Tester' },
+          },
+        },
+      },
+    });
+
+    const requests = await waitFor(async () => {
+      const reqs = await httpJson({ method: 'GET', url: `${started.controlUrl}/requests` });
+      const hasDraft = reqs.body.requests.some((r) => r.method === 'sendMessageDraft');
+      const hasFinal = reqs.body.requests.some((r) => (
+        r.method === 'sendMessage' && String((r.params && r.params.text) || '').includes('final:draft-preview')
+      ));
+      return hasDraft && hasFinal ? reqs.body.requests : null;
+    }, { timeoutMs: 10000, stepMs: 100 });
+
+    const draftRequests = requests.filter((r) => r.method === 'sendMessageDraft');
+    assert.equal(draftRequests.length >= 1, true);
+    assert.equal(draftRequests.some((r) => String((r.params && r.params.text) || '').includes('final:draft-preview')), true);
+
+    const auditPath = path.join(runtime.runtimeDir, 'audit-events.jsonl');
+    const records = await waitFor(() => {
+      const rows = readJsonlRecords(auditPath);
+      const route = rows.find((r) => (
+        r.kind === 'telegram.preview.route'
+        && r.payload
+        && r.payload.transport === 'draft'
+        && r.payload.reason === 'draft_transport_available'
+        && r.payload.meta
+        && r.payload.meta.previewDecisionReason === 'active_run_preview'
+      ));
+      return route ? rows : null;
+    }, { timeoutMs: 10000, stepMs: 100 });
+    assert.ok(records.some((r) => (
+      r.kind === 'telegram.preview.route'
+      && r.payload
+      && r.payload.transport === 'draft'
+      && r.payload.reason === 'draft_transport_available'
+      && r.payload.meta
+      && r.payload.meta.previewDecisionReason === 'active_run_preview'
+    )));
+
+    const finalSends = requests.filter((r) => (
+      r.method === 'sendMessage' && String((r.params && r.params.text) || '').includes('final:draft-preview')
+    ));
+    assert.equal(finalSends.length >= 1, true);
+
+    await stopGateway(runtime, { controlUrl: started.controlUrl, testName: 'run-view-send-message-draft', status: 'ok' });
+    stopped = true;
+  } finally {
+    if (!stopped) {
+      await stopGateway(runtime, { controlUrl: started.controlUrl, testName: 'run-view-send-message-draft', status: 'teardown' });
     }
     await telegram.stop();
     restoreFile(config.CONFIG_PATH, cfgSnapshot);
@@ -2025,10 +2244,10 @@ test('gateway e2e should reproduce missing second response when assistant text l
         return content.includes('second-post-complete:pc-second');
       });
       const hasRunViewSecond = rows.some((r) => (
-        (r.kind === 'telegram.send' || r.kind === 'telegram.edit')
+        (r.kind === 'telegram.send' || r.kind === 'telegram.edit' || r.kind === 'telegram.draft')
         && r.payload
         && r.payload.meta
-        && (r.payload.meta.channel === 'run_view_send' || r.payload.meta.channel === 'run_view_edit')
+        && (r.payload.meta.channel === 'run_view_send' || r.payload.meta.channel === 'run_view_edit' || r.payload.meta.channel === 'run_view_draft')
         && String(r.payload.textPreview || '').includes('second-post-complete:pc-second')
       ));
       return completed.length >= 2 && hasPostCompleteTextEvent && hasRunViewSecond ? rows : null;
@@ -2079,6 +2298,145 @@ test('gateway e2e should reproduce missing second response when assistant text l
   } finally {
     if (!stopped) {
       await stopGateway(runtime, { controlUrl: started.controlUrl, testName: 'post-complete-late-text-repro', status: 'teardown' });
+    }
+    await telegram.stop();
+    restoreFile(config.CONFIG_PATH, cfgSnapshot);
+  }
+});
+
+test('gateway e2e materializes post-complete draft preview into final second response', async () => {
+  const cfgSnapshot = backupFile(config.CONFIG_PATH);
+  const token = 'test-token';
+  const telegram = createTelegramMockServer();
+  const started = await telegram.start(0);
+  const fixturePath = path.resolve(__dirname, 'fixtures', 'fake-opencode-sdk-two-runs-post-complete-late-text.js');
+
+  config.save({
+    global: { telegramBotToken: token },
+    repos: [{
+      name: 'demo',
+      enabled: true,
+      workdir: '/tmp/demo',
+      chatIds: ['100'],
+      opencodeCommand: 'opencode sdk',
+      logFile: './logs/demo.log',
+    }],
+  });
+
+  const runtime = startGateway({
+    HERMUX_TELEGRAM_BASE_API_URL: started.baseApiUrl,
+    HERMUX_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
+    HERMUX_OPENCODE_SDK_SHIM: fixturePath,
+  });
+
+  let stopped = false;
+  try {
+    await waitForBootstrapAndClearRequests(started.controlUrl);
+
+    await httpJson({
+      method: 'POST',
+      url: `${started.controlUrl}/updates`,
+      body: {
+        token,
+        update: {
+          update_id: 63,
+          message: {
+            message_id: 63,
+            date: Math.floor(Date.now() / 1000),
+            text: 'pc-first-materialize',
+            chat: { id: 100, type: 'private' },
+            from: { id: 200, is_bot: false, first_name: 'Tester' },
+          },
+        },
+      },
+    });
+
+    await httpJson({
+      method: 'POST',
+      url: `${started.controlUrl}/updates`,
+      body: {
+        token,
+        update: {
+          update_id: 64,
+          message: {
+            message_id: 64,
+            date: Math.floor(Date.now() / 1000),
+            text: 'pc-second-materialize',
+            chat: { id: 100, type: 'private' },
+            from: { id: 200, is_bot: false, first_name: 'Tester' },
+          },
+        },
+      },
+    });
+
+    const auditPath = path.join(runtime.runtimeDir, 'audit-events.jsonl');
+    const records = await waitFor(() => {
+      const rows = readJsonlRecords(auditPath);
+      const runStarts = rows.filter((r) => r.kind === 'run.start');
+      if (runStarts.length < 2) return null;
+      const secondRunId = String(runStarts[1] && runStarts[1].payload && runStarts[1].payload.runId || '');
+      if (!secondRunId) return null;
+      const secondRows = rows.filter((r) => {
+        const payloadRunId = r && r.payload && r.payload.runId ? String(r.payload.runId) : '';
+        const metaRunId = r && r.payload && r.payload.meta && r.payload.meta.runId ? String(r.payload.meta.runId) : '';
+        return payloadRunId === secondRunId || metaRunId === secondRunId;
+      });
+      const hasFinalSamePartUpdated = secondRows.some((r) => {
+        if (r.kind !== 'run.event_received') return false;
+        const content = String((r.payload && r.payload.content) || '');
+        return content.includes('"type":"message.part.updated"')
+          && content.includes('"id":"part-second-text"')
+          && content.includes('second-post-complete:pc-second-materialize');
+      });
+      const hasMaterializeRoute = secondRows.some((r) => (
+        r.kind === 'telegram.preview.route'
+        && r.payload
+        && r.payload.phase === 'materialize'
+        && r.payload.meta
+        && r.payload.meta.channel === 'run_view_draft_materialize'
+        && String(r.payload.textPreview || '').includes('second-post-complete:pc-second-materialize')
+      ));
+      return hasFinalSamePartUpdated && hasMaterializeRoute ? rows : null;
+    }, { timeoutMs: 30000, stepMs: 120 });
+
+    const runStarts = records.filter((r) => r.kind === 'run.start');
+    const secondRunId = String(runStarts[1] && runStarts[1].payload && runStarts[1].payload.runId || '');
+    assert.ok(secondRunId);
+
+    const secondRows = records.filter((r) => {
+      const payloadRunId = r && r.payload && r.payload.runId ? String(r.payload.runId) : '';
+      const metaRunId = r && r.payload && r.payload.meta && r.payload.meta.runId ? String(r.payload.meta.runId) : '';
+      return payloadRunId === secondRunId || metaRunId === secondRunId;
+    });
+
+    const finalSamePartUpdated = secondRows.filter((r) => {
+      if (r.kind !== 'run.event_received') return false;
+      const content = String((r.payload && r.payload.content) || '');
+      return content.includes('"type":"message.part.updated"')
+        && content.includes('"id":"part-second-text"')
+        && content.includes('second-post-complete:pc-second-materialize');
+    });
+    assert.ok(finalSamePartUpdated.length > 0);
+
+    const materializeRoutes = secondRows.filter((r) => (
+      r.kind === 'telegram.preview.route'
+      && r.payload
+      && r.payload.phase === 'materialize'
+      && r.payload.meta
+      && r.payload.meta.channel === 'run_view_draft_materialize'
+      && String(r.payload.textPreview || '').includes('second-post-complete:pc-second-materialize')
+    ));
+
+    assert.ok(
+      materializeRoutes.length > 0,
+      'expected post-complete second response to materialize the draft preview into a normal Telegram message'
+    );
+
+    await stopGateway(runtime, { controlUrl: started.controlUrl, testName: 'post-complete-same-part-materialize', status: 'ok' });
+    stopped = true;
+  } finally {
+    if (!stopped) {
+      await stopGateway(runtime, { controlUrl: started.controlUrl, testName: 'post-complete-same-part-materialize', status: 'teardown' });
     }
     await telegram.stop();
     restoreFile(config.CONFIG_PATH, cfgSnapshot);
@@ -2143,10 +2501,10 @@ test('gateway e2e should surface new in-progress assistant text before completio
           && content.includes('"completed"');
       });
       const hasRunViewMarker = rows.some((r) => (
-        (r.kind === 'telegram.send' || r.kind === 'telegram.edit')
+        (r.kind === 'telegram.send' || r.kind === 'telegram.edit' || r.kind === 'telegram.draft')
         && r.payload
         && r.payload.meta
-        && (r.payload.meta.channel === 'run_view_send' || r.payload.meta.channel === 'run_view_edit')
+        && (r.payload.meta.channel === 'run_view_send' || r.payload.meta.channel === 'run_view_edit' || r.payload.meta.channel === 'run_view_draft')
         && String(r.payload.textPreview || '').includes('new-live-marker')
       ));
       return hasCompletionEvent && hasRunViewMarker ? rows : null;
@@ -2168,11 +2526,11 @@ test('gateway e2e should surface new in-progress assistant text before completio
     });
 
     const runViewMarkerIdx = records.findIndex((r) => {
-      if (!(r.kind === 'telegram.send' || r.kind === 'telegram.edit')) return false;
+      if (!(r.kind === 'telegram.send' || r.kind === 'telegram.edit' || r.kind === 'telegram.draft')) return false;
       const meta = r.payload && r.payload.meta ? r.payload.meta : null;
       if (!meta) return false;
       if (String(meta.runId || '') !== runId) return false;
-      if (!(meta.channel === 'run_view_send' || meta.channel === 'run_view_edit')) return false;
+      if (!(meta.channel === 'run_view_send' || meta.channel === 'run_view_edit' || meta.channel === 'run_view_draft')) return false;
       return String(r.payload && r.payload.textPreview || '').includes('new-live-marker');
     });
 

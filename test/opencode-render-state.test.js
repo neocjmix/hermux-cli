@@ -75,8 +75,100 @@ test('opencode render state accumulates latest session/message/part projection',
   assert.equal(state.messages.byId['msg-a'].parts.byId['prt-a'].text, '안녕!');
   assert.equal(state.messages.byId['msg-a'].renderText, '안녕!');
   assert.equal(state.render.latestAssistantMessageId, 'msg-a');
+  assert.equal(state.render.latestAssistantPartId, 'prt-a');
+  assert.deepEqual(state.render.latestAssistantTailMaterializeHint, {
+    messageId: 'msg-a',
+    partId: 'prt-a',
+    reason: 'text_part_updated_after_delta',
+  });
   assert.equal(state.render.latestAssistantText, '안녕!');
   assert.equal(state.render.busy, false);
+});
+
+test('opencode render state infers weaker materialize hint from non-empty updated without prior delta', () => {
+  let state = createRenderState('ses-no-delta');
+
+  state = applyPayload(state, JSON.stringify({
+    type: 'message.updated',
+    properties: {
+      info: {
+        id: 'msg-no-delta',
+        sessionID: 'ses-no-delta',
+        role: 'assistant',
+        time: { created: 10 },
+      },
+    },
+  }), 1);
+
+  state = applyPayload(state, JSON.stringify({
+    type: 'message.part.updated',
+    properties: {
+      part: {
+        id: 'prt-no-delta',
+        sessionID: 'ses-no-delta',
+        messageID: 'msg-no-delta',
+        type: 'text',
+        text: 'whole text at once',
+      },
+    },
+  }), 2);
+
+  assert.equal(state.render.latestAssistantPartId, 'prt-no-delta');
+  assert.deepEqual(state.render.latestAssistantTailMaterializeHint, {
+    messageId: 'msg-no-delta',
+    partId: 'prt-no-delta',
+    reason: 'text_part_non_empty_updated',
+  });
+});
+
+test('opencode render state infers assistant role from late part events when message.updated was missed', () => {
+  let state = createRenderState('ses-late');
+
+  state = applyPayload(state, JSON.stringify({
+    type: 'message.part.updated',
+    properties: {
+      part: {
+        id: 'prt-late',
+        sessionID: 'ses-late',
+        messageID: 'msg-late',
+        type: 'text',
+        text: '',
+      },
+    },
+  }), 1);
+
+  state = applyPayload(state, JSON.stringify({
+    type: 'message.part.delta',
+    properties: {
+      sessionID: 'ses-late',
+      messageID: 'msg-late',
+      partID: 'prt-late',
+      field: 'text',
+      delta: 'late text',
+    },
+  }), 2);
+
+  state = applyPayload(state, JSON.stringify({
+    type: 'message.part.updated',
+    properties: {
+      part: {
+        id: 'prt-late',
+        sessionID: 'ses-late',
+        messageID: 'msg-late',
+        type: 'text',
+        text: 'late text final',
+      },
+    },
+  }), 3);
+
+  assert.equal(state.messages.byId['msg-late'].role, 'assistant');
+  assert.equal(state.render.latestAssistantMessageId, 'msg-late');
+  assert.equal(state.render.latestAssistantPartId, 'prt-late');
+  assert.deepEqual(state.render.latestAssistantTailMaterializeHint, {
+    messageId: 'msg-late',
+    partId: 'prt-late',
+    reason: 'text_part_updated_after_delta',
+  });
 });
 
 test('opencode render state preserves repeated identical deltas for same part', () => {

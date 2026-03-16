@@ -25,7 +25,7 @@ const {
   sanitizeFinalOutputText,
 } = require('./lib/output-sanitizer');
 const { createSessionEventHandler } = require('./lib/session-event-handler');
-const { version: HERMUX_VERSION } = require('../package.json');
+const { HERMUX_VERSION } = require('./lib/hermux-version');
 
 const upstreamProvider = resolveUpstreamProvider(providerSelection.upstream);
 const downstreamProvider = resolveDownstreamProvider(providerSelection.downstream);
@@ -74,7 +74,12 @@ const OPENCODE_CONFIG_PATH = process.env.HERMUX_OPENCODE_CONFIG_PATH || path.joi
 const OMO_CONFIG_PATH = process.env.HERMUX_OMO_CONFIG_PATH || path.join(process.env.HOME || '', '.config', 'opencode', 'oh-my-opencode.json');
 const AUDIT_STRING_MAX = parseInt(process.env.HERMUX_AUDIT_STRING_MAX || '16000', 10);
 const APPLY_PAYLOAD_THROTTLE_MS = parseInt(process.env.HERMUX_APPLY_PAYLOAD_THROTTLE_MS || '500', 10);
+const RUN_VIEW_RETRY_AFTER_DEFER_MS = parseInt(process.env.HERMUX_RUN_VIEW_RETRY_AFTER_DEFER_MS || '5000', 10);
+const TELEGRAM_DRAFT_ID_MAX = 2147483647;
+const TELEGRAM_DRAFT_METHOD_UNAVAILABLE_RE = /(unknown method|method .*not (found|available|supported)|unsupported)/i;
+const TELEGRAM_DRAFT_CHAT_UNSUPPORTED_RE = /(can't be used|can be used only|private chat|topic mode enabled|textdraft_peer_invalid)/i;
 const TRACE_RUNVIEW_DIAGNOSTICS = true;
+let nextTelegramDraftId = 0;
 const TRACE_SESSION_ID = String(process.env.HERMUX_TRACE_SESSION_ID || '').trim();
 const auditLogger = makeAuditLogger(RUNTIME_DIR);
 let connectMutationQueue = Promise.resolve();
@@ -351,6 +356,344 @@ function getTelegramRetryAfterSeconds(err) {
     : null;
   const raw = params && params.retry_after != null ? Number(params.retry_after) : NaN;
   return Number.isFinite(raw) && raw > 0 ? raw : 0;
+}
+
+function shouldDeferRunViewRetryAfter(auditMeta, waitMs) {
+  const meta = auditMeta && typeof auditMeta === 'object' ? auditMeta : null;
+  const channel = String(meta && meta.channel ? meta.channel : '').trim();
+  if (channel !== 'run_view_edit' && channel !== 'run_view_send') return false;
+  if (meta && meta.isFinalState) return false;
+  if (!Number.isFinite(waitMs) || waitMs <= 0) return false;
+  return RUN_VIEW_RETRY_AFTER_DEFER_MS > 0 && waitMs >= RUN_VIEW_RETRY_AFTER_DEFER_MS;
+}
+
+function allocateTelegramDraftId() {
+  nextTelegramDraftId = nextTelegramDraftId >= TELEGRAM_DRAFT_ID_MAX ? 1 : nextTelegramDraftId + 1;
+  return nextTelegramDraftId;
+}
+
+function resolveSendMessageDraftApi(bot) {
+  if (bot && typeof bot.sendMessageDraft === 'function') {
+    return bot.sendMessageDraft.bind(bot);
+  }
+  if (bot && typeof bot._request === 'function') {
+    return async (chatId, draftId, text, params) => {
+      const form = {
+        chat_id: chatId,
+        draft_id: draftId,
+        text,
+        ...(params && params.parse_mode ? { parse_mode: params.parse_mode } : {}),
+        ...(params && Number.isFinite(Number(params.message_thread_id))
+          ? { message_thread_id: Number(params.message_thread_id) }
+          : {}),
+      };
+      return bot._request('sendMessageDraft', { form });
+    };
+  }
+  return null;
+}
+
+function shouldFallbackFromDraftTransport(err) {
+  const text = typeof err === 'string'
+    ? err
+    : err instanceof Error
+      ? err.message
+      : String(err && err.message ? err.message : err || '');
+  if (!/sendMessageDraft/i.test(text) && !/textdraft/i.test(text)) return false;
+  return TELEGRAM_DRAFT_METHOD_UNAVAILABLE_RE.test(text) || TELEGRAM_DRAFT_CHAT_UNSUPPORTED_RE.test(text);
+}
+
+function isEligibleTelegramDraftChatId(chatId) {
+  const numeric = Number(chatId);
+  return Number.isFinite(numeric) && numeric > 0;
+}
+
+function resolveTelegramPreviewTransport(bot, chatId, currentPreview) {
+  const existing = currentPreview && typeof currentPreview === 'object' ? currentPreview : null;
+  if (existing && existing.transport === 'message' && existing.messageId) {
+    return { transport: 'message', reason: 'existing_message_preview', sendDraft: null };
+  }
+  if (!isEligibleTelegramDraftChatId(chatId)) {
+    return { transport: 'message', reason: 'ineligible_chat', sendDraft: null };
+  }
+  const sendDraft = resolveSendMessageDraftApi(bot);
+  if (!sendDraft) {
+    return { transport: 'message', reason: 'draft_api_unavailable', sendDraft: null };
+  }
+  return {
+    transport: 'draft',
+    reason: existing && existing.transport === 'draft' && existing.draftId
+      ? 'reuse_existing_draft'
+      : 'draft_transport_available',
+    sendDraft,
+  };
+}
+
+function auditTelegramPreviewRoute({ phase, chatId, transport, reason, auditMeta, currentPreview, draftId, messageId, textPreview, error }) {
+  audit('telegram.preview.route', {
+    phase: String(phase || '').trim() || 'preview',
+    chatId: String(chatId),
+    transport: String(transport || '').trim() || 'unknown',
+    reason: String(reason || '').trim() || 'unknown',
+    currentTransport: currentPreview && currentPreview.transport ? String(currentPreview.transport) : '',
+    currentDraftId: currentPreview && currentPreview.draftId ? Number(currentPreview.draftId) : null,
+    currentMessageId: currentPreview && currentPreview.messageId ? Number(currentPreview.messageId) : null,
+    draftId: Number.isFinite(Number(draftId)) ? Number(draftId) : null,
+    messageId: Number.isFinite(Number(messageId)) ? Number(messageId) : null,
+    textPreview: String(textPreview || ''),
+    error: error ? String(error) : '',
+    meta: auditMeta || null,
+  });
+}
+
+async function updateTelegramDraftPreview(bot, chatId, currentPreview, html, opts, auditMeta) {
+  const preview = summarizeAuditText(html);
+  const existing = currentPreview && typeof currentPreview === 'object' ? currentPreview : null;
+  if (!String(html || '').trim()) {
+    auditTelegramPreviewRoute({
+      phase: 'preview',
+      chatId,
+      transport: 'none',
+      reason: 'empty_text',
+      auditMeta,
+      currentPreview: existing,
+      textPreview: preview,
+    });
+    return { applied: false };
+  }
+
+  const route = resolveTelegramPreviewTransport(bot, chatId, existing);
+  const sendDraft = route.sendDraft;
+  if (sendDraft) {
+    const draftId = Number(existing && existing.draftId ? existing.draftId : 0) || allocateTelegramDraftId();
+    auditTelegramPreviewRoute({
+      phase: 'preview',
+      chatId,
+      transport: 'draft',
+      reason: route.reason,
+      auditMeta,
+      currentPreview: existing,
+      draftId,
+      textPreview: preview,
+    });
+    try {
+      await sendDraft(chatId, draftId, html, {
+        parse_mode: opts && opts.parse_mode ? String(opts.parse_mode) : undefined,
+      });
+      audit('telegram.draft', {
+        ok: true,
+        stage: 'primary',
+        chatId: String(chatId),
+        reason: route.reason,
+        draftId,
+        parseMode: opts && opts.parse_mode ? String(opts.parse_mode) : '',
+        textPreview: preview,
+        meta: auditMeta || null,
+      });
+      return { applied: true, transport: 'draft', draftId, messageId: null };
+    } catch (err) {
+      audit('telegram.draft', {
+        ok: false,
+        stage: 'primary',
+        chatId: String(chatId),
+        reason: route.reason,
+        draftId,
+        parseMode: opts && opts.parse_mode ? String(opts.parse_mode) : '',
+        error: String(err && (err.code || err.message || err) || ''),
+        textPreview: preview,
+        meta: auditMeta || null,
+      });
+      if (!shouldFallbackFromDraftTransport(err)) {
+        auditTelegramPreviewRoute({
+          phase: 'preview',
+          chatId,
+          transport: 'none',
+          reason: 'draft_request_failed_no_fallback',
+          auditMeta,
+          currentPreview: existing,
+          draftId,
+          textPreview: preview,
+          error: String(err && (err.code || err.message || err) || ''),
+        });
+        return { applied: false };
+      }
+      auditTelegramPreviewRoute({
+        phase: 'preview',
+        chatId,
+        transport: 'message',
+        reason: 'draft_transport_rejected_fallback',
+        auditMeta,
+        currentPreview: existing,
+        draftId,
+        textPreview: preview,
+        error: String(err && (err.code || err.message || err) || ''),
+      });
+      audit('telegram.draft', {
+        ok: false,
+        stage: 'fallback_message',
+        chatId: String(chatId),
+        reason: 'draft_transport_rejected_fallback',
+        draftId,
+        parseMode: opts && opts.parse_mode ? String(opts.parse_mode) : '',
+        error: String(err && (err.code || err.message || err) || ''),
+        textPreview: preview,
+        meta: auditMeta || null,
+      });
+    }
+  }
+
+  auditTelegramPreviewRoute({
+    phase: 'preview',
+    chatId,
+    transport: 'message',
+    reason: route.reason,
+    auditMeta,
+    currentPreview: existing,
+    messageId: existing && existing.messageId ? existing.messageId : null,
+    textPreview: preview,
+  });
+
+  if (existing && existing.transport === 'message' && existing.messageId) {
+    const edited = await editHtml(bot, chatId, existing.messageId, html, {
+      ...auditMeta,
+      channel: 'run_view_edit',
+      isFinalState: false,
+    });
+    if (edited && edited.deferred) return { applied: false, transport: 'message', messageId: existing.messageId };
+    return { applied: true, transport: 'message', messageId: existing.messageId };
+  }
+
+  const sent = await safeSend(bot, chatId, html, opts, {
+    ...auditMeta,
+    channel: 'run_view_send',
+    isFinalState: false,
+  });
+  if (!sent || sent._hermuxDeferred || !sent.message_id) return { applied: false };
+  return { applied: true, transport: 'message', draftId: null, messageId: sent.message_id };
+}
+
+async function clearTelegramDraftPreview(bot, chatId, currentPreview, auditMeta) {
+  const preview = currentPreview && typeof currentPreview === 'object' ? currentPreview : null;
+  if (!preview) return false;
+  if (preview.transport === 'message' && preview.messageId) {
+    auditTelegramPreviewRoute({
+      phase: 'clear',
+      chatId,
+      transport: 'message',
+      reason: 'clear_message_preview',
+      auditMeta,
+      currentPreview: preview,
+      messageId: preview.messageId,
+      textPreview: String(preview.text || ''),
+    });
+    return safeDeleteMessage(bot, chatId, preview.messageId, auditMeta);
+  }
+  if (preview.transport === 'draft' && preview.draftId) {
+    const sendDraft = resolveSendMessageDraftApi(bot);
+    if (!sendDraft) {
+      auditTelegramPreviewRoute({
+        phase: 'clear',
+        chatId,
+        transport: 'draft',
+        reason: 'draft_api_unavailable_on_clear',
+        auditMeta,
+        currentPreview: preview,
+        draftId: preview.draftId,
+        textPreview: '',
+      });
+      return false;
+    }
+    auditTelegramPreviewRoute({
+      phase: 'clear',
+      chatId,
+      transport: 'draft',
+      reason: 'clear_draft_preview',
+      auditMeta,
+      currentPreview: preview,
+      draftId: preview.draftId,
+      textPreview: '',
+    });
+    try {
+      await sendDraft(chatId, preview.draftId, '', undefined);
+      audit('telegram.draft', {
+        ok: true,
+        stage: 'clear',
+        chatId: String(chatId),
+        reason: 'clear_draft_preview',
+        draftId: preview.draftId,
+        textPreview: '',
+        meta: auditMeta || null,
+      });
+      return true;
+    } catch (err) {
+      audit('telegram.draft', {
+        ok: false,
+        stage: 'clear',
+        chatId: String(chatId),
+        reason: 'clear_draft_preview',
+        draftId: preview.draftId,
+        error: String(err && (err.code || err.message || err) || ''),
+        textPreview: '',
+        meta: auditMeta || null,
+      });
+    }
+  }
+  return false;
+}
+
+async function materializeTelegramDraftPreview(bot, chatId, currentPreview, html, opts, auditMeta) {
+  const preview = currentPreview && typeof currentPreview === 'object' ? currentPreview : null;
+  if (!preview || !String(html || '').trim()) return null;
+  if (preview.transport === 'message' && preview.messageId) {
+    const textChanged = String(preview.text || '') !== String(html || '');
+    auditTelegramPreviewRoute({
+      phase: 'materialize',
+      chatId,
+      transport: 'message',
+      reason: textChanged ? 'finalize_existing_message_preview_edit' : 'finalize_existing_message_preview_keep',
+      auditMeta,
+      currentPreview: preview,
+      messageId: preview.messageId,
+      textPreview: summarizeAuditText(html),
+    });
+    if (textChanged) {
+      await editHtml(bot, chatId, preview.messageId, html, {
+        ...auditMeta,
+        channel: 'run_view_edit',
+        isFinalState: true,
+      });
+    }
+    return {
+      messageId: preview.messageId,
+      persistOp: textChanged ? 'edit' : 'send',
+    };
+  }
+
+  auditTelegramPreviewRoute({
+    phase: 'materialize',
+    chatId,
+    transport: 'message',
+    reason: String(auditMeta && auditMeta.materializeReason ? auditMeta.materializeReason : 'final_state_materialize'),
+    auditMeta,
+    currentPreview: preview,
+    draftId: preview && preview.draftId ? preview.draftId : null,
+    textPreview: summarizeAuditText(html),
+  });
+  const sent = await safeSend(bot, chatId, html, opts, {
+    ...auditMeta,
+    channel: 'run_view_send',
+    isFinalState: true,
+  });
+  if (!sent || !sent.message_id) return null;
+  await clearTelegramDraftPreview(bot, chatId, preview, {
+    ...auditMeta,
+    channel: 'run_view_draft_clear',
+    isFinalState: true,
+  });
+  return {
+    messageId: sent.message_id,
+    persistOp: 'send',
+  };
 }
 
 function isMessageNotModifiedError(err) {
@@ -1378,6 +1721,24 @@ async function safeSend(bot, chatId, text, opts, auditMeta) {
     const retryAfterSeconds = getTelegramRetryAfterSeconds(primaryErr);
     if (retryAfterSeconds > 0) {
       const waitMs = (retryAfterSeconds * 1000) + Math.floor(Math.random() * 250);
+      if (shouldDeferRunViewRetryAfter(auditMeta, waitMs)) {
+        audit('telegram.send', {
+          ok: false,
+          stage: 'retry_after_deferred',
+          chatId: String(chatId),
+          parseMode,
+          error: String(primaryErr && (primaryErr.code || primaryErr.message || primaryErr) || ''),
+          retryAfterSeconds,
+          waitMs,
+          textPreview: preview,
+          meta: auditMeta || null,
+        });
+        return {
+          _hermuxDeferred: true,
+          retryAfterSeconds,
+          waitMs,
+        };
+      }
       audit('telegram.send', {
         ok: false,
         stage: 'retry_after_pending',
@@ -1496,6 +1857,26 @@ async function editHtml(bot, chatId, messageId, html, auditMeta) {
     const retryAfterSeconds = getTelegramRetryAfterSeconds(primaryErr);
     if (retryAfterSeconds > 0) {
       const waitMs = (retryAfterSeconds * 1000) + Math.floor(Math.random() * 250);
+      if (shouldDeferRunViewRetryAfter(auditMeta, waitMs)) {
+        audit('telegram.edit', {
+          ok: false,
+          stage: 'retry_after_deferred',
+          chatId: String(chatId),
+          messageId,
+          parseMode: 'HTML',
+          error: String(primaryErr && (primaryErr.code || primaryErr.message || primaryErr) || ''),
+          retryAfterSeconds,
+          waitMs,
+          textPreview: preview,
+          meta: auditMeta || null,
+        });
+        return {
+          applied: false,
+          deferred: true,
+          retryAfterSeconds,
+          waitMs,
+        };
+      }
       audit('telegram.edit', {
         ok: false,
         stage: 'retry_after_pending',
@@ -1520,7 +1901,7 @@ async function editHtml(bot, chatId, messageId, html, auditMeta) {
           textPreview: preview,
           meta: auditMeta || null,
         });
-        return;
+        return { applied: true };
       } catch (retryErr) {
         primaryErr = retryErr;
       }
@@ -1549,6 +1930,7 @@ async function editHtml(bot, chatId, messageId, html, auditMeta) {
           textPreview: preview,
           meta: auditMeta || null,
         });
+        return { applied: true };
       } catch (e) {
         console.error('plain edit also failed:', e.code || e.message, '| chat:', chatId, '| message_id:', messageId);
         audit('telegram.edit', {
@@ -1564,6 +1946,7 @@ async function editHtml(bot, chatId, messageId, html, auditMeta) {
       }
     }
   }
+  return { applied: false, deferred: false };
 }
 
 async function editPlain(bot, chatId, messageId, text, auditMeta) {
@@ -3278,9 +3661,12 @@ async function startPromptRun(bot, repo, state, runItem) {
     chatId: String(chatId),
     messageIds: [],
     texts: [],
+    draftPreview: null,
+    materializedTail: null,
   };
   const runAuditMeta = {
     runId,
+    sessionId: String(activeSessionId || '').trim(),
     repo: repo.name,
     chatId: String(chatId),
   };
@@ -3303,6 +3689,7 @@ async function startPromptRun(bot, repo, state, runItem) {
     downstreamSendCount: 0,
     downstreamEditCount: 0,
     downstreamDeleteCount: 0,
+    downstreamDraftCount: 0,
   };
 
   const auditRun = (kind, payload) => {
@@ -3449,17 +3836,46 @@ async function startPromptRun(bot, repo, state, runItem) {
       ...runAuditMeta,
       runId: targetRunId,
       chatId: targetChatId,
+      previewDecisionReason: isFinalState ? 'final_state' : 'active_run_preview',
+      materializeReason: 'final_state_materialize',
     };
     const safeNextTexts = Array.isArray(nextTexts) ? nextTexts : [];
     
     // Use provided currentView or fall back to state.runView
     const providedCurrentView = options && options.currentView;
     const currentViewTexts = providedCurrentView && Array.isArray(providedCurrentView.texts) 
-      ? providedCurrentView.texts 
+      ? providedCurrentView.texts
       : (Array.isArray(view.texts) ? view.texts : []);
     const currentViewMessageIds = providedCurrentView && Array.isArray(providedCurrentView.messageIds)
       ? providedCurrentView.messageIds
       : (Array.isArray(view.messageIds) ? view.messageIds : []);
+    const currentDraftPreview = providedCurrentView && providedCurrentView.draftPreview && typeof providedCurrentView.draftPreview === 'object'
+      ? providedCurrentView.draftPreview
+      : (view && view.draftPreview && typeof view.draftPreview === 'object' ? view.draftPreview : null);
+    const currentMaterializedTail = providedCurrentView && providedCurrentView.materializedTail && typeof providedCurrentView.materializedTail === 'object'
+      ? providedCurrentView.materializedTail
+      : (view && view.materializedTail && typeof view.materializedTail === 'object' ? view.materializedTail : null);
+    const previewDraftEnabled = !isFinalState;
+    const materializeStaleDraft = !!isFinalState;
+    const tailMaterializeHint = options && options.tailMaterializeHint && typeof options.tailMaterializeHint === 'object'
+      ? options.tailMaterializeHint
+      : null;
+
+    auditRun('run.view.preview.policy', {
+      reason: targetAuditMeta.previewDecisionReason,
+      isFinalState,
+      previewDraftEnabled,
+      materializeStaleDraft,
+      completionHandled: !!completionHandled,
+      hasCurrentDraftPreview: !!currentDraftPreview,
+      hasCurrentMaterializedTail: !!currentMaterializedTail,
+      currentTextCount: currentViewTexts.length,
+      nextTextCount: safeNextTexts.length,
+      currentPreviewTransport: currentDraftPreview && currentDraftPreview.transport
+        ? String(currentDraftPreview.transport)
+        : '',
+      tailMaterializeHint,
+    });
     
     runMetrics.downstreamApplyExecuted += 1;
     const applyStartAtMs = Date.now() - runStartedAt;
@@ -3482,12 +3898,19 @@ async function startPromptRun(bot, repo, state, runItem) {
       currentView: {
         texts: currentViewTexts,
         messageIds: currentViewMessageIds,
+        draftPreview: currentDraftPreview,
+        materializedTail: currentMaterializedTail,
       },
       nextTexts: safeNextTexts,
+      tailMaterializeHint,
       maxLen: TG_MAX_LEN,
       isFinalState,
       sendText: safeSend,
       editText: editHtml,
+      previewDraft: previewDraftEnabled ? updateTelegramDraftPreview : null,
+      materializeDraft: materializeTelegramDraftPreview,
+      materializeStaleDraft,
+      clearDraft: clearTelegramDraftPreview,
       deleteMessage: safeDeleteMessage,
       onMessagePersist: async ({ messageId }) => {
         if (!activeSessionId || !lastFinalMessageRef.messageId || !messageId) return;
@@ -3507,6 +3930,7 @@ async function startPromptRun(bot, repo, state, runItem) {
       runMetrics.downstreamSendCount += Number(stats.sendCount || 0) || 0;
       runMetrics.downstreamEditCount += Number(stats.editCount || 0) || 0;
       runMetrics.downstreamDeleteCount += Number(stats.deleteCount || 0) || 0;
+      runMetrics.downstreamDraftCount += Number(stats.draftCount || 0) || 0;
     }
     const applyEndAtMs = Date.now() - runStartedAt;
     runMetrics.downstreamLastApplyAtMs = applyEndAtMs;
@@ -3524,9 +3948,16 @@ async function startPromptRun(bot, repo, state, runItem) {
       sendCount: stats ? Number(stats.sendCount || 0) || 0 : 0,
       editCount: stats ? Number(stats.editCount || 0) || 0 : 0,
       deleteCount: stats ? Number(stats.deleteCount || 0) || 0 : 0,
+      draftCount: stats ? Number(stats.draftCount || 0) || 0 : 0,
     });
     view.messageIds = Array.isArray(nextView && nextView.messageIds) ? nextView.messageIds : [];
     view.texts = Array.isArray(nextView && nextView.texts) ? nextView.texts : [];
+    view.draftPreview = nextView && nextView.draftPreview && typeof nextView.draftPreview === 'object'
+      ? nextView.draftPreview
+      : null;
+    view.materializedTail = nextView && nextView.materializedTail && typeof nextView.materializedTail === 'object'
+      ? nextView.materializedTail
+      : null;
 
     if (!mermaidAttachmentDelivered) {
       const delivered = await sendMermaidArtifactsForRun({
@@ -3562,16 +3993,36 @@ async function startPromptRun(bot, repo, state, runItem) {
     }
     return true;
   };
+  const hasTailMaterializeHint = (hint) => !!(
+    hint
+    && typeof hint === 'object'
+    && String(hint.messageId || '').trim()
+    && String(hint.partId || '').trim()
+  );
   const reconcileRunView = async (nextTexts, options) => {
     const normalizedNextTexts = Array.isArray(nextTexts) ? nextTexts.slice() : [];
     const requestedFinalState = !!(options && options.isFinalState);
+    const requestedTailMaterializeHint = options && options.tailMaterializeHint && typeof options.tailMaterializeHint === 'object'
+      ? options.tailMaterializeHint
+      : null;
     const lockRequestedAt = Date.now();
 
     return withRunViewDispatchLock(state, async () => {
       const runViewLockWaitMs = Math.max(0, Date.now() - lockRequestedAt);
       const currentViewTexts = state.runView && Array.isArray(state.runView.texts) ? state.runView.texts : [];
+      const currentDraftPreview = state.runView && state.runView.draftPreview && typeof state.runView.draftPreview === 'object'
+        ? state.runView.draftPreview
+        : null;
+      const currentProjectedTexts = currentViewTexts.slice();
+      if (currentDraftPreview && currentDraftPreview.text) {
+        currentProjectedTexts.push(String(currentDraftPreview.text));
+      }
 
-      if (!requestedFinalState && areTextArraysEqual(currentViewTexts, normalizedNextTexts)) {
+      if (
+        !requestedFinalState
+        && areTextArraysEqual(currentProjectedTexts, normalizedNextTexts)
+        && !hasTailMaterializeHint(requestedTailMaterializeHint)
+      ) {
         return;
       }
 
@@ -3584,12 +4035,16 @@ async function startPromptRun(bot, repo, state, runItem) {
       const currentView = isNewRunStarting ? { texts: [], messageIds: [] } : {
         texts: Array.isArray(state.runView?.texts) ? state.runView.texts : [],
         messageIds: Array.isArray(state.runView?.messageIds) ? state.runView.messageIds : [],
+        draftPreview: state.runView && state.runView.draftPreview && typeof state.runView.draftPreview === 'object'
+          ? state.runView.draftPreview
+          : null,
       };
 
       runMetrics.downstreamApplyRequested += 1;
       await applyRunViewSnapshot(normalizedNextTexts, {
         isFinalState: requestedFinalState,
         currentView,
+        tailMaterializeHint: requestedTailMaterializeHint,
         runViewLockWaitMs,
       });
     });
@@ -3727,8 +4182,14 @@ async function startPromptRun(bot, repo, state, runItem) {
         }
         const snapshot = snapshotState && snapshotState.snapshot ? snapshotState.snapshot : null;
         const snapshotMessages = snapshot && Array.isArray(snapshot.messages) ? snapshot.messages : [];
+        const tailMaterializeHint = snapshot && snapshot.tailMaterializeHint && typeof snapshot.tailMaterializeHint === 'object'
+          ? snapshot.tailMaterializeHint
+          : null;
         const previousProjected = state.sessionProjectedTexts.get(key) || [];
-        if (areTextArraysEqual(previousProjected, snapshotMessages)) {
+        if (
+          areTextArraysEqual(previousProjected, snapshotMessages)
+          && !hasTailMaterializeHint(tailMaterializeHint)
+        ) {
           auditRun('run.session_event.apply.skip', {
             sid: key,
             reason: 'snapshot_not_changed',
@@ -3739,7 +4200,7 @@ async function startPromptRun(bot, repo, state, runItem) {
         state.sessionProjectedTexts.set(key, snapshotMessages.slice());
         await reconcileRunView(
           snapshotMessages,
-          { isFinalState: false }
+          { isFinalState: false, tailMaterializeHint }
         );
       },
     });
@@ -4411,5 +4872,13 @@ module.exports = {
     clearRunRenderStateAtRunStart,
     createTrailingThrottleProcessor,
     buildAuditContentMeta,
+    shouldDeferRunViewRetryAfter,
+    resolveSendMessageDraftApi,
+    resolveTelegramPreviewTransport,
+    shouldFallbackFromDraftTransport,
+    auditTelegramPreviewRoute,
+    updateTelegramDraftPreview,
+    materializeTelegramDraftPreview,
+    clearTelegramDraftPreview,
   },
 };
