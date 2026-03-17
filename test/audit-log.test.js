@@ -5,6 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { makeAuditLogger, _internal } = require('../src/lib/audit-log');
+const { HERMUX_VERSION } = require('../src/lib/hermux-version');
 
 test('audit logger writes jsonl records with kind and payload', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-audit-'));
@@ -18,6 +19,7 @@ test('audit logger writes jsonl records with kind and payload', () => {
   const raw = fs.readFileSync(path.join(tmpDir, 'audit-events.jsonl'), 'utf8').trim();
   const rec = JSON.parse(raw);
 
+  assert.equal(rec.hermuxVersion, HERMUX_VERSION);
   assert.equal(rec.kind, 'run.event_received');
   assert.equal(rec.payload.runId, 'run-1');
   assert.equal(rec.payload.text, 'hello world');

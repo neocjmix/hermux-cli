@@ -22,6 +22,46 @@ This file defines the always-read documentation entrypoint for agents working in
 - Run lifecycle state is never a routing acceptance condition for session-resolved events.
 - If code conflicts with this invariant, update code and tests to restore session-first behavior.
 
+### Non-Negotiable Interpretation
+
+- `run.complete` is only an in-run phase marker.
+- `run.complete` MUST NOT disable, downgrade, reroute, materialize, or otherwise change acceptance/rendering behavior for same-session late events.
+- Same-session late events MUST continue through the normal session-owned render path until next-run handoff or explicit session termination.
+- `/interrupt` and `/revert` semantics MAY change after `run.complete`; event acceptance and downstream render ownership MUST NOT.
+
+### Mandatory Pre-Change Check
+
+Before changing any event handling, run-view, Telegram delivery, completion, finalization, revert, or interrupt logic, explicitly verify all of the following:
+
+1. Am I using `run.complete`, `completionHandled`, idle/completed state, or "final run" status as a gate for accepting or rendering session events?
+2. Am I changing transport mode or downstream behavior for same-session late events because the run reached `complete`?
+3. Would the same snapshot still be accepted/rendered if it arrived after `run.complete` but before next-run handoff or explicit session end?
+
+If any answer is "yes" or "no idea", stop and re-read `docs/specs/SESSION_EVENT_ROUTING_SPEC.md` before editing code.
+
+### Mandatory Debugging Protocol
+
+For debugging, incident analysis, or "why did this happen?" requests, do not stop at the first failed gate.
+
+1. Reconstruct the full timeline from logs, inputs, and state transitions before concluding anything.
+2. Identify the exact user-visible symptom first.
+3. For every claimed failure, show:
+   - the actual input/event
+   - the exact predicate or branch that evaluated it
+   - which subconditions were true/false
+   - the concrete mismatch that blocked progress
+4. If a condition failed, ask why that condition was false, then repeat the same process one layer deeper.
+5. Distinguish clearly between:
+   - symptom
+   - immediate/proximate cause
+   - contributing cause
+   - root cause
+6. Prefer concrete evidence over abstraction:
+   - file/function references for code paths
+   - log lines, event ordinals/cursors, message IDs, part IDs, or equivalent runtime identifiers for incidents
+7. If behavior depends on heuristics, identify the exact heuristic inputs and the missing or mismatched signal.
+8. Do not present architectural theories before proving the local input-vs-condition mismatch that triggered the failure.
+
 If documentation conflicts with code, code is the factual source. Update docs in the same task.
 
 ## Required Change Loop

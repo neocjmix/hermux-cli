@@ -6,6 +6,7 @@ This is the canonical documentation entrypoint.
 
 - Event delivery acceptance is session-first.
 - Run lifecycle state MUST NOT gate acceptance for session-resolved events.
+- `run.complete` is never authority for same-session late-event render/routing decisions; only next-run handoff or explicit session termination may revoke ownership.
 
 ## Read Order
 

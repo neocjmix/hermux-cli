@@ -774,6 +774,110 @@ test('serializePollingError extracts useful telegram fields', () => {
   assert.match(detail.description, /terminated by other getUpdates/i);
 });
 
+test('shouldDeferRunViewRetryAfter only defers long non-final run-view retries', () => {
+  assert.equal(
+    _internal.shouldDeferRunViewRetryAfter(
+      { channel: 'run_view_edit', isFinalState: false },
+      6000
+    ),
+    true
+  );
+  assert.equal(
+    _internal.shouldDeferRunViewRetryAfter(
+      { channel: 'run_view_send', isFinalState: false },
+      6000
+    ),
+    true
+  );
+  assert.equal(
+    _internal.shouldDeferRunViewRetryAfter(
+      { channel: 'run_view_edit', isFinalState: true },
+      6000
+    ),
+    false
+  );
+  assert.equal(
+    _internal.shouldDeferRunViewRetryAfter(
+      { channel: 'final_output', isFinalState: false },
+      6000
+    ),
+    false
+  );
+  assert.equal(
+    _internal.shouldDeferRunViewRetryAfter(
+      { channel: 'run_view_edit', isFinalState: false },
+      2000
+    ),
+    false
+  );
+});
+
+test('resolveSendMessageDraftApi uses bot _request transport when helper is missing', async () => {
+  const calls = [];
+  const bot = {
+    _request: async (method, options) => {
+      calls.push({ method, options });
+      return true;
+    },
+  };
+
+  const sendDraft = _internal.resolveSendMessageDraftApi(bot);
+  assert.equal(typeof sendDraft, 'function');
+
+  const ok = await sendDraft('100', 7, '<b>hello</b>', { parse_mode: 'HTML' });
+  assert.equal(ok, true);
+  assert.deepEqual(calls, [{
+    method: 'sendMessageDraft',
+    options: {
+      form: {
+        chat_id: '100',
+        draft_id: 7,
+        text: '<b>hello</b>',
+        parse_mode: 'HTML',
+      },
+    },
+  }]);
+});
+
+test('resolveTelegramPreviewTransport explains draft vs message routing', () => {
+  const withDraft = _internal.resolveTelegramPreviewTransport({
+    _request: async () => true,
+  }, '100', null);
+  assert.equal(withDraft.transport, 'draft');
+  assert.equal(withDraft.reason, 'draft_transport_available');
+
+  const existingMessage = _internal.resolveTelegramPreviewTransport({
+    _request: async () => true,
+  }, '100', { transport: 'message', messageId: 77 });
+  assert.equal(existingMessage.transport, 'message');
+  assert.equal(existingMessage.reason, 'existing_message_preview');
+
+  const noDraftApi = _internal.resolveTelegramPreviewTransport({}, '100', null);
+  assert.equal(noDraftApi.transport, 'message');
+  assert.equal(noDraftApi.reason, 'draft_api_unavailable');
+
+  const ineligible = _internal.resolveTelegramPreviewTransport({
+    _request: async () => true,
+  }, '-100123', null);
+  assert.equal(ineligible.transport, 'message');
+  assert.equal(ineligible.reason, 'ineligible_chat');
+});
+
+test('shouldFallbackFromDraftTransport matches unsupported draft transport errors', () => {
+  assert.equal(
+    _internal.shouldFallbackFromDraftTransport(new Error('400: Bad Request: method sendMessageDraft can be used only in private chats')),
+    true
+  );
+  assert.equal(
+    _internal.shouldFallbackFromDraftTransport(new Error('400: Bad Request: unknown method sendMessageDraft')),
+    true
+  );
+  assert.equal(
+    _internal.shouldFallbackFromDraftTransport(new Error('500: Internal error')),
+    false
+  );
+});
+
 test('withRestartMutationLock serializes restart critical section', async () => {
   const seq = [];
 

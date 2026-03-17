@@ -138,6 +138,10 @@ function createTelegramMockServer() {
       return true;
     }
 
+    if (method === 'sendMessageDraft') {
+      return true;
+    }
+
     if (method === 'deleteMessage') {
       return true;
     }

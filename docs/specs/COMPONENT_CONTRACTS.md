@@ -54,6 +54,9 @@ Runtime contract:
 - chat routes to repo by mapping table
 - per-repo lock allows one active run
 - queued prompts maintain FIFO order
+- non-final run-view latest-assistant preview MAY use Bot API `sendMessageDraft` in eligible private-chat flows, while committed status/older messages remain regular Telegram messages
+- non-final run-view Telegram send/edit retries MAY degrade by deferring stale updates instead of sleeping inline on long `retry_after`; final-state delivery MUST keep explicit success/failure semantics
+- draft-preview transport MUST fall back to regular send/edit preview if the method is unavailable or rejected by the Telegram API
 
 Command handling contract:
 

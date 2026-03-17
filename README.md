@@ -20,6 +20,7 @@ Critical invariant:
 
 - Event delivery/routing acceptance is session-identity-first.
 - Run lifecycle (`idle`, `completed`, no active run) MUST NOT be an acceptance gate for session-resolved events.
+- `run.complete` MUST be treated as a phase marker only; it MUST NOT change same-session late-event rendering or ownership before next-run handoff or explicit session end.
 
 ## User Command Surface
 

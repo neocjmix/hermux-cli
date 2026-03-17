@@ -4,6 +4,7 @@ const fs = require('fs');
 const net = require('net');
 const path = require('path');
 const { pathToFileURL } = require('url');
+const { HERMUX_VERSION } = require('../../../lib/hermux-version');
 
 const MAX_PROCESS_SEC = parseInt(process.env.HERMUX_MAX_PROCESS_SECONDS || '3600', 10);
 const SDK_SERVER_START_TIMEOUT_MS = parseInt(process.env.HERMUX_SDK_SERVER_START_TIMEOUT_MS || '15000', 10);
@@ -276,6 +277,7 @@ function queueScopeAudit(entry, instance, kind, payload) {
   const dir = path.dirname(auditPath);
   const line = `[router] ${JSON.stringify({
     ts: new Date().toISOString(),
+    hermuxVersion: HERMUX_VERSION,
     kind,
     scopeKey: entry.scopeKey,
     serverEpoch: entry.serverEpoch,

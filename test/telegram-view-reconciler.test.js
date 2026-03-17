@@ -40,11 +40,15 @@ test('telegram view reconciler applies edit/send/delete with final-state flag', 
   assert.deepEqual(next, {
     messageIds: [11, 12, 13],
     texts: ['a', 'B', 'd'],
+    draftPreview: null,
+    materializedTail: null,
     stats: {
       commandCount: 2,
       sendCount: 0,
       editCount: 2,
       deleteCount: 0,
+      deferredCount: 0,
+      draftCount: 0,
     },
   });
 });

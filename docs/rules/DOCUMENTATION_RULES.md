@@ -23,6 +23,17 @@ For non-trivial work, follow this order:
 
 This loop is mandatory for agent and human contributors.
 
+## Invariant Review Gate
+
+For any change touching event intake, routing, run-view rendering, Telegram delivery, completion/finalization, interrupt, revert, or session cleanup, contributors MUST verify and document this check before considering the task done:
+
+1. `run.complete` is treated only as a phase marker.
+2. Session-resolved late events are still accepted and rendered after `run.complete`.
+3. Only next-run handoff or explicit session end changes session-owned render acceptance.
+4. Any downstream mode switch (`preview`, `materialize`, `fallback`, `final delivery`) is justified by snapshot semantics or explicit session ownership transfer, never by run lifecycle state alone.
+
+If a code change fails this review gate, it is incomplete even if tests pass.
+
 ## Document Boundaries
 
 - `README.md`: quickstart + top-level behavior + links

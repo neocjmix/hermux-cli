@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { HERMUX_VERSION } = require('./hermux-version');
 
 const AUDIT_STRING_MAX = parseInt(process.env.HERMUX_AUDIT_STRING_MAX || '16000', 10);
 
@@ -37,6 +38,7 @@ function makeAuditLogger(runtimeDir) {
   function write(kind, payload) {
     const rec = {
       ts: new Date().toISOString(),
+      hermuxVersion: HERMUX_VERSION,
       kind: String(kind || 'unknown'),
       payload: sanitizeValue(payload),
     };
