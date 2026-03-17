@@ -10,6 +10,7 @@ state/session-map.json
 .hermux/
 tmp/
 .tmp/
+.opencode_mobile_gateway/
 ref/
 
 # coverage and instrumentation outputs
