@@ -79,3 +79,12 @@ Detailed rule set: `docs/rules/DOCUMENTATION_RULES.md`.
 
 - Tests must never write to default developer profiles under `config/`, `state/`, or `runtime/`.
 - Always use the isolated test profile (`.tmp/test-profile`) via `test/helpers/test-profile.js` and `scripts/run-tests-isolated.js`.
+
+## Workspace Hygiene
+
+- Keep the worktree clean by default. End tasks with no unintended modified or untracked files.
+- Before starting and before finishing, check `git status --short` and verify that only intentional files are dirty.
+- Revert tracked test/runtime artifacts before finishing (for example `.tmp/test-profile/...`) unless the file is part of the intended change.
+- Ignore recurring generated artifacts in `.gitignore` instead of leaving them untracked repeatedly.
+- Do not commit one-off generated outputs, local scratch files, debug dumps, or runtime logs.
+- If a task produces a temporary artifact, delete it before completion unless the user explicitly wants it kept.
