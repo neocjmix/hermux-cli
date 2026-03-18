@@ -368,7 +368,9 @@ function mergePartDelta(state, event, seq) {
   }
 
   if (field === 'text') {
-    entry.type = entry.type || 'text';
+    if (!entry.type || (entry.type === 'reasoning' && !entry.sawNonEmptyTextUpdate)) {
+      entry.type = 'text';
+    }
     entry.text = `${toText(entry.text)}${toText(props.delta)}`;
     entry.sawTextDelta = true;
     const textSeq = Number(seq || 0) || 0;

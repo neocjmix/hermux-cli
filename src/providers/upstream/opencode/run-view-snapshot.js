@@ -15,6 +15,7 @@ function createRunViewSnapshotState(sessionId) {
       runId: '',
       sessionId: sid,
       messages: [],
+      tailMaterializeHint: null,
       isFinal: false,
       updatedAtMs: 0,
     },
@@ -52,6 +53,12 @@ function applyPayloadToRunViewSnapshot(state, payload, renderSeq, options) {
       runId,
       sessionId: toText(nextRenderState.sessionId || (nextRenderState.session && nextRenderState.session.id)).trim(),
       messages: Array.isArray(messages) ? messages : [],
+      tailMaterializeHint: nextRenderState
+        && nextRenderState.render
+        && nextRenderState.render.latestAssistantTailMaterializeHint
+        && typeof nextRenderState.render.latestAssistantTailMaterializeHint === 'object'
+        ? { ...nextRenderState.render.latestAssistantTailMaterializeHint }
+        : null,
       isFinal,
       updatedAtMs: Date.now(),
     },

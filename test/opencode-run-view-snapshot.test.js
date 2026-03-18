@@ -311,6 +311,187 @@ test('run view snapshot materializer refreshes status pane when reasoning text c
   assert.equal(String(state.snapshot.messages[0]).split('\n')[2], '🤔 second reasoning');
 });
 
+test('run view snapshot materializer promotes text deltas even when part started as empty reasoning', () => {
+  let state = createRunViewSnapshotState('ses-retyped');
+
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'message.updated',
+    properties: {
+      info: {
+        id: 'msg-retyped',
+        sessionID: 'ses-retyped',
+        role: 'assistant',
+        time: { created: 10 },
+      },
+    },
+  }), 1, {
+    runId: 'run-retyped',
+    minMessageTimeMs: 0,
+    isFinal: false,
+    repoName: 'repo-r',
+  });
+
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'message.part.updated',
+    properties: {
+      part: {
+        id: 'part-retyped',
+        sessionID: 'ses-retyped',
+        messageID: 'msg-retyped',
+        type: 'reasoning',
+        text: '',
+        metadata: {
+          openai: {
+            reasoningEncryptedContent: 'enc',
+          },
+        },
+      },
+    },
+  }), 2, {
+    runId: 'run-retyped',
+    minMessageTimeMs: 0,
+    isFinal: false,
+    repoName: 'repo-r',
+  });
+
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'message.part.delta',
+    properties: {
+      sessionID: 'ses-retyped',
+      messageID: 'msg-retyped',
+      partID: 'part-retyped',
+      field: 'text',
+      delta: 'final text survives',
+    },
+  }), 3, {
+    runId: 'run-retyped',
+    minMessageTimeMs: 0,
+    isFinal: true,
+    repoName: 'repo-r',
+  });
+
+  assert.equal(state.snapshot.messages[1], 'final text survives');
+});
+
+test('run view snapshot materializer preserves latest assistant text without message timestamps', () => {
+  let state = createRunViewSnapshotState('ses-no-time');
+
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'message.part.updated',
+    properties: {
+      part: {
+        id: 'part-no-time',
+        sessionID: 'ses-no-time',
+        messageID: 'msg-no-time',
+        type: 'text',
+        text: '',
+      },
+    },
+  }), 1, {
+    runId: 'run-no-time',
+    minMessageTimeMs: Date.now(),
+    isFinal: false,
+    repoName: 'repo-r',
+  });
+
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'message.part.delta',
+    properties: {
+      sessionID: 'ses-no-time',
+      messageID: 'msg-no-time',
+      partID: 'part-no-time',
+      field: 'text',
+      delta: 'late but valid final text',
+    },
+  }), 2, {
+    runId: 'run-no-time',
+    minMessageTimeMs: Date.now(),
+    isFinal: true,
+    repoName: 'repo-r',
+  });
+
+  assert.equal(state.snapshot.messages[1], 'late but valid final text');
+});
+
+test('run view snapshot materializer propagates tail materialize hint', () => {
+  let state = createRunViewSnapshotState('ses-hint');
+
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'message.updated',
+    properties: {
+      info: {
+        id: 'msg-hint',
+        sessionID: 'ses-hint',
+        role: 'assistant',
+        time: { created: 10 },
+      },
+    },
+  }), 1, {
+    runId: 'run-hint',
+    minMessageTimeMs: 0,
+    isFinal: false,
+    repoName: 'repo-r',
+  });
+
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'message.part.updated',
+    properties: {
+      part: {
+        id: 'part-hint',
+        sessionID: 'ses-hint',
+        messageID: 'msg-hint',
+        type: 'text',
+        text: '',
+      },
+    },
+  }), 2, {
+    runId: 'run-hint',
+    minMessageTimeMs: 0,
+    isFinal: false,
+    repoName: 'repo-r',
+  });
+
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'message.part.delta',
+    properties: {
+      sessionID: 'ses-hint',
+      messageID: 'msg-hint',
+      partID: 'part-hint',
+      field: 'text',
+      delta: 'hinted text',
+    },
+  }), 3, {
+    runId: 'run-hint',
+    minMessageTimeMs: 0,
+    isFinal: true,
+    repoName: 'repo-r',
+  });
+
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'message.part.updated',
+    properties: {
+      part: {
+        id: 'part-hint',
+        sessionID: 'ses-hint',
+        messageID: 'msg-hint',
+        type: 'text',
+        text: 'hinted text final',
+      },
+    },
+  }), 4, {
+    runId: 'run-hint',
+    minMessageTimeMs: 0,
+    isFinal: true,
+    repoName: 'repo-r',
+  });
+
+  assert.deepEqual(state.snapshot.tailMaterializeHint, {
+    messageId: 'msg-hint',
+    partId: 'part-hint',
+    reason: 'text_part_updated_after_delta',
+  });
+});
+
 test('run view snapshot materializer does not truncate reasoning preview', () => {
   let state = createRunViewSnapshotState('ses-reasoning-full');
   const longReasoning = 'long-reasoning-'.repeat(12);

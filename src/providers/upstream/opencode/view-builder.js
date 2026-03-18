@@ -84,6 +84,7 @@ function pickLatestAssistantMessage(renderState, options) {
   if (latestId && messages[latestId]) {
     const latestMessage = messages[latestId];
     if (messageTimeMs(latestMessage) >= minMessageTimeMs) return latestMessage;
+    if (messageTimeMs(latestMessage) === 0 && toText(latestMessage.renderText).trim()) return latestMessage;
   }
 
   const order = Array.isArray(renderState.messages && renderState.messages.order)
@@ -101,6 +102,7 @@ function pickLatestAssistantMessage(renderState, options) {
 function collectAssistantMessages(renderState, options) {
   const messages = renderState.messages && renderState.messages.byId ? renderState.messages.byId : {};
   const minMessageTimeMs = Number(options && options.minMessageTimeMs ? options.minMessageTimeMs : 0) || 0;
+  const latestId = toText(renderState.render && renderState.render.latestAssistantMessageId).trim();
   const order = Array.isArray(renderState.messages && renderState.messages.order)
     ? renderState.messages.order
     : Object.keys(messages);
@@ -108,9 +110,11 @@ function collectAssistantMessages(renderState, options) {
   for (let i = 0; i < order.length; i += 1) {
     const message = messages[order[i]];
     if (!message || message.role !== 'assistant') continue;
-    if (messageTimeMs(message) < minMessageTimeMs) continue;
     const text = toText(message.renderText).trim();
     if (!text) continue;
+    const msgTimeMs = messageTimeMs(message);
+    const allowUntimedLatest = latestId && message.id === latestId && msgTimeMs === 0;
+    if (!allowUntimedLatest && msgTimeMs < minMessageTimeMs) continue;
     out.push(message);
   }
   return out;
