@@ -171,3 +171,186 @@ test('run view snapshot materializer keeps logical blocks even when maxLen is sm
   assert.equal(state.snapshot.messages.length, 2);
   assert.equal(state.snapshot.messages[1], 'abcdefghij');
 });
+
+test('run view snapshot materializer shows latest reasoning from newer reasoning-only assistant message', () => {
+  let state = createRunViewSnapshotState('ses-reasoning');
+
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'message.updated',
+    properties: {
+      info: {
+        id: 'msg-text',
+        sessionID: 'ses-reasoning',
+        role: 'assistant',
+        time: { created: 10 },
+      },
+    },
+  }), 1, {
+    runId: 'run-reasoning',
+    minMessageTimeMs: 0,
+    isFinal: false,
+    repoName: 'repo-r',
+  });
+
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'message.part.updated',
+    properties: {
+      part: {
+        id: 'part-text',
+        sessionID: 'ses-reasoning',
+        messageID: 'msg-text',
+        type: 'text',
+        text: 'visible answer',
+      },
+    },
+  }), 2, {
+    runId: 'run-reasoning',
+    minMessageTimeMs: 0,
+    isFinal: false,
+    repoName: 'repo-r',
+  });
+
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'message.updated',
+    properties: {
+      info: {
+        id: 'msg-reasoning',
+        sessionID: 'ses-reasoning',
+        role: 'assistant',
+        time: { created: 11 },
+      },
+    },
+  }), 3, {
+    runId: 'run-reasoning',
+    minMessageTimeMs: 0,
+    isFinal: false,
+    repoName: 'repo-r',
+  });
+
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'message.part.updated',
+    properties: {
+      part: {
+        id: 'part-reasoning',
+        sessionID: 'ses-reasoning',
+        messageID: 'msg-reasoning',
+        type: 'reasoning',
+        text: 'new reasoning preview',
+      },
+    },
+  }), 4, {
+    runId: 'run-reasoning',
+    minMessageTimeMs: 0,
+    isFinal: false,
+    repoName: 'repo-r',
+  });
+
+  const statusLines = String(state.snapshot.messages[0]).split('\n');
+  assert.equal(statusLines[2], '🤔 new reasoning preview');
+  assert.equal(state.snapshot.messages[1], 'visible answer');
+});
+
+test('run view snapshot materializer refreshes status pane when reasoning text changes', () => {
+  let state = createRunViewSnapshotState('ses-reasoning-refresh');
+
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'message.updated',
+    properties: {
+      info: {
+        id: 'msg-r',
+        sessionID: 'ses-reasoning-refresh',
+        role: 'assistant',
+        time: { created: 10 },
+      },
+    },
+  }), 1, {
+    runId: 'run-reasoning-refresh',
+    minMessageTimeMs: 0,
+    isFinal: false,
+    repoName: 'repo-r',
+  });
+
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'message.part.updated',
+    properties: {
+      part: {
+        id: 'part-r',
+        sessionID: 'ses-reasoning-refresh',
+        messageID: 'msg-r',
+        type: 'reasoning',
+        text: 'first reasoning',
+      },
+    },
+  }), 2, {
+    runId: 'run-reasoning-refresh',
+    minMessageTimeMs: 0,
+    isFinal: false,
+    repoName: 'repo-r',
+  });
+
+  assert.equal(String(state.snapshot.messages[0]).split('\n')[2], '🤔 first reasoning');
+
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'message.part.updated',
+    properties: {
+      part: {
+        id: 'part-r',
+        sessionID: 'ses-reasoning-refresh',
+        messageID: 'msg-r',
+        type: 'reasoning',
+        text: 'second reasoning',
+      },
+    },
+  }), 3, {
+    runId: 'run-reasoning-refresh',
+    minMessageTimeMs: 0,
+    isFinal: false,
+    repoName: 'repo-r',
+  });
+
+  assert.equal(String(state.snapshot.messages[0]).split('\n')[2], '🤔 second reasoning');
+});
+
+test('run view snapshot materializer does not truncate reasoning preview', () => {
+  let state = createRunViewSnapshotState('ses-reasoning-full');
+  const longReasoning = 'long-reasoning-'.repeat(12);
+
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'message.updated',
+    properties: {
+      info: {
+        id: 'msg-r',
+        sessionID: 'ses-reasoning-full',
+        role: 'assistant',
+        time: { created: 10 },
+      },
+    },
+  }), 1, {
+    runId: 'run-reasoning-full',
+    minMessageTimeMs: 0,
+    isFinal: false,
+    repoName: 'repo-r',
+  });
+
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'message.part.updated',
+    properties: {
+      part: {
+        id: 'part-r',
+        sessionID: 'ses-reasoning-full',
+        messageID: 'msg-r',
+        type: 'reasoning',
+        text: longReasoning,
+      },
+    },
+  }), 2, {
+    runId: 'run-reasoning-full',
+    minMessageTimeMs: 0,
+    isFinal: false,
+    repoName: 'repo-r',
+  });
+
+  const statusLines = String(state.snapshot.messages[0]).split('\n');
+  assert.equal(statusLines[2], `🤔 ${longReasoning}`);
+  assert.equal(state.snapshot.messages[0].includes('...'), false);
+});

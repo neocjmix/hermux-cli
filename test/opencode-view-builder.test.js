@@ -189,7 +189,7 @@ test('opencode view builder verbose mode shows detailed status', () => {
   assert.match(view[0], /status:\s*`busy`/i);
 });
 
-test('opencode view builder does not include reasoning in status pane', () => {
+test('opencode view builder shows reasoning at the bottom of the status pane', () => {
   let state = createRenderState('ses-a');
 
   state = applyEvent(state, {
@@ -223,13 +223,15 @@ test('opencode view builder does not include reasoning in status pane', () => {
   }, 3);
 
   const normalView = buildRunViewFromRenderState(state, { repoName: 'my-repo' });
-  assert.doesNotMatch(normalView[0], /🤔\s+thinking through edge cases/);
+  const normalLines = String(normalView[0]).split('\n');
+  assert.equal(normalLines[2], '🤔 thinking through edge cases');
 
   const verboseView = buildRunViewFromRenderState(state, {
     runId: 'run-123',
     viewMode: 'verbose',
   });
-  assert.match(verboseView[0], /reasoning:\s*`thinking through edge cases`/i);
+  const verboseLines = String(verboseView[0]).split('\n');
+  assert.equal(verboseLines[verboseLines.length - 1], '🤔 reasoning: `thinking through edge cases`');
 });
 
 test('opencode view builder verbose mode does not truncate reasoning preview', () => {
@@ -273,6 +275,89 @@ test('opencode view builder verbose mode does not truncate reasoning preview', (
 
   assert.match(verboseView[0], new RegExp(`reasoning:\\s*\`${longReasoning}\``));
   assert.equal(verboseView[0].includes('...'), false);
+});
+
+test('opencode view builder updates normal status pane when reasoning changes', () => {
+  let state = createRenderState('ses-r-change');
+
+  state = applyEvent(state, {
+    type: 'message.updated',
+    properties: {
+      info: {
+        id: 'msg-a',
+        sessionID: 'ses-r-change',
+        role: 'assistant',
+        time: { created: 10 },
+      },
+    },
+  }, 1);
+
+  state = applyEvent(state, {
+    type: 'message.part.updated',
+    properties: {
+      part: {
+        id: 'prt-r',
+        sessionID: 'ses-r-change',
+        messageID: 'msg-a',
+        type: 'reasoning',
+        text: 'first reasoning',
+      },
+    },
+  }, 2);
+
+  const firstView = buildRunViewFromRenderState(state, { repoName: 'my-repo' });
+  assert.equal(String(firstView[0]).split('\n')[2], '🤔 first reasoning');
+
+  state = applyEvent(state, {
+    type: 'message.part.updated',
+    properties: {
+      part: {
+        id: 'prt-r',
+        sessionID: 'ses-r-change',
+        messageID: 'msg-a',
+        type: 'reasoning',
+        text: 'second reasoning',
+      },
+    },
+  }, 3);
+
+  const secondView = buildRunViewFromRenderState(state, { repoName: 'my-repo' });
+  assert.equal(String(secondView[0]).split('\n')[2], '🤔 second reasoning');
+});
+
+test('opencode view builder normal mode does not truncate reasoning preview', () => {
+  let state = createRenderState('ses-r-full');
+  const longReasoning = 'long-reasoning-'.repeat(12);
+
+  state = applyEvent(state, {
+    type: 'message.updated',
+    properties: {
+      info: {
+        id: 'msg-a',
+        sessionID: 'ses-r-full',
+        role: 'assistant',
+        time: { created: 10 },
+      },
+    },
+  }, 1);
+
+  state = applyEvent(state, {
+    type: 'message.part.updated',
+    properties: {
+      part: {
+        id: 'prt-r-long-normal',
+        sessionID: 'ses-r-full',
+        messageID: 'msg-a',
+        type: 'reasoning',
+        text: longReasoning,
+      },
+    },
+  }, 2);
+
+  const normalView = buildRunViewFromRenderState(state, { repoName: 'my-repo' });
+  const normalLines = String(normalView[0]).split('\n');
+  assert.equal(normalLines[2], `🤔 ${longReasoning}`);
+  assert.equal(normalView[0].includes('...'), false);
 });
 
 test('opencode view builder step and tool counters', () => {

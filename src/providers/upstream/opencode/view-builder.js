@@ -10,6 +10,19 @@ function formatInlineCode(value) {
   return `\`${escaped}\``;
 }
 
+function appendReasoningLine(lines, renderState, options) {
+  const latestReasoningText = toText(renderState.render && renderState.render.latestReasoningText).trim();
+  if (!latestReasoningText) return;
+
+  const viewMode = toText(options && options.viewMode).trim().toLowerCase();
+  if (viewMode === 'verbose') {
+    lines.push(`🤔 reasoning: ${formatInlineCode(latestReasoningText)}`);
+    return;
+  }
+
+  lines.push(`🤔 ${latestReasoningText}`);
+}
+
 function formatStatusPaneVerbose(renderState, _maxLen, options) {
   const sessionId = toText(renderState.sessionId || (renderState.session && renderState.session.id)).trim();
   const status = toText(renderState.session && renderState.session.status).trim() || 'unknown';
@@ -18,7 +31,6 @@ function formatStatusPaneVerbose(renderState, _maxLen, options) {
   const latestAssistantMessageId = toText(
     renderState.render && renderState.render.latestAssistantMessageId
   ).trim();
-  const latestReasoningText = toText(renderState.render && renderState.render.latestReasoningText).trim();
   const queueLength = Number(options && options.queueLength) || 0;
   const lines = [
     `run_id: ${formatInlineCode(runId || '-')}`,
@@ -28,7 +40,7 @@ function formatStatusPaneVerbose(renderState, _maxLen, options) {
   ];
   if (queueLength > 0) lines.push(`🔜 ${formatInlineCode(String(queueLength))}`);
   if (latestAssistantMessageId) lines.push(`assistant_message: ${formatInlineCode(latestAssistantMessageId)}`);
-  if (latestReasoningText) lines.push(`reasoning: ${formatInlineCode(latestReasoningText)}`);
+  appendReasoningLine(lines, renderState, options);
   return lines.join('\n');
 }
 
@@ -45,6 +57,8 @@ function formatStatusPaneNormal(renderState, _maxLen, options) {
     `📂 ${repoName} ${statusEmoji} ${status} 👣 ${stepCount} 🛠️ ${toolCount}${queueLength > 0 ? ` 🔜 ${queueLength}` : ''}`,
     `${formatInlineCode(sessionId || '-')}`,
   ];
+
+  appendReasoningLine(lines, renderState, options);
 
   return lines.join('\n');
 }
