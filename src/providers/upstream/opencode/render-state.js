@@ -172,12 +172,43 @@ function updateGlobalRender(state) {
     return candidateIndex > bestIndex;
   };
 
+  const isBetterReasoningMessage = (candidate, best, candidateIndex, bestIndex) => {
+    const candidateHasReasoning = String(candidate && candidate.renderReasoningText || '').trim().length > 0 ? 1 : 0;
+    const bestHasReasoning = String(best && best.renderReasoningText || '').trim().length > 0 ? 1 : 0;
+    if (candidateHasReasoning !== bestHasReasoning) return candidateHasReasoning > bestHasReasoning;
+
+    const candidateEventSeq = Number(candidate && candidate.lastEventSeq ? candidate.lastEventSeq : 0);
+    const bestEventSeq = Number(best && best.lastEventSeq ? best.lastEventSeq : 0);
+    if (candidateEventSeq !== bestEventSeq) return candidateEventSeq > bestEventSeq;
+
+    const candidateCompleted = Number(candidate && candidate.time && candidate.time.completed ? candidate.time.completed : 0);
+    const bestCompleted = Number(best && best.time && best.time.completed ? best.time.completed : 0);
+    const candidateCreated = Number(candidate && candidate.time && candidate.time.created ? candidate.time.created : 0);
+    const bestCreated = Number(best && best.time && best.time.created ? best.time.created : 0);
+    const candidateActivityTime = Math.max(candidateCreated, candidateCompleted, 0);
+    const bestActivityTime = Math.max(bestCreated, bestCompleted, 0);
+    if (candidateActivityTime !== bestActivityTime) return candidateActivityTime > bestActivityTime;
+    if (candidateCompleted !== bestCompleted) return candidateCompleted > bestCompleted;
+    if (candidateCreated !== bestCreated) return candidateCreated > bestCreated;
+
+    return candidateIndex > bestIndex;
+  };
+
   let best = null;
   let bestIndex = -1;
+  let bestReasoning = null;
+  let bestReasoningIndex = -1;
   for (let i = 0; i < state.messages.order.length; i += 1) {
     const mid = state.messages.order[i];
     const msg = state.messages.byId[mid];
     if (!msg || msg.role !== 'assistant') continue;
+    if (!bestReasoning) {
+      bestReasoning = msg;
+      bestReasoningIndex = i;
+    } else if (isBetterReasoningMessage(msg, bestReasoning, i, bestReasoningIndex)) {
+      bestReasoning = msg;
+      bestReasoningIndex = i;
+    }
     if (!best) {
       best = msg;
       bestIndex = i;
@@ -193,7 +224,7 @@ function updateGlobalRender(state) {
   state.render.latestAssistantPartId = '';
   state.render.latestAssistantTailMaterializeHint = null;
   state.render.latestAssistantText = best ? toText(best.renderText) : '';
-  state.render.latestReasoningText = best ? toText(best.renderReasoningText) : '';
+  state.render.latestReasoningText = bestReasoning ? toText(bestReasoning.renderReasoningText) : '';
   if (best) {
     for (let i = best.parts.order.length - 1; i >= 0; i -= 1) {
       const pid = best.parts.order[i];

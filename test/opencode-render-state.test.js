@@ -256,3 +256,61 @@ test('opencode render state tracks latest reasoning text for status pane', () =>
   assert.equal(state.messages.byId['msg-r'].renderReasoningText, 'reasoning snippet');
   assert.equal(state.render.latestReasoningText, 'reasoning snippet');
 });
+
+test('opencode render state keeps latest reasoning from newer reasoning-only assistant message', () => {
+  let state = createRenderState('ses-r2');
+
+  state = applyPayload(state, JSON.stringify({
+    type: 'message.updated',
+    properties: {
+      info: {
+        id: 'msg-text',
+        sessionID: 'ses-r2',
+        role: 'assistant',
+        time: { created: 1 },
+      },
+    },
+  }), 1);
+
+  state = applyPayload(state, JSON.stringify({
+    type: 'message.part.updated',
+    properties: {
+      part: {
+        id: 'part-text',
+        sessionID: 'ses-r2',
+        messageID: 'msg-text',
+        type: 'text',
+        text: 'visible answer',
+      },
+    },
+  }), 2);
+
+  state = applyPayload(state, JSON.stringify({
+    type: 'message.updated',
+    properties: {
+      info: {
+        id: 'msg-reasoning',
+        sessionID: 'ses-r2',
+        role: 'assistant',
+        time: { created: 3 },
+      },
+    },
+  }), 3);
+
+  state = applyPayload(state, JSON.stringify({
+    type: 'message.part.updated',
+    properties: {
+      part: {
+        id: 'part-reasoning',
+        sessionID: 'ses-r2',
+        messageID: 'msg-reasoning',
+        type: 'reasoning',
+        text: 'new reasoning preview',
+      },
+    },
+  }), 4);
+
+  assert.equal(state.render.latestAssistantMessageId, 'msg-text');
+  assert.equal(state.render.latestAssistantText, 'visible answer');
+  assert.equal(state.render.latestReasoningText, 'new reasoning preview');
+});
