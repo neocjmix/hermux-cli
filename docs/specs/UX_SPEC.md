@@ -76,6 +76,7 @@ Lifecycle semantics:
 - Markdown output is converted to Telegram-safe HTML when possible
 - on HTML send/edit failure, plain text retry is used
 - long messages are chunked to Telegram-safe limits
+- status pane SHOULD append the latest reasoning preview as its final line when reasoning text exists, prefixed with a thinking emoji
 - `<system-reminder>` content is rendered at the bottom of the live status panel and MUST appear as a code block
 
 ## Failure Semantics

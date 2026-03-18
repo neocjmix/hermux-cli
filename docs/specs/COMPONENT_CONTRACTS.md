@@ -130,6 +130,7 @@ Contract rules:
 - Snapshot emission must allow last-snapshot application without semantic loss at downstream boundary.
 - `isFinal` marks provider phase completion for the emitting run snapshot; it MUST NOT be interpreted as session lifecycle termination.
 - `runId` remains a correlation field for rendering/audit, while lifecycle ownership still follows session-first routing and next-run/session-end termination semantics from `docs/specs/SESSION_EVENT_ROUTING_SPEC.md`.
+- Status-pane rendering SHOULD include the latest reasoning preview as the final line when upstream render state exposes reasoning text.
 
 Current implementation anchors:
 
