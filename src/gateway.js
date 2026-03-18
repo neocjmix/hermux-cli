@@ -4185,23 +4185,11 @@ async function startPromptRun(bot, repo, state, runItem) {
         const tailMaterializeHint = snapshot && snapshot.tailMaterializeHint && typeof snapshot.tailMaterializeHint === 'object'
           ? snapshot.tailMaterializeHint
           : null;
-        const previousProjected = state.sessionProjectedTexts.get(key) || [];
-        if (
-          areTextArraysEqual(previousProjected, snapshotMessages)
-          && !hasTailMaterializeHint(tailMaterializeHint)
-        ) {
-          auditRun('run.session_event.apply.skip', {
-            sid: key,
-            reason: 'snapshot_not_changed',
-            batchSize: payloads.length,
-          });
-          return;
-        }
-        state.sessionProjectedTexts.set(key, snapshotMessages.slice());
         await reconcileRunView(
           snapshotMessages,
           { isFinalState: false, tailMaterializeHint }
         );
+        state.sessionProjectedTexts.set(key, snapshotMessages.slice());
       },
     });
     sessionApplyProcessors.set(key, created);
