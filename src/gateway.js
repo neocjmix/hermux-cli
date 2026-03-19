@@ -696,6 +696,31 @@ async function materializeTelegramDraftPreview(bot, chatId, currentPreview, html
   };
 }
 
+async function maybeMaterializeRunStartDraftPreview(bot, currentView, auditMeta) {
+  const view = currentView && typeof currentView === 'object' ? currentView : null;
+  const preview = view && view.draftPreview && typeof view.draftPreview === 'object'
+    ? view.draftPreview
+    : null;
+  const previewText = String(preview && preview.text ? preview.text : '');
+  if (!preview || !previewText.trim()) return null;
+  const targetChatId = String(view && view.chatId ? view.chatId : '').trim();
+  if (!targetChatId) return null;
+  return materializeTelegramDraftPreview(
+    bot,
+    targetChatId,
+    preview,
+    previewText,
+    { parse_mode: 'HTML' },
+    {
+      ...(auditMeta || {}),
+      chatId: targetChatId,
+      channel: 'run_start_draft_materialize',
+      materializeReason: 'new_run_start_materialize_existing_preview',
+      isFinalState: true,
+    }
+  );
+}
+
 function isMessageNotModifiedError(err) {
   return String(err && err.message || '').includes('message is not modified');
 }
@@ -3510,6 +3535,16 @@ function clearRunRenderStateAtRunStart(state, sessionId) {
   }
 }
 
+function clearRunRenderStateForAttachedSession(state, tracker, sessionId) {
+  if (!state || typeof state !== 'object') return '';
+  const sid = String(sessionId || '').trim();
+  if (!sid) return String(tracker || '').trim();
+  const tracked = String(tracker || '').trim();
+  if (tracked === sid) return tracked;
+  clearRunRenderStateAtRunStart(state, sid);
+  return sid;
+}
+
 function enqueueDeferredRunStartTask(state, task) {
   if (!state || typeof state !== 'object') return;
   if (typeof task !== 'function') return;
@@ -3608,6 +3643,14 @@ async function startPromptRun(bot, repo, state, runItem) {
   const isVersionPrompt = !!runItem.isVersionPrompt;
 
   await runDeferredRunStartTasks(state);
+  const previousRunView = state.runView && typeof state.runView === 'object'
+    ? {
+      ...state.runView,
+      draftPreview: state.runView.draftPreview && typeof state.runView.draftPreview === 'object'
+        ? { ...state.runView.draftPreview }
+        : null,
+    }
+    : null;
 
   state.running = true;
   state.interruptRequested = false;
@@ -3624,7 +3667,14 @@ async function startPromptRun(bot, repo, state, runItem) {
   let lastStepReason = null;
   let activeSessionId = getSessionId(repo.name, chatId);
   state.activeSessionId = activeSessionId;
+  await maybeMaterializeRunStartDraftPreview(bot, previousRunView, {
+    repo: repo.name,
+    runId: 'pending',
+    sessionId: String(activeSessionId || '').trim(),
+    nextChatId: String(chatId),
+  });
   clearRunRenderStateAtRunStart(state, activeSessionId);
+  let clearedRunRenderSessionId = String(activeSessionId || '').trim();
   const hermuxVersion = String(HERMUX_VERSION || '').trim() || '0.0.0';
   let lastPanelHeartbeatAt = 0;
   let lastStreamSnapshot = '';
@@ -3658,6 +3708,7 @@ async function startPromptRun(bot, repo, state, runItem) {
   };
   state.runView = {
     runId,
+    sessionId: String(activeSessionId || '').trim(),
     chatId: String(chatId),
     messageIds: [],
     texts: [],
@@ -4009,9 +4060,10 @@ async function startPromptRun(bot, repo, state, runItem) {
 
     return withRunViewDispatchLock(state, async () => {
       const runViewLockWaitMs = Math.max(0, Date.now() - lockRequestedAt);
-      const currentViewTexts = state.runView && Array.isArray(state.runView.texts) ? state.runView.texts : [];
-      const currentDraftPreview = state.runView && state.runView.draftPreview && typeof state.runView.draftPreview === 'object'
-        ? state.runView.draftPreview
+      const baseView = state.runView || null;
+      const currentViewTexts = baseView && Array.isArray(baseView.texts) ? baseView.texts : [];
+      const currentDraftPreview = baseView && baseView.draftPreview && typeof baseView.draftPreview === 'object'
+        ? baseView.draftPreview
         : null;
       const currentProjectedTexts = currentViewTexts.slice();
       if (currentDraftPreview && currentDraftPreview.text) {
@@ -4026,17 +4078,12 @@ async function startPromptRun(bot, repo, state, runItem) {
         return;
       }
 
-      // Check if this is a new run starting (different runId)
-      const previousRunId = state.runView && state.runView.runId ? String(state.runView.runId) : '';
-      const currentRunId = state.currentRunContext && state.currentRunContext.runId ? String(state.currentRunContext.runId) : '';
-      const isNewRunStarting = previousRunId && currentRunId && previousRunId !== currentRunId;
-
-      // For new runs, don't pass old messageIds to avoid deleting previous messages
-      const currentView = isNewRunStarting ? { texts: [], messageIds: [] } : {
-        texts: Array.isArray(state.runView?.texts) ? state.runView.texts : [],
-        messageIds: Array.isArray(state.runView?.messageIds) ? state.runView.messageIds : [],
-        draftPreview: state.runView && state.runView.draftPreview && typeof state.runView.draftPreview === 'object'
-          ? state.runView.draftPreview
+      const currentView = {
+        texts: currentViewTexts,
+        messageIds: baseView && Array.isArray(baseView.messageIds) ? baseView.messageIds : [],
+        draftPreview: currentDraftPreview,
+        materializedTail: baseView && baseView.materializedTail && typeof baseView.materializedTail === 'object'
+          ? baseView.materializedTail
           : null,
       };
 
@@ -4306,6 +4353,14 @@ async function startPromptRun(bot, repo, state, runItem) {
         if (routedResult.nextSessionId && routedResult.nextSessionId !== activeSessionId) {
           activeSessionId = routedResult.nextSessionId;
           state.activeSessionId = activeSessionId;
+          if (state.runView && typeof state.runView === 'object') {
+            state.runView.sessionId = String(activeSessionId || '').trim();
+          }
+          clearedRunRenderSessionId = clearRunRenderStateForAttachedSession(
+            state,
+            clearedRunRenderSessionId,
+            activeSessionId
+          );
           await ensureSessionDelivery(activeSessionId);
         }
       },
@@ -4359,6 +4414,14 @@ async function startPromptRun(bot, repo, state, runItem) {
         if (evt.sessionId && String(evt.sessionId).trim() && String(evt.sessionId).trim() !== activeSessionId) {
           activeSessionId = String(evt.sessionId).trim();
           state.activeSessionId = activeSessionId;
+          if (state.runView && typeof state.runView === 'object') {
+            state.runView.sessionId = String(activeSessionId || '').trim();
+          }
+          clearedRunRenderSessionId = clearRunRenderStateForAttachedSession(
+            state,
+            clearedRunRenderSessionId,
+            activeSessionId
+          );
           if (state.currentRunContext && typeof state.currentRunContext === 'object') {
             state.currentRunContext.sessionId = activeSessionId;
           }
@@ -4415,6 +4478,14 @@ async function startPromptRun(bot, repo, state, runItem) {
       state.panelRefresh = null;
       if (meta && meta.sessionId) activeSessionId = meta.sessionId;
       state.activeSessionId = activeSessionId;
+      if (state.runView && typeof state.runView === 'object') {
+        state.runView.sessionId = String(activeSessionId || '').trim();
+      }
+      clearedRunRenderSessionId = clearRunRenderStateForAttachedSession(
+        state,
+        clearedRunRenderSessionId,
+        activeSessionId
+      );
       if (state.currentRunContext && typeof state.currentRunContext === 'object') {
         state.currentRunContext.sessionId = String(activeSessionId || '').trim();
       }
@@ -4858,6 +4929,7 @@ module.exports = {
     formatRawEventPreview,
     resolveRawDeliveryPlan,
     clearRunRenderStateAtRunStart,
+    clearRunRenderStateForAttachedSession,
     createTrailingThrottleProcessor,
     buildAuditContentMeta,
     shouldDeferRunViewRetryAfter,
@@ -4867,6 +4939,7 @@ module.exports = {
     auditTelegramPreviewRoute,
     updateTelegramDraftPreview,
     materializeTelegramDraftPreview,
+    maybeMaterializeRunStartDraftPreview,
     clearTelegramDraftPreview,
   },
 };

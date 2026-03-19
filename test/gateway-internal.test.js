@@ -251,6 +251,25 @@ test('clearRunRenderStateAtRunStart is no-op for empty session id', () => {
   assert.deepEqual(state.latestSessionRenderState, { sessionId: 'ses-a', value: 1 });
 });
 
+test('clearRunRenderStateForAttachedSession clears newly attached session once', () => {
+  const state = {
+    sessionRenderStates: new Map([
+      ['ses-late', { sessionId: 'ses-late', value: 1 }],
+      ['ses-other', { sessionId: 'ses-other', value: 2 }],
+    ]),
+    latestSessionRenderState: { sessionId: 'ses-late', value: 1 },
+  };
+
+  const tracked = _internal.clearRunRenderStateForAttachedSession(state, '', 'ses-late');
+  const unchanged = _internal.clearRunRenderStateForAttachedSession(state, tracked, 'ses-late');
+
+  assert.equal(tracked, 'ses-late');
+  assert.equal(unchanged, 'ses-late');
+  assert.equal(state.sessionRenderStates.has('ses-late'), false);
+  assert.equal(state.sessionRenderStates.has('ses-other'), true);
+  assert.equal(state.latestSessionRenderState, null);
+});
+
 test('createTrailingThrottleProcessor applies leading then trailing latest value', async () => {
   const seen = [];
   const throttled = _internal.createTrailingThrottleProcessor({
@@ -837,6 +856,81 @@ test('resolveSendMessageDraftApi uses bot _request transport when helper is miss
       },
     },
   }]);
+});
+
+test('maybeMaterializeRunStartDraftPreview materializes non-empty draft preview', async () => {
+  const calls = [];
+  const bot = {
+    _request: async (method, options) => {
+      calls.push({ method, options });
+      return true;
+    },
+    sendMessage: async (chatId, text, opts) => {
+      calls.push({ method: 'sendMessage', chatId, text, opts });
+      return { message_id: 55 };
+    },
+  };
+
+  const result = await _internal.maybeMaterializeRunStartDraftPreview(bot, {
+    chatId: '100',
+    draftPreview: {
+      transport: 'draft',
+      draftId: 7,
+      text: '<b>carryover</b>',
+    },
+  }, {
+    repo: 'demo',
+    runId: 'pending',
+    sessionId: 'ses-1',
+  });
+
+  assert.deepEqual(result, { messageId: 55, persistOp: 'send' });
+  assert.deepEqual(calls, [
+    {
+      method: 'sendMessage',
+      chatId: '100',
+      text: '<b>carryover</b>',
+      opts: { parse_mode: 'HTML' },
+    },
+    {
+      method: 'sendMessageDraft',
+      options: {
+        form: {
+          chat_id: '100',
+          draft_id: 7,
+          text: '',
+        },
+      },
+    },
+  ]);
+});
+
+test('maybeMaterializeRunStartDraftPreview ignores empty preview text', async () => {
+  const calls = [];
+  const bot = {
+    _request: async (...args) => {
+      calls.push(args);
+      return true;
+    },
+    sendMessage: async (...args) => {
+      calls.push(args);
+      return { message_id: 1 };
+    },
+  };
+
+  const result = await _internal.maybeMaterializeRunStartDraftPreview(bot, {
+    chatId: '100',
+    draftPreview: {
+      transport: 'draft',
+      draftId: 9,
+      text: '   ',
+    },
+  }, {
+    repo: 'demo',
+  });
+
+  assert.equal(result, null);
+  assert.deepEqual(calls, []);
 });
 
 test('resolveTelegramPreviewTransport explains draft vs message routing', () => {

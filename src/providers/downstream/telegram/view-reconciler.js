@@ -198,6 +198,11 @@ async function reconcileRunViewForTelegram(params) {
       };
     }
   } else if (currentDraftPreview) {
+    const canPromoteMessagePreview = !!(
+      currentDraftPreview.transport === 'message'
+      && currentDraftPreview.messageId
+      && (isFinalState || materializeStaleDraft)
+    );
     if ((isFinalState || materializeStaleDraft || shouldMaterializeDraftTail) && typeof materializeDraft === 'function' && splitTailFromCommitted) {
       const finalText = targetTexts[targetTexts.length - 1];
       const materialized = await materializeDraft(bot, chatId, currentDraftPreview, finalText, { parse_mode: 'HTML' }, {
@@ -223,6 +228,15 @@ async function reconcileRunViewForTelegram(params) {
           });
         }
       }
+    } else if (canPromoteMessagePreview) {
+      const committedIndex = committedTargetTexts.length;
+      messageIds[committedIndex] = currentDraftPreview.messageId;
+      appliedTexts[committedIndex] = String(currentDraftPreview.text || '');
+      nextMaterializedTail = requestedMaterializedTail || {
+        messageId: '',
+        partId: '',
+        reason: 'retain_message_preview_after_completion',
+      };
     } else if (typeof clearDraft === 'function') {
       await clearDraft(bot, chatId, currentDraftPreview, {
         ...runAuditMeta,

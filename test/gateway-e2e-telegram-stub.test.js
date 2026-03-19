@@ -518,6 +518,14 @@ test('gateway e2e remains alive when scenario forces sendMessage API error', asy
       },
     });
 
+    await waitFor(async () => {
+      const reqs = await httpJson({ method: 'GET', url: `${started.controlUrl}/requests` });
+      return reqs.body.requests.some((r) => (
+        r.method === 'sendMessageDraft'
+        && String((r.params && r.params.text) || '').includes('carryover:draft-preview')
+      )) ? true : null;
+    }, { timeoutMs: 10000, stepMs: 100 });
+
     await httpJson({
       method: 'POST',
       url: `${started.controlUrl}/updates`,
@@ -2281,7 +2289,16 @@ test('gateway e2e should reproduce missing second response when assistant text l
       .map((r) => String(r.payload && r.payload.textPreview || ''))
       .join('\n');
 
+    const staleDeletes = secondRows.filter((r) => (
+      r.kind === 'telegram.delete'
+      && r.payload
+      && r.payload.meta
+      && (r.payload.meta.channel === 'run_view_delete' || r.payload.meta.channel === 'run_view_draft_clear')
+    ));
+    assert.equal(staleDeletes.length, 0);
+
     assert.match(secondRunViewText, /second-post-complete:pc-second/);
+    assert.doesNotMatch(secondRunViewText, /first-ok/);
 
     const finalRunViewApply = secondRows
       .filter((r) => r.kind === 'run.view.apply.end')
@@ -2437,6 +2454,95 @@ test('gateway e2e materializes post-complete draft preview into final second res
   } finally {
     if (!stopped) {
       await stopGateway(runtime, { controlUrl: started.controlUrl, testName: 'post-complete-same-part-materialize', status: 'teardown' });
+    }
+    await telegram.stop();
+    restoreFile(config.CONFIG_PATH, cfgSnapshot);
+  }
+});
+
+test('gateway e2e materializes non-empty prior draft preview when next run starts', async () => {
+  const cfgSnapshot = backupFile(config.CONFIG_PATH);
+  const token = 'test-token';
+  const telegram = createTelegramMockServer();
+  const started = await telegram.start(0);
+  const fixturePath = path.resolve(__dirname, 'fixtures', 'fake-opencode-sdk-two-runs-draft-carryover.js');
+
+  config.save({
+    global: { telegramBotToken: token },
+    repos: [{
+      name: 'demo',
+      enabled: true,
+      workdir: '/tmp/demo',
+      chatIds: ['100'],
+      opencodeCommand: 'opencode sdk',
+      logFile: './logs/demo.log',
+    }],
+  });
+
+  const runtime = startGateway({
+    HERMUX_TELEGRAM_BASE_API_URL: started.baseApiUrl,
+    HERMUX_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
+    HERMUX_OPENCODE_SDK_SHIM: fixturePath,
+  });
+
+  let stopped = false;
+  try {
+    await waitForBootstrapAndClearRequests(started.controlUrl);
+
+    await httpJson({
+      method: 'POST',
+      url: `${started.controlUrl}/updates`,
+      body: {
+        token,
+        update: {
+          update_id: 73,
+          message: {
+            message_id: 73,
+            date: Math.floor(Date.now() / 1000),
+            text: 'draft-carryover-first',
+            chat: { id: 100, type: 'private' },
+            from: { id: 200, is_bot: false, first_name: 'Tester' },
+          },
+        },
+      },
+    });
+
+    await httpJson({
+      method: 'POST',
+      url: `${started.controlUrl}/updates`,
+      body: {
+        token,
+        update: {
+          update_id: 74,
+          message: {
+            message_id: 74,
+            date: Math.floor(Date.now() / 1000),
+            text: 'draft-carryover-second',
+            chat: { id: 100, type: 'private' },
+            from: { id: 200, is_bot: false, first_name: 'Tester' },
+          },
+        },
+      },
+    });
+
+    const requests = await waitFor(async () => {
+      const reqs = await httpJson({ method: 'GET', url: `${started.controlUrl}/requests` });
+      const all = reqs.body.requests;
+      const hasDraft = all.some((r) => r.method === 'sendMessageDraft' && String((r.params && r.params.text) || '').includes('carryover:draft-preview'));
+      const hasMaterialized = all.some((r) => r.method === 'sendMessage' && String((r.params && r.params.text) || '').includes('carryover:draft-preview'));
+      const hasCleared = all.some((r) => r.method === 'sendMessageDraft' && String((r.params && r.params.text) || '') === '');
+      return hasDraft && hasMaterialized && hasCleared ? all : null;
+    }, { timeoutMs: 10000, stepMs: 100 });
+
+    assert.equal(requests.some((r) => r.method === 'sendMessageDraft' && String((r.params && r.params.text) || '').includes('carryover:draft-preview')), true);
+    assert.equal(requests.some((r) => r.method === 'sendMessage' && String((r.params && r.params.text) || '').includes('carryover:draft-preview')), true);
+    assert.equal(requests.some((r) => r.method === 'sendMessageDraft' && String((r.params && r.params.text) || '') === ''), true);
+
+    await stopGateway(runtime, { controlUrl: started.controlUrl, testName: 'run-start-draft-materialize', status: 'ok' });
+    stopped = true;
+  } finally {
+    if (!stopped) {
+      await stopGateway(runtime, { controlUrl: started.controlUrl, testName: 'run-start-draft-materialize', status: 'teardown' });
     }
     await telegram.stop();
     restoreFile(config.CONFIG_PATH, cfgSnapshot);

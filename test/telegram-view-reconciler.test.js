@@ -216,3 +216,39 @@ test('telegram view reconciler expands one logical block into multiple slots wit
   assert.deepEqual(next.messageIds, [71, 72]);
   assert.deepEqual(next.texts, ['<b>ab</b>', '<b>cd</b>']);
 });
+
+test('telegram view reconciler retains message preview on final-state reconcile in non-draft chats', async () => {
+  let cleared = false;
+
+  const next = await reconcileRunViewForTelegram({
+    bot: {},
+    chatId: '-100123',
+    runAuditMeta: { runId: 'r7' },
+    currentView: {
+      texts: ['status only'],
+      messageIds: [91],
+      draftPreview: {
+        transport: 'message',
+        messageId: 92,
+        text: 'preview answer',
+      },
+    },
+    nextTexts: ['status only'],
+    isFinalState: true,
+    sendText: async () => ({ message_id: 93 }),
+    editText: async () => {},
+    clearDraft: async () => {
+      cleared = true;
+    },
+    deleteMessage: async () => true,
+  });
+
+  assert.equal(cleared, false);
+  assert.deepEqual(next.messageIds, [91, 92]);
+  assert.deepEqual(next.texts, ['status only', 'preview answer']);
+  assert.deepEqual(next.materializedTail, {
+    messageId: '',
+    partId: '',
+    reason: 'retain_message_preview_after_completion',
+  });
+});
