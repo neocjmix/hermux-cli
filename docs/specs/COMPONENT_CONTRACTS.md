@@ -54,9 +54,16 @@ Runtime contract:
 - chat routes to repo by mapping table
 - per-repo lock allows one active run
 - queued prompts maintain FIFO order
+- `src/gateway.js` acts as composition/orchestration root and MUST prefer provider/application facades over direct provider-private logic
 - non-final run-view latest-assistant preview MAY use Bot API `sendMessageDraft` in eligible private-chat flows, while committed status/older messages remain regular Telegram messages
 - non-final run-view Telegram send/edit retries MAY degrade by deferring stale updates instead of sleeping inline on long `retry_after`; final-state delivery MUST keep explicit success/failure semantics
 - draft-preview transport MUST fall back to regular send/edit preview if the method is unavailable or rejected by the Telegram API
+
+Boundary contract:
+
+- gateway MUST NOT accumulate new Telegram transport-specific send/edit/delete/draft/chat-action behavior; such behavior belongs in `src/providers/downstream/telegram/*`
+- gateway MUST NOT accumulate new OpenCode raw payload parsing or provider-event introspection once equivalent upstream-normalized/session-aware data is available
+- app/service concerns such as config mutation, model-selection policy, and chat-mapping/session-reset policy SHOULD move behind explicit service seams instead of remaining in Telegram handlers or gateway helpers
 
 Command handling contract:
 
@@ -72,6 +79,7 @@ Execution contract:
 - SDK transport is the default runtime path
 - optional command transport fallback can be forced via `HERMUX_EXECUTION_TRANSPORT=command`
 - runtime status is tracked by repo scope key
+- `src/lib/runner.js` is a compatibility shim over the active upstream provider surface and MUST NOT become a second long-term provider implementation layer
 
 Failure contract:
 
@@ -85,6 +93,7 @@ Contract:
 - markdown subset converts to Telegram-safe HTML
 - escaping is enforced for unsafe HTML characters
 - code blocks and inline code preserve readability semantics
+- because this module is channel-specific today, future boundary cleanup SHOULD relocate or rename it to make its Telegram ownership explicit
 
 ## 7) Test Mapping Rule
 
@@ -135,6 +144,7 @@ Contract rules:
 - Run-start handoff MUST materialize any non-empty prior Telegram draft preview before `state.runView` is reset for the next run; empty draft previews are ignored.
 - Active-run Telegram reconciliation SHOULD treat `tailMaterializeHint.reason === "text_part_updated_after_delta"` as a strong boundary for immediate tail materialization while preserving weaker hints for fallback-only behavior.
 - Gateway runtime SHOULD renew Telegram `typing` chat actions while the active session snapshot reports `render.busy === true`, and stop renewing when the session goes idle or the run exits.
+- `RunViewSnapshot` delivery is the only supported render contract between upstream and downstream modules; downstream behavior changes MUST be expressed through snapshot semantics or downstream-local policy, not through upstream raw event knowledge in gateway.
 
 Current implementation anchors:
 

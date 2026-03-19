@@ -137,6 +137,13 @@ Extraction rule:
 - Session-resolved late events for the prior run MUST still be accepted until that atomic handoff occurs.
 - Explicit session-ending actions (`/reset`, remap, or equivalent session continuity clear) MUST terminate the final run lifecycle for that session.
 
+Ownership chain after `run.complete`:
+
+- upstream session delivery remains authoritative for same-session late events until next-run handoff or explicit session end
+- run-callback raw event flow becomes observational/shadowed once session delivery is attached for the same session
+- downstream render ownership remains session-owned through that same handoff/end boundary
+- implementation cleanup flags such as `completionHandled` MUST NOT become routing or render-acceptance authority
+
 ### 7.4 Stale Event Fencing
 
 Each event carries ingress metadata:
