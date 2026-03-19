@@ -341,6 +341,50 @@ test('subscribeSessionEvents replays session events after run completion', async
   assert.equal(replayCount > 0, true);
 });
 
+test('subscribeSessionEvents skips buffered replay when requested', async () => {
+  const { runOpencode, subscribeSessionEvents, stopAllRuntimeExecutors } = loadRunnerWithEnv({
+    HERMUX_EXECUTION_TRANSPORT: 'sdk',
+    HERMUX_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
+    HERMUX_SDK_IDLE_DRAIN_MS: 10,
+    HERMUX_SDK_POST_COMPLETE_LINGER_MS: 20,
+  });
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runner-session-sub-no-replay-'));
+  const instance = {
+    opencodeCommand: 'opencode sdk',
+    workdir: process.cwd(),
+    logFile: path.join(tmpDir, 'runner-session-sub-no-replay.log'),
+  };
+
+  const done = await new Promise((resolve, reject) => {
+    runOpencode(instance, 'sub-check-no-replay', {
+      onEvent: () => {},
+      onDone: (exitCode, timeoutMsg, meta) => resolve({ exitCode, timeoutMsg, meta }),
+      onError: reject,
+      sessionId: '',
+    });
+  });
+
+  assert.equal(done.exitCode, 0);
+  assert.equal(done.timeoutMsg, null);
+  assert.equal(String(done.meta.sessionId || '').length > 0, true);
+
+  let replayCount = 0;
+  const sub = await subscribeSessionEvents(instance, done.meta.sessionId, {
+    replayBuffered: false,
+    onEvent: () => {
+      replayCount += 1;
+    },
+  });
+  assert.equal(sub.mode, 'sdk');
+
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  await sub.unsubscribe();
+  await stopAllRuntimeExecutors();
+
+  assert.equal(replayCount, 0);
+});
+
 test('stopAllRuntimeExecutors closes sdk runtime and next run recreates it', async () => {
   global.__FAKE_OPENCODE_SDK_STARTS__ = 0;
   const { runOpencode, stopAllRuntimeExecutors } = loadRunnerWithEnv({

@@ -1263,6 +1263,7 @@ async function subscribeSessionEvents(instance, sessionId, handlers) {
   await ensureSdkEventPump(instance, runtimeEntry);
 
   let observerQueue = Promise.resolve();
+  const replayBuffered = !handlers || handlers.replayBuffered !== false;
   const detach = addSessionObserver(runtimeEntry, sid, {
     onEvent: (framed) => {
       observerQueue = observerQueue.then(() => {
@@ -1283,7 +1284,7 @@ async function subscribeSessionEvents(instance, sessionId, handlers) {
       });
       return observerQueue;
     },
-  }, instance, { replayBuffered: true });
+  }, instance, { replayBuffered });
 
   queueScopeAudit(runtimeEntry, instance, 'router.session_delivery.attach', {
     lane: 'session-delivery',

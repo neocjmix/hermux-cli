@@ -4312,6 +4312,7 @@ async function startPromptRun(bot, repo, state, runItem) {
     await clearSessionDelivery(state);
 
     const sub = await subscribeSessionEvents(repo, sid, {
+      replayBuffered: false,
       onEvent: async (evt) => {
         if (!isCurrentRunOwner()) {
           auditRun('run.session_event.skip', {
