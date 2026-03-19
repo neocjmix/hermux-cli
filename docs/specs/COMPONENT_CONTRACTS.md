@@ -131,6 +131,8 @@ Contract rules:
 - `isFinal` marks provider phase completion for the emitting run snapshot; it MUST NOT be interpreted as session lifecycle termination.
 - `runId` remains a correlation field for rendering/audit, while lifecycle ownership still follows session-first routing and next-run/session-end termination semantics from `docs/specs/SESSION_EVENT_ROUTING_SPEC.md`.
 - Status-pane rendering SHOULD include the latest reasoning preview as the final line when upstream render state exposes reasoning text.
+- When a new run starts in the same session, downstream reconciliation MUST preserve prior-run chat history and start a fresh status-panel message for the new run instead of reusing prior-run body or status slots.
+- Run-start handoff MUST materialize any non-empty prior Telegram draft preview before `state.runView` is reset for the next run; empty draft previews are ignored.
 
 Current implementation anchors:
 

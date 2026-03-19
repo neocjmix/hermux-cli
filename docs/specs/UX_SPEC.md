@@ -76,6 +76,8 @@ Lifecycle semantics:
 - Markdown output is converted to Telegram-safe HTML when possible
 - on HTML send/edit failure, plain text retry is used
 - long messages are chunked to Telegram-safe limits
+- when a new run starts in the same session, prior-run Telegram run-view body blocks MUST remain visible in chat history, and the new run MUST start its own fresh status-panel message below the new user turn
+- when a new run starts and the previous private-chat Telegram draft preview contains any non-whitespace text, that preview MUST be materialized into a normal message before the new run resets downstream run-view state
 - status pane SHOULD append the latest reasoning preview as its final line when reasoning text exists, prefixed with a thinking emoji
 - `<system-reminder>` content is rendered at the bottom of the live status panel and MUST appear as a code block
 
