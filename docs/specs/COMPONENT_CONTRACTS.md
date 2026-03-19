@@ -133,6 +133,7 @@ Contract rules:
 - Status-pane rendering SHOULD include the latest reasoning preview as the final line when upstream render state exposes reasoning text.
 - When a new run starts in the same session, downstream reconciliation MUST preserve prior-run chat history and start a fresh status-panel message for the new run instead of reusing prior-run body or status slots.
 - Run-start handoff MUST materialize any non-empty prior Telegram draft preview before `state.runView` is reset for the next run; empty draft previews are ignored.
+- Active-run Telegram reconciliation SHOULD treat `tailMaterializeHint.reason === "text_part_updated_after_delta"` as a strong boundary for immediate tail materialization while preserving weaker hints for fallback-only behavior.
 
 Current implementation anchors:
 
