@@ -29,6 +29,11 @@ The runtime MUST be split into the following replaceable boundaries:
 
 The orchestration layer MUST depend only on these interfaces and MUST NOT depend directly on provider or channel SDK/CLI APIs.
 
+Incremental refactor rule:
+
+- `src/gateway.js` MAY remain the composition root during migration, but its remaining provider/channel-specific logic MUST move behind adapter or app-service seams slice by slice.
+- Compatibility shims MAY exist temporarily (for example `src/lib/runner.js`), but they MUST stay thin and MUST NOT become new homes for provider-specific behavior.
+
 ## 2) Canonical Event Contract
 
 All upstream events MUST be converted to a canonical envelope before routing.
@@ -81,6 +86,10 @@ Unsupported optional operations MUST fail with explicit capability errors.
 - `sendControl(target, text)`
 
 Delivery adapters MUST NOT mutate canonical event meaning. Presentation formatting MAY be applied per channel.
+
+Operational rule:
+
+- channel-specific retries, chat actions, draft-preview behavior, transport fallbacks, and formatting/chunking MUST live inside the delivery-adapter boundary or helper modules owned by that boundary.
 
 ### 3.2.1 Run View Snapshot Boundary (Normative)
 
@@ -193,6 +202,12 @@ Implementation MUST proceed in this order:
 3. wrap current Telegram send path as `TelegramDeliveryAdapter`
 4. move command handlers to orchestrator-facing application layer
 5. add new upstream/downstream adapters without core orchestrator changes
+
+Migration guardrails:
+
+- each refactor slice MUST preserve current user-visible behavior and session-first late-event semantics
+- docs/contracts must be updated before code in each non-trivial slice
+- contract tests must be added or updated before implementation in each slice
 
 ## 10) Diagrams
 

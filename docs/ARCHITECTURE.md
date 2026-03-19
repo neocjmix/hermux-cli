@@ -14,6 +14,14 @@
 Target boundary contract (for ongoing refactor) is defined in `docs/specs/ADAPTER_STRATEGY_DI_SPEC.md`.
 Core orchestration MUST evolve toward provider/channel-agnostic interfaces (`AgentRuntimeAdapter`, `DeliveryAdapter`, `SessionRoutingPolicy`, `SessionStore`).
 
+Current refactor target:
+
+- `src/gateway.js` is the composition root and orchestration shell.
+- `src/gateway.js` MUST NOT keep accumulating Telegram transport internals or OpenCode raw-payload interpretation.
+- Telegram-specific delivery behavior belongs under `src/providers/downstream/telegram/*`.
+- OpenCode-specific payload parsing, normalization, and projection belong under `src/providers/upstream/opencode/*`.
+- Generic-looking compatibility shims such as `src/lib/runner.js` MUST stay compatibility-only until they are removed.
+
 ## Module Boundaries
 
 ```text
@@ -38,6 +46,14 @@ src/
 3. Command messages are handled in gateway.
 4. Prompt messages dispatch to runner for mapped repo contexts.
 5. Runner emits progress and final output; gateway sends Telegram responses.
+
+Refactor target control flow:
+
+1. Telegram adapters decode inbound updates and route them into app/orchestration services.
+2. Gateway composes dependencies and coordinates run/session lifecycle.
+3. Upstream provider modules own provider-specific raw event parsing and `RunViewSnapshot` construction.
+4. Downstream provider modules own transport-specific send/edit/delete/draft/chat-action behavior.
+5. App/service modules own config mutation, chat mapping, and command-side business policy.
 
 ## Event Handling Topology
 
@@ -69,6 +85,8 @@ Boundary rule:
 - Downstream modules MUST NOT depend on OpenCode raw event fields (`message.part.delta`, `session.status`, etc.).
 - Gateway orchestrates snapshot flow and MUST pass provider-agnostic logical snapshot messages into downstream reconcile.
 - Transport-size chunking is a downstream concern and MUST NOT leak back into upstream snapshot construction.
+- Gateway MAY coordinate run-view application timing, but transport retries, draft/materialize policy, and channel chat-action effects MUST terminate in downstream adapter modules.
+- Once equivalent upstream-normalized/session-aware data exists, gateway MUST NOT inspect OpenCode raw payload shape for normal delivery decisions.
 
 ### Event Concurrency Contract
 

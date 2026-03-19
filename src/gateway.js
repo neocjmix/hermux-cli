@@ -40,6 +40,8 @@ const {
   getRuntimeStatusForInstance,
   createRunViewSnapshotState,
   applyPayloadToRunViewSnapshot,
+  parsePayloadMeta,
+  readBusySignalFromSessionPayload,
 } = upstreamProvider;
 
 const {
@@ -49,8 +51,12 @@ const {
   createCallbackQueryHandler,
   reconcileRunViewForTelegram,
   createTelegramBotEffects,
+  createTelegramTransport,
 } = downstreamProvider;
 const { splitTelegramHtml } = require('./providers/downstream/telegram/html-chunker');
+const { createChatRoutingService } = require('./app/chat-routing-service');
+const { createModelControlService } = require('./app/model-control-service');
+const { createModelCommandService } = require('./app/model-command-service');
 
 const TG_MAX_LEN = 4000;
 const IMAGE_UPLOAD_DIR = '.hermux/uploads';
@@ -76,11 +82,7 @@ const OMO_CONFIG_PATH = process.env.HERMUX_OMO_CONFIG_PATH || path.join(process.
 const AUDIT_STRING_MAX = parseInt(process.env.HERMUX_AUDIT_STRING_MAX || '16000', 10);
 const APPLY_PAYLOAD_THROTTLE_MS = parseInt(process.env.HERMUX_APPLY_PAYLOAD_THROTTLE_MS || '500', 10);
 const RUN_VIEW_RETRY_AFTER_DEFER_MS = parseInt(process.env.HERMUX_RUN_VIEW_RETRY_AFTER_DEFER_MS || '5000', 10);
-const TELEGRAM_DRAFT_ID_MAX = 2147483647;
-const TELEGRAM_DRAFT_METHOD_UNAVAILABLE_RE = /(unknown method|method .*not (found|available|supported)|unsupported)/i;
-const TELEGRAM_DRAFT_CHAT_UNSUPPORTED_RE = /(can't be used|can be used only|private chat|topic mode enabled|textdraft_peer_invalid)/i;
 const TRACE_RUNVIEW_DIAGNOSTICS = true;
-let nextTelegramDraftId = 0;
 const TRACE_SESSION_ID = String(process.env.HERMUX_TRACE_SESSION_ID || '').trim();
 const auditLogger = makeAuditLogger(RUNTIME_DIR);
 let connectMutationQueue = Promise.resolve();
@@ -176,53 +178,6 @@ function shouldTraceSessionDiagnostic(...sessionCandidates) {
   return false;
 }
 
-function parsePayloadMeta(payload) {
-  const raw = String(payload || '').trim();
-  if (!raw) {
-    return {
-      payloadType: '',
-      payloadSessionId: '',
-      messageId: '',
-      partId: '',
-      field: '',
-      deltaLength: 0,
-      payloadSha256: createHash('sha256').update('').digest('hex'),
-    };
-  }
-  const payloadSha256 = createHash('sha256').update(raw).digest('hex');
-  let parsed = null;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (_err) {
-    return {
-      payloadType: '',
-      payloadSessionId: '',
-      messageId: '',
-      partId: '',
-      field: '',
-      deltaLength: 0,
-      payloadSha256,
-    };
-  }
-  const props = parsed && typeof parsed.properties === 'object' ? parsed.properties : {};
-  const payloadSessionId = String(
-    props.sessionID
-    || (props.part && props.part.sessionID)
-    || (props.info && props.info.sessionID)
-    || ''
-  ).trim();
-  const deltaText = String(props.delta || '');
-  return {
-    payloadType: String(parsed && parsed.type ? parsed.type : ''),
-    payloadSessionId,
-    messageId: String(props.messageID || (props.part && props.part.messageID) || (props.info && props.info.id) || ''),
-    partId: String(props.partID || (props.part && props.part.id) || ''),
-    field: String(props.field || ''),
-    deltaLength: deltaText.length,
-    payloadSha256,
-  };
-}
-
 function audit(kind, payload) {
   auditLogger.write(kind, payload);
 }
@@ -233,6 +188,38 @@ const telegramBotEffects = createTelegramBotEffects({
   getTelegramRetryAfterSeconds,
 });
 const { safeSendChatAction } = telegramBotEffects;
+const telegramTransport = createTelegramTransport({
+  audit,
+  sleep,
+  getTelegramRetryAfterSeconds,
+  summarizeAuditText,
+  shouldDeferRunViewRetryAfter,
+  splitTelegramHtml,
+  md2html,
+  maxLen: TG_MAX_LEN,
+});
+const {
+  resolveSendMessageDraftApi,
+  updateTelegramDraftPreview,
+  clearTelegramDraftPreview,
+  materializeTelegramDraftPreview,
+  maybeMaterializeRunStartDraftPreview,
+  safeSend,
+  sendHtml,
+  sendMarkdownAsHtml,
+  editHtml,
+  safeDeleteMessage,
+  safeSendPhoto,
+  safeSendDocument,
+} = telegramTransport;
+const chatRoutingService = createChatRoutingService({
+  addChatIdToRepo,
+  moveChatIdToRepo,
+  refreshRuntimeRouting,
+  getSessionId,
+  endSessionLifecycle,
+  clearSessionId,
+});
 
 function withConnectMutationLock(task) {
   const run = connectMutationQueue.then(task, task);
@@ -373,364 +360,6 @@ function shouldDeferRunViewRetryAfter(auditMeta, waitMs) {
   if (meta && meta.isFinalState) return false;
   if (!Number.isFinite(waitMs) || waitMs <= 0) return false;
   return RUN_VIEW_RETRY_AFTER_DEFER_MS > 0 && waitMs >= RUN_VIEW_RETRY_AFTER_DEFER_MS;
-}
-
-function allocateTelegramDraftId() {
-  nextTelegramDraftId = nextTelegramDraftId >= TELEGRAM_DRAFT_ID_MAX ? 1 : nextTelegramDraftId + 1;
-  return nextTelegramDraftId;
-}
-
-function resolveSendMessageDraftApi(bot) {
-  if (bot && typeof bot.sendMessageDraft === 'function') {
-    return bot.sendMessageDraft.bind(bot);
-  }
-  if (bot && typeof bot._request === 'function') {
-    return async (chatId, draftId, text, params) => {
-      const form = {
-        chat_id: chatId,
-        draft_id: draftId,
-        text,
-        ...(params && params.parse_mode ? { parse_mode: params.parse_mode } : {}),
-        ...(params && Number.isFinite(Number(params.message_thread_id))
-          ? { message_thread_id: Number(params.message_thread_id) }
-          : {}),
-      };
-      return bot._request('sendMessageDraft', { form });
-    };
-  }
-  return null;
-}
-
-function shouldFallbackFromDraftTransport(err) {
-  const text = typeof err === 'string'
-    ? err
-    : err instanceof Error
-      ? err.message
-      : String(err && err.message ? err.message : err || '');
-  if (!/sendMessageDraft/i.test(text) && !/textdraft/i.test(text)) return false;
-  return TELEGRAM_DRAFT_METHOD_UNAVAILABLE_RE.test(text) || TELEGRAM_DRAFT_CHAT_UNSUPPORTED_RE.test(text);
-}
-
-function isEligibleTelegramDraftChatId(chatId) {
-  const numeric = Number(chatId);
-  return Number.isFinite(numeric) && numeric > 0;
-}
-
-function resolveTelegramPreviewTransport(bot, chatId, currentPreview) {
-  const existing = currentPreview && typeof currentPreview === 'object' ? currentPreview : null;
-  if (existing && existing.transport === 'message' && existing.messageId) {
-    return { transport: 'message', reason: 'existing_message_preview', sendDraft: null };
-  }
-  if (!isEligibleTelegramDraftChatId(chatId)) {
-    return { transport: 'message', reason: 'ineligible_chat', sendDraft: null };
-  }
-  const sendDraft = resolveSendMessageDraftApi(bot);
-  if (!sendDraft) {
-    return { transport: 'message', reason: 'draft_api_unavailable', sendDraft: null };
-  }
-  return {
-    transport: 'draft',
-    reason: existing && existing.transport === 'draft' && existing.draftId
-      ? 'reuse_existing_draft'
-      : 'draft_transport_available',
-    sendDraft,
-  };
-}
-
-function auditTelegramPreviewRoute({ phase, chatId, transport, reason, auditMeta, currentPreview, draftId, messageId, textPreview, error }) {
-  audit('telegram.preview.route', {
-    phase: String(phase || '').trim() || 'preview',
-    chatId: String(chatId),
-    transport: String(transport || '').trim() || 'unknown',
-    reason: String(reason || '').trim() || 'unknown',
-    currentTransport: currentPreview && currentPreview.transport ? String(currentPreview.transport) : '',
-    currentDraftId: currentPreview && currentPreview.draftId ? Number(currentPreview.draftId) : null,
-    currentMessageId: currentPreview && currentPreview.messageId ? Number(currentPreview.messageId) : null,
-    draftId: Number.isFinite(Number(draftId)) ? Number(draftId) : null,
-    messageId: Number.isFinite(Number(messageId)) ? Number(messageId) : null,
-    textPreview: String(textPreview || ''),
-    error: error ? String(error) : '',
-    meta: auditMeta || null,
-  });
-}
-
-async function updateTelegramDraftPreview(bot, chatId, currentPreview, html, opts, auditMeta) {
-  const preview = summarizeAuditText(html);
-  const existing = currentPreview && typeof currentPreview === 'object' ? currentPreview : null;
-  if (!String(html || '').trim()) {
-    auditTelegramPreviewRoute({
-      phase: 'preview',
-      chatId,
-      transport: 'none',
-      reason: 'empty_text',
-      auditMeta,
-      currentPreview: existing,
-      textPreview: preview,
-    });
-    return { applied: false };
-  }
-
-  const route = resolveTelegramPreviewTransport(bot, chatId, existing);
-  const sendDraft = route.sendDraft;
-  if (sendDraft) {
-    const draftId = Number(existing && existing.draftId ? existing.draftId : 0) || allocateTelegramDraftId();
-    auditTelegramPreviewRoute({
-      phase: 'preview',
-      chatId,
-      transport: 'draft',
-      reason: route.reason,
-      auditMeta,
-      currentPreview: existing,
-      draftId,
-      textPreview: preview,
-    });
-    try {
-      await sendDraft(chatId, draftId, html, {
-        parse_mode: opts && opts.parse_mode ? String(opts.parse_mode) : undefined,
-      });
-      audit('telegram.draft', {
-        ok: true,
-        stage: 'primary',
-        chatId: String(chatId),
-        reason: route.reason,
-        draftId,
-        parseMode: opts && opts.parse_mode ? String(opts.parse_mode) : '',
-        textPreview: preview,
-        meta: auditMeta || null,
-      });
-      return { applied: true, transport: 'draft', draftId, messageId: null };
-    } catch (err) {
-      audit('telegram.draft', {
-        ok: false,
-        stage: 'primary',
-        chatId: String(chatId),
-        reason: route.reason,
-        draftId,
-        parseMode: opts && opts.parse_mode ? String(opts.parse_mode) : '',
-        error: String(err && (err.code || err.message || err) || ''),
-        textPreview: preview,
-        meta: auditMeta || null,
-      });
-      if (!shouldFallbackFromDraftTransport(err)) {
-        auditTelegramPreviewRoute({
-          phase: 'preview',
-          chatId,
-          transport: 'none',
-          reason: 'draft_request_failed_no_fallback',
-          auditMeta,
-          currentPreview: existing,
-          draftId,
-          textPreview: preview,
-          error: String(err && (err.code || err.message || err) || ''),
-        });
-        return { applied: false };
-      }
-      auditTelegramPreviewRoute({
-        phase: 'preview',
-        chatId,
-        transport: 'message',
-        reason: 'draft_transport_rejected_fallback',
-        auditMeta,
-        currentPreview: existing,
-        draftId,
-        textPreview: preview,
-        error: String(err && (err.code || err.message || err) || ''),
-      });
-      audit('telegram.draft', {
-        ok: false,
-        stage: 'fallback_message',
-        chatId: String(chatId),
-        reason: 'draft_transport_rejected_fallback',
-        draftId,
-        parseMode: opts && opts.parse_mode ? String(opts.parse_mode) : '',
-        error: String(err && (err.code || err.message || err) || ''),
-        textPreview: preview,
-        meta: auditMeta || null,
-      });
-    }
-  }
-
-  auditTelegramPreviewRoute({
-    phase: 'preview',
-    chatId,
-    transport: 'message',
-    reason: route.reason,
-    auditMeta,
-    currentPreview: existing,
-    messageId: existing && existing.messageId ? existing.messageId : null,
-    textPreview: preview,
-  });
-
-  if (existing && existing.transport === 'message' && existing.messageId) {
-    const edited = await editHtml(bot, chatId, existing.messageId, html, {
-      ...auditMeta,
-      channel: 'run_view_edit',
-      isFinalState: false,
-    });
-    if (edited && edited.deferred) return { applied: false, transport: 'message', messageId: existing.messageId };
-    return { applied: true, transport: 'message', messageId: existing.messageId };
-  }
-
-  const sent = await safeSend(bot, chatId, html, opts, {
-    ...auditMeta,
-    channel: 'run_view_send',
-    isFinalState: false,
-  });
-  if (!sent || sent._hermuxDeferred || !sent.message_id) return { applied: false };
-  return { applied: true, transport: 'message', draftId: null, messageId: sent.message_id };
-}
-
-async function clearTelegramDraftPreview(bot, chatId, currentPreview, auditMeta) {
-  const preview = currentPreview && typeof currentPreview === 'object' ? currentPreview : null;
-  if (!preview) return false;
-  if (preview.transport === 'message' && preview.messageId) {
-    auditTelegramPreviewRoute({
-      phase: 'clear',
-      chatId,
-      transport: 'message',
-      reason: 'clear_message_preview',
-      auditMeta,
-      currentPreview: preview,
-      messageId: preview.messageId,
-      textPreview: String(preview.text || ''),
-    });
-    return safeDeleteMessage(bot, chatId, preview.messageId, auditMeta);
-  }
-  if (preview.transport === 'draft' && preview.draftId) {
-    const sendDraft = resolveSendMessageDraftApi(bot);
-    if (!sendDraft) {
-      auditTelegramPreviewRoute({
-        phase: 'clear',
-        chatId,
-        transport: 'draft',
-        reason: 'draft_api_unavailable_on_clear',
-        auditMeta,
-        currentPreview: preview,
-        draftId: preview.draftId,
-        textPreview: '',
-      });
-      return false;
-    }
-    auditTelegramPreviewRoute({
-      phase: 'clear',
-      chatId,
-      transport: 'draft',
-      reason: 'clear_draft_preview',
-      auditMeta,
-      currentPreview: preview,
-      draftId: preview.draftId,
-      textPreview: '',
-    });
-    try {
-      await sendDraft(chatId, preview.draftId, '', undefined);
-      audit('telegram.draft', {
-        ok: true,
-        stage: 'clear',
-        chatId: String(chatId),
-        reason: 'clear_draft_preview',
-        draftId: preview.draftId,
-        textPreview: '',
-        meta: auditMeta || null,
-      });
-      return true;
-    } catch (err) {
-      audit('telegram.draft', {
-        ok: false,
-        stage: 'clear',
-        chatId: String(chatId),
-        reason: 'clear_draft_preview',
-        draftId: preview.draftId,
-        error: String(err && (err.code || err.message || err) || ''),
-        textPreview: '',
-        meta: auditMeta || null,
-      });
-    }
-  }
-  return false;
-}
-
-async function materializeTelegramDraftPreview(bot, chatId, currentPreview, html, opts, auditMeta) {
-  const preview = currentPreview && typeof currentPreview === 'object' ? currentPreview : null;
-  if (!preview || !String(html || '').trim()) return null;
-  if (preview.transport === 'message' && preview.messageId) {
-    const textChanged = String(preview.text || '') !== String(html || '');
-    auditTelegramPreviewRoute({
-      phase: 'materialize',
-      chatId,
-      transport: 'message',
-      reason: textChanged ? 'finalize_existing_message_preview_edit' : 'finalize_existing_message_preview_keep',
-      auditMeta,
-      currentPreview: preview,
-      messageId: preview.messageId,
-      textPreview: summarizeAuditText(html),
-    });
-    if (textChanged) {
-      await editHtml(bot, chatId, preview.messageId, html, {
-        ...auditMeta,
-        channel: 'run_view_edit',
-        isFinalState: true,
-      });
-    }
-    return {
-      messageId: preview.messageId,
-      persistOp: textChanged ? 'edit' : 'send',
-    };
-  }
-
-  auditTelegramPreviewRoute({
-    phase: 'materialize',
-    chatId,
-    transport: 'message',
-    reason: String(auditMeta && auditMeta.materializeReason ? auditMeta.materializeReason : 'final_state_materialize'),
-    auditMeta,
-    currentPreview: preview,
-    draftId: preview && preview.draftId ? preview.draftId : null,
-    textPreview: summarizeAuditText(html),
-  });
-  const sent = await safeSend(bot, chatId, html, opts, {
-    ...auditMeta,
-    channel: 'run_view_send',
-    isFinalState: true,
-  });
-  if (!sent || !sent.message_id) return null;
-  await clearTelegramDraftPreview(bot, chatId, preview, {
-    ...auditMeta,
-    channel: 'run_view_draft_clear',
-    isFinalState: true,
-  });
-  return {
-    messageId: sent.message_id,
-    persistOp: 'send',
-  };
-}
-
-async function maybeMaterializeRunStartDraftPreview(bot, currentView, auditMeta) {
-  const view = currentView && typeof currentView === 'object' ? currentView : null;
-  const preview = view && view.draftPreview && typeof view.draftPreview === 'object'
-    ? view.draftPreview
-    : null;
-  const previewText = String(preview && preview.text ? preview.text : '');
-  if (!preview || !previewText.trim()) return null;
-  const targetChatId = String(view && view.chatId ? view.chatId : '').trim();
-  if (!targetChatId) return null;
-  return materializeTelegramDraftPreview(
-    bot,
-    targetChatId,
-    preview,
-    previewText,
-    { parse_mode: 'HTML' },
-    {
-      ...(auditMeta || {}),
-      chatId: targetChatId,
-      channel: 'run_start_draft_materialize',
-      materializeReason: 'new_run_start_materialize_existing_preview',
-      isFinalState: true,
-    }
-  );
-}
-
-function isMessageNotModifiedError(err) {
-  return String(err && err.message || '').includes('message is not modified');
 }
 
 function getHelpText() {
@@ -1157,238 +786,12 @@ function clearPendingRevertConfirmation(token) {
 }
 
 async function handleModelsCommand(bot, chatId, repo, state, parsed) {
-  const args = parsed && Array.isArray(parsed.args) ? parsed.args : [];
-  const summary = buildModelsSummaryHtml(repo.name);
-  const summaryOpts = { parse_mode: 'HTML', reply_markup: buildModelsRootKeyboard() };
-  if (args.length === 0) {
-    await safeSend(bot, chatId, summary.html, summaryOpts);
-    return;
-  }
-
-  const applyStatus = state.running ? 'scheduled_after_current_run' : 'applied_now';
-  const note = state.running
-    ? 'Current running task keeps previous model settings. New settings apply to next prompt automatically.'
-    : 'Applied immediately for next prompt.';
-
-  if (args[0] === 'opencode') {
-    const action = String(args[1] || '').trim().toLowerCase();
-    const cfg = readJsonOrDefault(OPENCODE_CONFIG_PATH, {});
-    const before = String(cfg.model || '').trim() || '(unset)';
-
-    if (action === 'get' || !action) {
-      await safeSend(
-        bot,
-        chatId,
-        [
-          '<pre><b>① opencode</b>',
-          `<b>opencode</b> ${escapeHtml(before)}`,
-          '</pre>',
-        ].join('\n'),
-        { parse_mode: 'HTML', reply_markup: buildModelsRootKeyboard() }
-      );
-      return;
-    }
-
-    if (action === 'set') {
-      const next = String(args[2] || '').trim();
-      if (!isValidModelRef(next)) {
-        await safeSend(bot, chatId, 'Invalid model format. Use provider/model (example: openai/gpt-5.3-codex).');
-        return;
-      }
-      cfg.model = next;
-      writeJsonAtomic(OPENCODE_CONFIG_PATH, cfg);
-      await safeSend(
-        bot,
-        chatId,
-        buildModelApplyMessage({
-          layer: 'opencode',
-          scope: 'global',
-          before,
-          after: next,
-          restartRequired: false,
-          applyStatus,
-          sessionImpact: 'preserved',
-          note,
-        }),
-        { reply_markup: buildModelsRootKeyboard() }
-      );
-      return;
-    }
-
-    if (action === 'clear') {
-      delete cfg.model;
-      writeJsonAtomic(OPENCODE_CONFIG_PATH, cfg);
-      await safeSend(
-        bot,
-        chatId,
-        buildModelApplyMessage({
-          layer: 'opencode',
-          scope: 'global',
-          before,
-          after: '(unset)',
-          restartRequired: false,
-          applyStatus,
-          sessionImpact: 'preserved',
-          note,
-        }),
-        { reply_markup: buildModelsRootKeyboard() }
-      );
-      return;
-    }
-
-    await safeSend(bot, chatId, 'Unknown /models opencode action. Use: get | set | clear');
-    return;
-  }
-
-  if (args[0] === 'omo') {
-    const action = String(args[1] || '').trim().toLowerCase();
-    const cfg = readJsonOrDefault(OMO_CONFIG_PATH, { agents: {} });
-
-    if (action === 'get' || !action) {
-      const agent = String(args[2] || '').trim();
-      if (!agent) {
-        await safeSend(bot, chatId, summary.html, summaryOpts);
-        return;
-      }
-      const entry = cfg.agents && cfg.agents[agent] ? cfg.agents[agent] : {};
-      const primary = String(entry.model || '').trim() || '(unset)';
-      const fallback = Array.isArray(entry.fallback_models)
-        ? entry.fallback_models.join(', ')
-        : String(entry.fallback_models || '').trim() || 'off';
-      await safeSend(
-        bot,
-        chatId,
-        [
-          '<pre><b>② oh-my-opencode</b>',
-          `<b>${escapeHtml(agent)}</b> ${escapeHtml(primary)}`,
-          '</pre>',
-        ].join('\n'),
-        { parse_mode: 'HTML', reply_markup: buildModelsRootKeyboard() }
-      );
-      return;
-    }
-
-    if (action === 'set') {
-      const agent = String(args[2] || '').trim();
-      const field = String(args[3] || '').trim().toLowerCase();
-      const value = String(args[4] || '').trim();
-      if (!agent) {
-        await safeSend(bot, chatId, 'Missing agent. Example: /models omo set sisyphus primary openai/gpt-5.3-codex');
-        return;
-      }
-
-      const entry = getOmoAgentEntry(cfg, agent);
-      if (field === 'primary') {
-        if (!isValidModelRef(value)) {
-          await safeSend(bot, chatId, 'Invalid primary model format. Use provider/model.');
-          return;
-        }
-        const before = String(entry.model || '').trim() || '(unset)';
-        entry.model = value;
-        writeJsonAtomic(OMO_CONFIG_PATH, cfg);
-        await safeSend(
-          bot,
-          chatId,
-          buildModelApplyMessage({
-            layer: `omo/${agent}`,
-            scope: 'global',
-            before,
-            after: value,
-            restartRequired: false,
-            applyStatus,
-            sessionImpact: 'preserved',
-            note,
-          }),
-          { reply_markup: buildModelsRootKeyboard() }
-        );
-        return;
-      }
-
-      if (field === 'fallback') {
-        const before = Array.isArray(entry.fallback_models)
-          ? entry.fallback_models.join(', ')
-          : String(entry.fallback_models || '').trim() || 'off';
-        if (!value || value.toLowerCase() === 'off') {
-          delete entry.fallback_models;
-          writeJsonAtomic(OMO_CONFIG_PATH, cfg);
-          await safeSend(
-            bot,
-            chatId,
-            buildModelApplyMessage({
-              layer: `omo/${agent}`,
-              scope: 'global',
-              before,
-              after: 'off',
-              restartRequired: false,
-              applyStatus,
-              sessionImpact: 'preserved',
-              note,
-            }),
-            { reply_markup: buildModelsRootKeyboard() }
-          );
-          return;
-        }
-        if (!isValidModelRef(value)) {
-          await safeSend(bot, chatId, 'Invalid fallback model format. Use provider/model or off.');
-          return;
-        }
-        entry.fallback_models = value;
-        writeJsonAtomic(OMO_CONFIG_PATH, cfg);
-        await safeSend(
-          bot,
-          chatId,
-          buildModelApplyMessage({
-            layer: `omo/${agent}`,
-            scope: 'global',
-            before,
-            after: value,
-            restartRequired: false,
-            applyStatus,
-            sessionImpact: 'preserved',
-            note,
-          }),
-          { reply_markup: buildModelsRootKeyboard() }
-        );
-        return;
-      }
-
-      await safeSend(bot, chatId, 'Unknown field. Use: primary | fallback');
-      return;
-    }
-
-    if (action === 'clear') {
-      const agent = String(args[2] || '').trim();
-      if (!agent) {
-        await safeSend(bot, chatId, 'Missing agent. Example: /models omo clear sisyphus');
-        return;
-      }
-      if (!cfg.agents || typeof cfg.agents !== 'object') cfg.agents = {};
-      const existed = !!cfg.agents[agent];
-      delete cfg.agents[agent];
-      writeJsonAtomic(OMO_CONFIG_PATH, cfg);
-      await safeSend(
-        bot,
-        chatId,
-        buildModelApplyMessage({
-          layer: `omo/${agent}`,
-          scope: 'global',
-          before: existed ? 'configured' : '(unset)',
-          after: '(unset)',
-          restartRequired: false,
-          applyStatus,
-          sessionImpact: 'preserved',
-          note,
-        }),
-        { reply_markup: buildModelsRootKeyboard() }
-      );
-      return;
-    }
-
-    await safeSend(bot, chatId, 'Unknown /models omo action. Use: get | set | clear');
-    return;
-  }
-
-  await safeSend(bot, chatId, 'Unknown layer. Use: /models opencode ... or /models omo ...');
+  const result = modelCommandService.execute({
+    repoName: repo.name,
+    running: !!state.running,
+    args: parsed && Array.isArray(parsed.args) ? parsed.args : [],
+  });
+  await safeSend(bot, chatId, result.text, result.opts);
 }
 
 function formatOnboardingQuestion(session) {
@@ -1735,110 +1138,6 @@ function splitByLimit(text, maxLen) {
   return out;
 }
 
-async function safeSend(bot, chatId, text, opts, auditMeta) {
-  const parseMode = opts && opts.parse_mode ? String(opts.parse_mode) : '';
-  const preview = summarizeAuditText(text);
-  try {
-    const message = await bot.sendMessage(chatId, text, opts);
-    audit('telegram.send', {
-      ok: true,
-      chatId: String(chatId),
-      parseMode,
-      messageId: message && message.message_id ? message.message_id : null,
-      textPreview: preview,
-      meta: auditMeta || null,
-    });
-    return message;
-  } catch (err) {
-    let primaryErr = err;
-    const retryAfterSeconds = getTelegramRetryAfterSeconds(primaryErr);
-    if (retryAfterSeconds > 0) {
-      const waitMs = (retryAfterSeconds * 1000) + Math.floor(Math.random() * 250);
-      if (shouldDeferRunViewRetryAfter(auditMeta, waitMs)) {
-        audit('telegram.send', {
-          ok: false,
-          stage: 'retry_after_deferred',
-          chatId: String(chatId),
-          parseMode,
-          error: String(primaryErr && (primaryErr.code || primaryErr.message || primaryErr) || ''),
-          retryAfterSeconds,
-          waitMs,
-          textPreview: preview,
-          meta: auditMeta || null,
-        });
-        return {
-          _hermuxDeferred: true,
-          retryAfterSeconds,
-          waitMs,
-        };
-      }
-      audit('telegram.send', {
-        ok: false,
-        stage: 'retry_after_pending',
-        chatId: String(chatId),
-        parseMode,
-        error: String(primaryErr && (primaryErr.code || primaryErr.message || primaryErr) || ''),
-        retryAfterSeconds,
-        waitMs,
-        textPreview: preview,
-        meta: auditMeta || null,
-      });
-      await sleep(waitMs);
-      try {
-        const retryMessage = await bot.sendMessage(chatId, text, opts);
-        audit('telegram.send', {
-          ok: true,
-          stage: 'retry_after',
-          chatId: String(chatId),
-          parseMode,
-          messageId: retryMessage && retryMessage.message_id ? retryMessage.message_id : null,
-          textPreview: preview,
-          meta: auditMeta || null,
-        });
-        return retryMessage;
-      } catch (retryErr) {
-        primaryErr = retryErr;
-      }
-    }
-    console.error('send failed:', primaryErr.code || primaryErr.message, '| chat:', chatId, '| parse_mode:', opts && opts.parse_mode ? opts.parse_mode : 'none');
-    audit('telegram.send', {
-      ok: false,
-      stage: 'primary',
-      chatId: String(chatId),
-      parseMode,
-      error: String(primaryErr && (primaryErr.code || primaryErr.message || primaryErr) || ''),
-      textPreview: preview,
-      meta: auditMeta || null,
-    });
-    if (opts && opts.parse_mode) {
-      try {
-        const message = await bot.sendMessage(chatId, text);
-        audit('telegram.send', {
-          ok: true,
-          stage: 'fallback_plain',
-          chatId: String(chatId),
-          parseMode: '',
-          messageId: message && message.message_id ? message.message_id : null,
-          textPreview: preview,
-          meta: auditMeta || null,
-        });
-        return message;
-      } catch (e) {
-        console.error('plain send also failed:', e.code || e.message, '| chat:', chatId);
-        audit('telegram.send', {
-          ok: false,
-          stage: 'fallback_plain',
-          chatId: String(chatId),
-          parseMode: '',
-          error: String(e && (e.code || e.message || e) || ''),
-          textPreview: preview,
-          meta: auditMeta || null,
-        });
-      }
-    }
-  }
-  return null;
-}
 
 function clearTypingIndicatorTimer(state) {
   if (!state || !state.typingIndicator || !state.typingIndicator.timer) return;
@@ -1853,283 +1152,6 @@ function shouldRenewTypingIndicator(now, lastSentAt, intervalMs) {
   if (current <= 0) return false;
   if (last <= 0) return true;
   return (current - last) >= interval;
-}
-
-function readBusySignalFromSessionPayload(payload) {
-  const source = payload && typeof payload === 'object' ? payload : null;
-  const raw = source ? '' : String(payload || '').trim();
-  if (!source && !raw) return null;
-  try {
-    const parsed = source || JSON.parse(raw);
-    const type = String(parsed && parsed.type ? parsed.type : '').trim();
-    if (type === 'session.idle') return false;
-    if (type !== 'session.status') return null;
-    const statusType = String(parsed && parsed.properties && parsed.properties.status && parsed.properties.status.type ? parsed.properties.status.type : '').trim();
-    if (statusType === 'busy') return true;
-    if (statusType === 'idle') return false;
-    return null;
-  } catch (_err) {
-    return null;
-  }
-}
-
-async function sendHtml(bot, chatId, html, auditMeta) {
-  const chunks = splitTelegramHtml(html, TG_MAX_LEN);
-  let lastMsg = null;
-  for (let i = 0; i < chunks.length; i++) {
-    const c = chunks[i];
-    lastMsg = await safeSend(bot, chatId, c, { parse_mode: 'HTML' }, {
-      ...(auditMeta || {}),
-      chunkIndex: i,
-      chunkCount: chunks.length,
-    });
-  }
-  return lastMsg;
-}
-
-async function sendMarkdownAsHtml(bot, chatId, markdown, auditMeta) {
-  const html = md2html(String(markdown || ''));
-  return sendHtml(bot, chatId, html, auditMeta);
-}
-
-async function editHtml(bot, chatId, messageId, html, auditMeta) {
-  const preview = summarizeAuditText(html);
-  try {
-    await bot.editMessageText(html, { chat_id: chatId, message_id: messageId, parse_mode: 'HTML' });
-    audit('telegram.edit', {
-      ok: true,
-      stage: 'primary',
-      chatId: String(chatId),
-      messageId,
-      parseMode: 'HTML',
-      textPreview: preview,
-      meta: auditMeta || null,
-    });
-  } catch (err) {
-    if (isMessageNotModifiedError(err)) {
-      audit('telegram.edit', {
-        ok: true,
-        stage: 'not_modified',
-        chatId: String(chatId),
-        messageId,
-        parseMode: 'HTML',
-        textPreview: preview,
-        meta: auditMeta || null,
-      });
-      return;
-    }
-
-    let primaryErr = err;
-    const retryAfterSeconds = getTelegramRetryAfterSeconds(primaryErr);
-    if (retryAfterSeconds > 0) {
-      const waitMs = (retryAfterSeconds * 1000) + Math.floor(Math.random() * 250);
-      if (shouldDeferRunViewRetryAfter(auditMeta, waitMs)) {
-        audit('telegram.edit', {
-          ok: false,
-          stage: 'retry_after_deferred',
-          chatId: String(chatId),
-          messageId,
-          parseMode: 'HTML',
-          error: String(primaryErr && (primaryErr.code || primaryErr.message || primaryErr) || ''),
-          retryAfterSeconds,
-          waitMs,
-          textPreview: preview,
-          meta: auditMeta || null,
-        });
-        return {
-          applied: false,
-          deferred: true,
-          retryAfterSeconds,
-          waitMs,
-        };
-      }
-      audit('telegram.edit', {
-        ok: false,
-        stage: 'retry_after_pending',
-        chatId: String(chatId),
-        messageId,
-        parseMode: 'HTML',
-        error: String(primaryErr && (primaryErr.code || primaryErr.message || primaryErr) || ''),
-        retryAfterSeconds,
-        waitMs,
-        textPreview: preview,
-        meta: auditMeta || null,
-      });
-      await sleep(waitMs);
-      try {
-        await bot.editMessageText(html, { chat_id: chatId, message_id: messageId, parse_mode: 'HTML' });
-        audit('telegram.edit', {
-          ok: true,
-          stage: 'retry_after',
-          chatId: String(chatId),
-          messageId,
-          parseMode: 'HTML',
-          textPreview: preview,
-          meta: auditMeta || null,
-        });
-        return { applied: true };
-      } catch (retryErr) {
-        primaryErr = retryErr;
-      }
-    }
-
-    if (!isMessageNotModifiedError(primaryErr)) {
-      console.error('edit failed:', primaryErr.code || primaryErr.message, '| chat:', chatId, '| message_id:', messageId);
-      audit('telegram.edit', {
-        ok: false,
-        stage: 'primary',
-        chatId: String(chatId),
-        messageId,
-        parseMode: 'HTML',
-        error: String(primaryErr && (primaryErr.code || primaryErr.message || primaryErr) || ''),
-        textPreview: preview,
-        meta: auditMeta || null,
-      });
-      try {
-        await bot.editMessageText(html, { chat_id: chatId, message_id: messageId });
-        audit('telegram.edit', {
-          ok: true,
-          stage: 'fallback_plain',
-          chatId: String(chatId),
-          messageId,
-          parseMode: '',
-          textPreview: preview,
-          meta: auditMeta || null,
-        });
-        return { applied: true };
-      } catch (e) {
-        console.error('plain edit also failed:', e.code || e.message, '| chat:', chatId, '| message_id:', messageId);
-        audit('telegram.edit', {
-          ok: false,
-          stage: 'fallback_plain',
-          chatId: String(chatId),
-          messageId,
-          parseMode: '',
-          error: String(e && (e.code || e.message || e) || ''),
-          textPreview: preview,
-          meta: auditMeta || null,
-        });
-      }
-    }
-  }
-  return { applied: false, deferred: false };
-}
-
-async function editPlain(bot, chatId, messageId, text, auditMeta) {
-  const preview = summarizeAuditText(text);
-  try {
-    await bot.editMessageText(text, { chat_id: chatId, message_id: messageId });
-    audit('telegram.edit', {
-      ok: true,
-      stage: 'plain',
-      chatId: String(chatId),
-      messageId,
-      parseMode: '',
-      textPreview: preview,
-      meta: auditMeta || null,
-    });
-  } catch (err) {
-    if (String(err && err.message || '').includes('message is not modified')) {
-      audit('telegram.edit', {
-        ok: true,
-        stage: 'plain_not_modified',
-        chatId: String(chatId),
-        messageId,
-        parseMode: '',
-        textPreview: preview,
-        meta: auditMeta || null,
-      });
-      return;
-    }
-    audit('telegram.edit', {
-      ok: false,
-      stage: 'plain',
-      chatId: String(chatId),
-      messageId,
-      parseMode: '',
-      error: String(err && (err.code || err.message || err) || ''),
-      textPreview: preview,
-      meta: auditMeta || null,
-    });
-  }
-}
-
-async function safeDeleteMessage(bot, chatId, messageId, auditMeta) {
-  try {
-    await bot.deleteMessage(chatId, messageId);
-    audit('telegram.delete', {
-      ok: true,
-      chatId: String(chatId),
-      messageId,
-      meta: auditMeta || null,
-    });
-    return true;
-  } catch (err) {
-    const msg = String(err && err.message ? err.message : err || '').trim();
-    console.error(`delete failed: ${msg}`);
-    audit('telegram.delete', {
-      ok: false,
-      chatId: String(chatId),
-      messageId,
-      error: msg,
-      meta: auditMeta || null,
-    });
-    return false;
-  }
-}
-
-async function safeSendPhoto(bot, chatId, filePath, caption, auditMeta) {
-  try {
-    const stream = fs.createReadStream(filePath);
-    const message = await bot.sendPhoto(chatId, stream, caption ? { caption } : undefined);
-    audit('telegram.send_photo', {
-      ok: true,
-      chatId: String(chatId),
-      messageId: message && message.message_id ? message.message_id : null,
-      filePath: String(filePath || ''),
-      captionPreview: summarizeAuditText(caption || ''),
-      meta: auditMeta || null,
-    });
-    return message;
-  } catch (err) {
-    console.error('send photo failed:', err.message);
-    audit('telegram.send_photo', {
-      ok: false,
-      chatId: String(chatId),
-      filePath: String(filePath || ''),
-      captionPreview: summarizeAuditText(caption || ''),
-      error: String(err && err.message ? err.message : err || ''),
-      meta: auditMeta || null,
-    });
-    return null;
-  }
-}
-
-async function safeSendDocument(bot, chatId, filePath, caption, auditMeta) {
-  try {
-    const stream = fs.createReadStream(filePath);
-    const message = await bot.sendDocument(chatId, stream, caption ? { caption } : undefined);
-    audit('telegram.send_document', {
-      ok: true,
-      chatId: String(chatId),
-      messageId: message && message.message_id ? message.message_id : null,
-      filePath: String(filePath || ''),
-      captionPreview: summarizeAuditText(caption || ''),
-      meta: auditMeta || null,
-    });
-    return message;
-  } catch (err) {
-    console.error('send document failed:', err.message);
-    audit('telegram.send_document', {
-      ok: false,
-      chatId: String(chatId),
-      filePath: String(filePath || ''),
-      captionPreview: summarizeAuditText(caption || ''),
-      error: String(err && err.message ? err.message : err || ''),
-      meta: auditMeta || null,
-    });
-    return null;
-  }
 }
 
 function extractMermaidBlocks(text) {
@@ -3131,16 +2153,8 @@ async function handleConnectCommand(bot, chatId, args, chatRouter, states) {
   }
 
   try {
-    const result = await withConnectMutationLock(async () => {
-      const update = addChatIdToRepo(requestedRepo, chatId);
-      if (update.ok) {
-        refreshRuntimeRouting(chatRouter, states);
-      }
-      return update;
-    });
-
-    if (!result.ok) {
-      if (result.reason === 'repo_not_found') {
+    const knownRepo = availableRepos.some((repo) => repo && repo.name === requestedRepo);
+    if (!knownRepo) {
         const keyboard = buildConnectKeyboard(availableRepos);
         await safeSend(
           bot,
@@ -3155,98 +2169,29 @@ async function handleConnectCommand(bot, chatId, args, chatRouter, states) {
           keyboard ? { reply_markup: keyboard } : undefined
         );
         return;
-      }
-
-      if (result.reason === 'chat_already_mapped') {
-        if (!remapConfirm) {
-          await safeSend(
-            bot,
-            chatId,
-            [
-              `This chat is already connected to repo: ${result.existingRepo}`,
-              `Requested repo: ${requestedRepo}`,
-              '',
-              '⚠️ Moving this chat will reset session continuity for this chat in both repos.',
-              `To confirm move: /connect ${requestedRepo} move`,
-              'Use /whereami to verify current mapping first.',
-            ].join('\n')
-          );
-          return;
-        }
-        const moved = await withConnectMutationLock(async () => {
-          const update = moveChatIdToRepo(requestedRepo, chatId);
-          if (update.ok) {
-            refreshRuntimeRouting(chatRouter, states);
-            const previousSessionId = getSessionId(String(result.existingRepo || ''), chatId);
-            const requestedSessionId = getSessionId(requestedRepo, chatId);
-            if (previousSessionId && typeof endSessionLifecycle === 'function') {
-              const previousRepo = availableRepos.find((repo) => repo && repo.name === String(result.existingRepo || ''));
-              if (previousRepo) {
-                endSessionLifecycle(previousRepo, previousSessionId, 'chat_remap').catch(() => {});
-              }
-            }
-            if (requestedSessionId && typeof endSessionLifecycle === 'function') {
-              const requestedRepoConfig = availableRepos.find((repo) => repo && repo.name === requestedRepo);
-              if (requestedRepoConfig) {
-                endSessionLifecycle(requestedRepoConfig, requestedSessionId, 'chat_remap').catch(() => {});
-              }
-            }
-            clearSessionId(String(result.existingRepo || ''), chatId);
-            clearSessionId(requestedRepo, chatId);
-          }
-          return update;
-        });
-        if (!moved.ok) {
-          await safeSend(bot, chatId, `Connect failed (${moved.reason}). Retry: /connect ${requestedRepo}`);
-          return;
-        }
-        await safeSend(
-          bot,
-          chatId,
-          [
-            `Moved: chat ${chatId} -> repo ${requestedRepo}`,
-            `Previous repo: ${result.existingRepo}`,
-            'Session continuity was reset for safety. Next prompt starts a new session.',
-            'Tip: /whereami, then send a fresh prompt.',
-          ].join('\n')
-        );
-        return;
-      }
-
-      await safeSend(bot, chatId, `Connect failed (${result.reason}). Retry: /connect ${requestedRepo}`);
-      return;
     }
 
-    if (result.changed) {
-      const groupHint = isLikelyGroupChatId(chatId)
-        ? [
-          '',
-          'Group chat note:',
-          '- If normal text prompts are not received, disable BotFather privacy mode (/setprivacy -> Disable).',
-          '- With privacy mode ON, use @bot mention or reply-to-bot message.',
-        ]
-        : [];
-      await safeSend(
-        bot,
-        chatId,
-        [
-          `Connected: chat ${chatId} -> repo ${requestedRepo}`,
-          'You can now send prompts in this chat.',
-          'Tip: /status, /verbose on, /whereami',
-          ...groupHint,
-        ].join('\n')
-      );
-      return;
-    }
-
-    await safeSend(
-      bot,
+    const result = await withConnectMutationLock(() => chatRoutingService.connectChat({
+      requestedRepo,
       chatId,
-      [
-        `Already connected: chat ${chatId} -> repo ${requestedRepo}`,
-        'No change needed. You can continue using this chat.',
-      ].join('\n')
-    );
+      availableRepos,
+      remapConfirm,
+      chatRouter,
+      states,
+    }));
+
+    if (result.kind === 'connected' && result.includeGroupHint) {
+      await safeSend(bot, chatId, [
+        result.text,
+        '',
+        'Group chat note:',
+        '- If normal text prompts are not received, disable BotFather privacy mode (/setprivacy -> Disable).',
+        '- With privacy mode ON, use @bot mention or reply-to-bot message.',
+      ].join('\n'));
+      return;
+    }
+
+    await safeSend(bot, chatId, result.text);
   } catch (err) {
     console.error('[connect] failed:', err.message);
     await safeSend(
@@ -4818,6 +3763,33 @@ function main() {
   const onboardingSessions = new Map();
   const initSessions = new Map();
   const modelUiState = new Map();
+  const modelControlService = createModelControlService({
+    modelUiState,
+    buildModelsSummaryHtml,
+    buildModelsRootKeyboard,
+    getProviderModelChoices,
+    getModelsSnapshot,
+    buildProviderPickerKeyboard,
+    buildAgentPickerKeyboard,
+    buildModelPickerKeyboard,
+    escapeHtml,
+    readJsonOrDefault,
+    writeJsonAtomic,
+    OPENCODE_CONFIG_PATH,
+    OMO_CONFIG_PATH,
+    getOmoAgentEntry,
+  });
+  const modelCommandService = createModelCommandService({
+    buildModelsSummaryHtml,
+    buildModelsRootKeyboard,
+    buildModelApplyMessage,
+    readJsonOrDefault,
+    writeJsonAtomic,
+    isValidModelRef,
+    getOmoAgentEntry,
+    OPENCODE_CONFIG_PATH,
+    OMO_CONFIG_PATH,
+  });
   const telegramBaseApiUrl = String(process.env.HERMUX_TELEGRAM_BASE_API_URL || '').trim();
   const telegramPollingTimeout = Number(process.env.HERMUX_TELEGRAM_POLLING_TIMEOUT_SECONDS || 0) || 0;
   const bot = new TelegramBot(botToken, {
@@ -4850,23 +3822,11 @@ function main() {
     chatRouter,
     states,
     modelUiState,
+    modelControlService,
     safeSend,
     handleConnectCommand,
     handleVerboseAction,
     requestInterrupt,
-    buildModelsSummaryHtml,
-    buildModelsRootKeyboard,
-    getProviderModelChoices,
-    buildProviderPickerKeyboard,
-    getModelsSnapshot,
-    buildAgentPickerKeyboard,
-    escapeHtml,
-    buildModelPickerKeyboard,
-    readJsonOrDefault,
-    writeJsonAtomic,
-    OPENCODE_CONFIG_PATH,
-    OMO_CONFIG_PATH,
-    getOmoAgentEntry,
     handleRevertConfirmCallback,
     handleRevertCancelCallback,
   });
@@ -5045,14 +4005,6 @@ module.exports = {
     createTrailingThrottleProcessor,
     buildAuditContentMeta,
     shouldDeferRunViewRetryAfter,
-    resolveSendMessageDraftApi,
-    resolveTelegramPreviewTransport,
-    shouldFallbackFromDraftTransport,
-    auditTelegramPreviewRoute,
-    updateTelegramDraftPreview,
-    materializeTelegramDraftPreview,
-    maybeMaterializeRunStartDraftPreview,
-    clearTelegramDraftPreview,
     clearTypingIndicatorTimer,
     shouldRenewTypingIndicator,
     readBusySignalFromSessionPayload,

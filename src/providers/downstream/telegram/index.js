@@ -6,6 +6,7 @@ const { createRepoMessageHandler } = require('./gateway-repo-message-handler');
 const { createCallbackQueryHandler } = require('./gateway-callback-query-handler');
 const { reconcileRunViewForTelegram } = require('./view-reconciler');
 const { createTelegramBotEffects } = require('./bot-effects');
+const { createTelegramTransport } = require('./transport');
 
 module.exports = {
   TelegramBot,
@@ -14,4 +15,5 @@ module.exports = {
   createCallbackQueryHandler,
   reconcileRunViewForTelegram,
   createTelegramBotEffects,
+  createTelegramTransport,
 };
