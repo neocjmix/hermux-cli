@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 
 const {
   reconcileRunViewForTelegram,
+  _internal,
 } = require('../src/providers/downstream/telegram/view-reconciler');
 
 test('telegram view reconciler applies edit/send/delete with final-state flag', async () => {
@@ -251,4 +252,130 @@ test('telegram view reconciler retains message preview on final-state reconcile 
     partId: '',
     reason: 'retain_message_preview_after_completion',
   });
+});
+
+test('shouldEagerlyMaterializeTail only enables active strong hint without preview', () => {
+  assert.equal(_internal.shouldEagerlyMaterializeTail(
+    { messageId: 'msg-1', partId: 'part-1', reason: 'text_part_updated_after_delta' },
+    null,
+    false,
+    false
+  ), true);
+  assert.equal(_internal.shouldEagerlyMaterializeTail(
+    { messageId: 'msg-1', partId: 'part-1', reason: 'text_part_non_empty_updated' },
+    null,
+    false,
+    false
+  ), false);
+  assert.equal(_internal.shouldEagerlyMaterializeTail(
+    { messageId: 'msg-1', partId: 'part-1', reason: 'text_part_updated_after_delta' },
+    { transport: 'draft', draftId: 1, text: 'draft' },
+    false,
+    false
+  ), false);
+  assert.equal(_internal.shouldEagerlyMaterializeTail(
+    { messageId: 'msg-1', partId: 'part-1', reason: 'text_part_updated_after_delta' },
+    null,
+    false,
+    true
+  ), false);
+});
+
+test('telegram view reconciler eagerly materializes strong tail hint during active run', async () => {
+  const calls = [];
+
+  const next = await reconcileRunViewForTelegram({
+    bot: {},
+    chatId: '106',
+    runAuditMeta: { runId: 'r8' },
+    currentView: {
+      texts: ['status only'],
+      messageIds: [101],
+    },
+    nextTexts: ['status only', 'stable answer'],
+    tailMaterializeHint: {
+      messageId: 'msg-stable',
+      partId: 'part-stable',
+      reason: 'text_part_updated_after_delta',
+    },
+    isFinalState: false,
+    sendText: async (_bot, _chatId, text, opts, meta) => {
+      calls.push({ op: 'send', text, opts, meta });
+      return { message_id: 102 };
+    },
+    editText: async () => {},
+    previewDraft: async () => {
+      calls.push({ op: 'preview' });
+      return { applied: true, transport: 'draft', draftId: 3 };
+    },
+    deleteMessage: async () => true,
+  });
+
+  assert.deepEqual(calls, [{
+    op: 'send',
+    text: 'stable answer',
+    opts: { parse_mode: 'HTML' },
+    meta: {
+      runId: 'r8',
+      channel: 'run_view_draft_materialize',
+      index: 1,
+      isFinalState: false,
+      materializeReason: 'text_part_updated_after_delta',
+    },
+  }]);
+  assert.deepEqual(next.messageIds, [101, 102]);
+  assert.deepEqual(next.texts, ['status only', 'stable answer']);
+  assert.equal(next.draftPreview, null);
+  assert.deepEqual(next.materializedTail, {
+    messageId: 'msg-stable',
+    partId: 'part-stable',
+    reason: 'text_part_updated_after_delta',
+  });
+});
+
+test('telegram view reconciler keeps weak tail hint on draft preview path during active run', async () => {
+  const calls = [];
+
+  const next = await reconcileRunViewForTelegram({
+    bot: {},
+    chatId: '107',
+    runAuditMeta: { runId: 'r9' },
+    currentView: {
+      texts: ['status only'],
+      messageIds: [111],
+    },
+    nextTexts: ['status only', 'weak answer'],
+    tailMaterializeHint: {
+      messageId: 'msg-weak',
+      partId: 'part-weak',
+      reason: 'text_part_non_empty_updated',
+    },
+    isFinalState: false,
+    sendText: async () => {
+      calls.push({ op: 'send' });
+      return { message_id: 112 };
+    },
+    editText: async () => {},
+    previewDraft: async (_bot, _chatId, _preview, text, opts, meta) => {
+      calls.push({ op: 'preview', text, opts, meta });
+      return { applied: true, transport: 'draft', draftId: 4 };
+    },
+    deleteMessage: async () => true,
+  });
+
+  assert.deepEqual(calls, [{
+    op: 'preview',
+    text: 'weak answer',
+    opts: { parse_mode: 'HTML' },
+    meta: { runId: 'r9', channel: 'run_view_draft', index: 1, isFinalState: false },
+  }]);
+  assert.deepEqual(next.messageIds, [111]);
+  assert.deepEqual(next.texts, ['status only']);
+  assert.deepEqual(next.draftPreview, {
+    transport: 'draft',
+    draftId: 4,
+    messageId: null,
+    text: 'weak answer',
+  });
+  assert.equal(next.materializedTail, null);
 });

@@ -2654,3 +2654,100 @@ test('gateway e2e should surface new in-progress assistant text before completio
     restoreFile(config.CONFIG_PATH, cfgSnapshot);
   }
 });
+
+test('gateway e2e eagerly materializes strong tail hint before completion', async () => {
+  const cfgSnapshot = backupFile(config.CONFIG_PATH);
+  const token = 'test-token';
+  const telegram = createTelegramMockServer();
+  const started = await telegram.start(0);
+  const fixturePath = path.resolve(__dirname, 'fixtures', 'fake-opencode-sdk-inprogress-tail-materialize.js');
+
+  config.save({
+    global: { telegramBotToken: token },
+    repos: [{
+      name: 'demo',
+      enabled: true,
+      workdir: '/tmp/demo',
+      chatIds: ['100'],
+      opencodeCommand: 'opencode sdk',
+      logFile: './logs/demo.log',
+    }],
+  });
+
+  const runtime = startGateway({
+    HERMUX_TELEGRAM_BASE_API_URL: started.baseApiUrl,
+    HERMUX_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
+    HERMUX_OPENCODE_SDK_SHIM: fixturePath,
+  });
+
+  let stopped = false;
+  try {
+    await waitForBootstrapAndClearRequests(started.controlUrl);
+
+    await httpJson({
+      method: 'POST',
+      url: `${started.controlUrl}/updates`,
+      body: {
+        token,
+        update: {
+          update_id: 81,
+          message: {
+            message_id: 81,
+            date: Math.floor(Date.now() / 1000),
+            text: 'tail-materialize-now',
+            chat: { id: 100, type: 'private' },
+            from: { id: 200, is_bot: false, first_name: 'Tester' },
+          },
+        },
+      },
+    });
+
+    const auditPath = path.join(runtime.runtimeDir, 'audit-events.jsonl');
+    const records = await waitFor(() => {
+      const rows = readJsonlRecords(auditPath);
+      const runStart = rows.find((r) => r.kind === 'run.start');
+      if (!runStart) return null;
+      const runId = String(runStart.payload && runStart.payload.runId || '');
+      if (!runId) return null;
+      const completionIdx = rows.findIndex((r) => {
+        if (r.kind !== 'run.event_received') return false;
+        const payloadRunId = String((r.payload && r.payload.runId) || '');
+        if (payloadRunId !== runId) return false;
+        const content = String((r.payload && r.payload.content) || '');
+        return content.includes('"type":"message.updated"')
+          && content.includes('"id":"msg-tail"')
+          && content.includes('"completed"');
+      });
+      const materializeIdx = rows.findIndex((r) => {
+        if (r.kind !== 'telegram.send') return false;
+        const meta = r.payload && r.payload.meta ? r.payload.meta : null;
+        if (!meta) return false;
+        if (String(meta.runId || '') !== runId) return false;
+        if (meta.channel !== 'run_view_draft_materialize') return false;
+        return String(r.payload && r.payload.textPreview || '').includes('stable-tail-marker');
+      });
+      if (materializeIdx < 0 || completionIdx < 0) return null;
+      return { rows, materializeIdx, completionIdx, runId };
+    }, { timeoutMs: 30000, stepMs: 120 });
+
+    assert.ok(records.materializeIdx >= 0);
+    assert.ok(records.completionIdx >= 0);
+    assert.ok(records.materializeIdx < records.completionIdx, 'expected eager materialization before completion event');
+
+    const runRequests = await httpJson({ method: 'GET', url: `${started.controlUrl}/requests` });
+    const stableDraftRequests = runRequests.body.requests.filter((r) => (
+      r.method === 'sendMessageDraft'
+      && String((r.params && r.params.text) || '').includes('stable-tail-marker')
+    ));
+    assert.equal(stableDraftRequests.length, 0);
+
+    await stopGateway(runtime, { controlUrl: started.controlUrl, testName: 'eager-tail-materialize', status: 'ok' });
+    stopped = true;
+  } finally {
+    if (!stopped) {
+      await stopGateway(runtime, { controlUrl: started.controlUrl, testName: 'eager-tail-materialize', status: 'teardown' });
+    }
+    await telegram.stop();
+    restoreFile(config.CONFIG_PATH, cfgSnapshot);
+  }
+});

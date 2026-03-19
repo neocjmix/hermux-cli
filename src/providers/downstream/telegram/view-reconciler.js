@@ -50,6 +50,13 @@ function buildRunViewReconcileCommands(currentTexts, currentMessageIds, nextText
   return commands;
 }
 
+function shouldEagerlyMaterializeTail(requestedMaterializedTail, currentDraftPreview, keepCommittedTail, isFinalState) {
+  if (isFinalState) return false;
+  if (!requestedMaterializedTail || typeof requestedMaterializedTail !== 'object') return false;
+  if (currentDraftPreview || keepCommittedTail) return false;
+  return String(requestedMaterializedTail.reason || '').trim() === 'text_part_updated_after_delta';
+}
+
 async function reconcileRunViewForTelegram(params) {
   const {
     bot,
@@ -96,9 +103,15 @@ async function reconcileRunViewForTelegram(params) {
     && currentMaterializedTail.partId === requestedMaterializedTail.partId
   );
   const shouldMaterializeDraftTail = !!(requestedMaterializedTail && currentDraftPreview && !keepCommittedTail);
-  const useDraftPreview = !isFinalState && typeof previewDraft === 'function' && targetTexts.length > 1 && !keepCommittedTail && !shouldMaterializeDraftTail;
+  const shouldEagerMaterializeTail = shouldEagerlyMaterializeTail(
+    requestedMaterializedTail,
+    currentDraftPreview,
+    keepCommittedTail,
+    isFinalState
+  );
+  const useDraftPreview = !isFinalState && typeof previewDraft === 'function' && targetTexts.length > 1 && !keepCommittedTail && !shouldMaterializeDraftTail && !shouldEagerMaterializeTail;
   const retainsExistingPreviewTail = !!(currentDraftPreview && targetTexts.length > currentTexts.length && !shouldMaterializeDraftTail);
-  const splitTailFromCommitted = useDraftPreview || retainsExistingPreviewTail || shouldMaterializeDraftTail;
+  const splitTailFromCommitted = useDraftPreview || retainsExistingPreviewTail || shouldMaterializeDraftTail || shouldEagerMaterializeTail;
   const committedTargetTexts = splitTailFromCommitted ? targetTexts.slice(0, -1) : targetTexts.slice();
   const draftTargetText = splitTailFromCommitted ? targetTexts[targetTexts.length - 1] : '';
   const commands = buildRunViewReconcileCommands(currentTexts, messageIds, committedTargetTexts, isFinalState);
@@ -197,6 +210,57 @@ async function reconcileRunViewForTelegram(params) {
         text: draftTargetText,
       };
     }
+  } else if (shouldEagerMaterializeTail) {
+    const finalText = targetTexts[targetTexts.length - 1];
+    let materializedMessageId = null;
+
+    if (typeof sendText === 'function') {
+      stats.sendCount += 1;
+      const sent = await sendText(bot, chatId, finalText, { parse_mode: 'HTML' }, {
+        ...runAuditMeta,
+        channel: 'run_view_draft_materialize',
+        index: committedTargetTexts.length,
+        isFinalState: false,
+        materializeReason: requestedMaterializedTail && requestedMaterializedTail.reason
+          ? requestedMaterializedTail.reason
+          : (runAuditMeta && runAuditMeta.materializeReason ? runAuditMeta.materializeReason : ''),
+      });
+      if (sent && sent._hermuxDeferred) {
+        stats.deferredCount += 1;
+      } else if (sent && sent.message_id) {
+        materializedMessageId = sent.message_id;
+        messageIds[committedTargetTexts.length] = materializedMessageId;
+        appliedTexts[committedTargetTexts.length] = finalText;
+        nextMaterializedTail = requestedMaterializedTail || null;
+        if (typeof onMessagePersist === 'function') {
+          await onMessagePersist({
+            op: 'send',
+            messageId: materializedMessageId,
+            index: committedTargetTexts.length,
+            text: finalText,
+            isFinalState: false,
+          });
+        }
+      }
+    }
+
+    if (!materializedMessageId && typeof previewDraft === 'function') {
+      const previewResult = await previewDraft(bot, chatId, currentDraftPreview, draftTargetText, { parse_mode: 'HTML' }, {
+        ...runAuditMeta,
+        channel: 'run_view_draft',
+        index: committedTargetTexts.length,
+        isFinalState: false,
+      });
+      if (previewResult && previewResult.applied) {
+        stats.draftCount += 1;
+        nextDraftPreview = {
+          transport: previewResult.transport,
+          draftId: previewResult.draftId || null,
+          messageId: previewResult.messageId || null,
+          text: draftTargetText,
+        };
+      }
+    }
   } else if (currentDraftPreview) {
     const canPromoteMessagePreview = !!(
       currentDraftPreview.transport === 'message'
@@ -264,5 +328,6 @@ module.exports = {
   _internal: {
     buildRunViewReconcileCommands,
     expandRunViewTextsToTelegramSlots,
+    shouldEagerlyMaterializeTail,
   },
 };
