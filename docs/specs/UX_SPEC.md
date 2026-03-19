@@ -79,6 +79,7 @@ Lifecycle semantics:
 - when a new run starts in the same session, prior-run Telegram run-view body blocks MUST remain visible in chat history, and the new run MUST start its own fresh status-panel message below the new user turn
 - when a new run starts and the previous private-chat Telegram draft preview contains any non-whitespace text, that preview MUST be materialized into a normal message before the new run resets downstream run-view state
 - during an active run, when a private-chat assistant text tail receives a stable `message.part.updated` after prior deltas, Telegram delivery SHOULD materialize that tail immediately instead of leaving it in draft preview until completion or next-run fallback
+- while a session is busy, mapped Telegram chats SHOULD emit `typing` chat actions until the session becomes idle or the run ends
 - status pane SHOULD append the latest reasoning preview as its final line when reasoning text exists, prefixed with a thinking emoji
 - `<system-reminder>` content is rendered at the bottom of the live status panel and MUST appear as a code block
 

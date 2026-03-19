@@ -134,6 +134,7 @@ Contract rules:
 - When a new run starts in the same session, downstream reconciliation MUST preserve prior-run chat history and start a fresh status-panel message for the new run instead of reusing prior-run body or status slots.
 - Run-start handoff MUST materialize any non-empty prior Telegram draft preview before `state.runView` is reset for the next run; empty draft previews are ignored.
 - Active-run Telegram reconciliation SHOULD treat `tailMaterializeHint.reason === "text_part_updated_after_delta"` as a strong boundary for immediate tail materialization while preserving weaker hints for fallback-only behavior.
+- Gateway runtime SHOULD renew Telegram `typing` chat actions while the active session snapshot reports `render.busy === true`, and stop renewing when the session goes idle or the run exits.
 
 Current implementation anchors:
 
