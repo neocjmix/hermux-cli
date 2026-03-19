@@ -169,6 +169,52 @@ test('opencode view builder includes all assistant messages in order', () => {
   assert.equal(view.includes('user prompt'), false);
 });
 
+test('opencode view builder filters older assistant body while keeping status pane for newer run start', () => {
+  let state = createRenderState('ses-filter');
+
+  state = applyEvent(state, {
+    type: 'session.status',
+    properties: { sessionID: 'ses-filter', status: { type: 'busy' } },
+  }, 1);
+
+  state = applyEvent(state, {
+    type: 'message.updated',
+    properties: {
+      info: {
+        id: 'msg-old',
+        sessionID: 'ses-filter',
+        role: 'assistant',
+        time: { created: 10, completed: 11 },
+      },
+    },
+  }, 2);
+
+  state = applyEvent(state, {
+    type: 'message.part.updated',
+    properties: {
+      part: {
+        id: 'prt-old',
+        sessionID: 'ses-filter',
+        messageID: 'msg-old',
+        type: 'text',
+        text: 'old answer should be hidden',
+      },
+    },
+  }, 3);
+
+  const view = buildRunViewFromRenderState(state, {
+    runId: 'run-new',
+    repoName: 'demo',
+    minMessageTimeMs: 100,
+  });
+
+  assert.equal(view.length, 1);
+  const statusLines = String(view[0]).split('\n');
+  assert.match(statusLines[0], /📂\s+demo\s+🔴\s+busy\s+👣\s+0\s+🛠️\s+0/);
+  assert.equal(statusLines[1], '`ses-filter`');
+  assert.doesNotMatch(String(view[0]), /old answer should be hidden/);
+});
+
 test('opencode view builder verbose mode shows detailed status', () => {
   let state = createRenderState('ses-a');
 
