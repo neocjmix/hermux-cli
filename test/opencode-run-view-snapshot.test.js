@@ -360,6 +360,7 @@ test('run view snapshot materializer promotes text deltas even when part started
       sessionID: 'ses-retyped',
       messageID: 'msg-retyped',
       partID: 'part-retyped',
+      type: 'text',
       field: 'text',
       delta: 'final text survives',
     },
@@ -371,6 +372,64 @@ test('run view snapshot materializer promotes text deltas even when part started
   });
 
   assert.equal(state.snapshot.messages[1], 'final text survives');
+});
+
+test('run view snapshot materializer keeps reasoning deltas in status pane when delta type is not text', () => {
+  let state = createRunViewSnapshotState('ses-reasoning-delta');
+
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'message.updated',
+    properties: {
+      info: {
+        id: 'msg-reasoning-delta',
+        sessionID: 'ses-reasoning-delta',
+        role: 'assistant',
+        time: { created: 10 },
+      },
+    },
+  }), 1, {
+    runId: 'run-reasoning-delta',
+    minMessageTimeMs: 0,
+    isFinal: false,
+    repoName: 'repo-r',
+  });
+
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'message.part.updated',
+    properties: {
+      part: {
+        id: 'part-reasoning-delta',
+        sessionID: 'ses-reasoning-delta',
+        messageID: 'msg-reasoning-delta',
+        type: 'reasoning',
+        text: '',
+      },
+    },
+  }), 2, {
+    runId: 'run-reasoning-delta',
+    minMessageTimeMs: 0,
+    isFinal: false,
+    repoName: 'repo-r',
+  });
+
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'message.part.delta',
+    properties: {
+      sessionID: 'ses-reasoning-delta',
+      messageID: 'msg-reasoning-delta',
+      partID: 'part-reasoning-delta',
+      field: 'text',
+      delta: 'draft reasoning only',
+    },
+  }), 3, {
+    runId: 'run-reasoning-delta',
+    minMessageTimeMs: 0,
+    isFinal: false,
+    repoName: 'repo-r',
+  });
+
+  assert.equal(state.snapshot.messages.length, 1);
+  assert.equal(String(state.snapshot.messages[0]).split('\n')[2], '🤔 draft reasoning only');
 });
 
 test('run view snapshot materializer preserves latest assistant text without message timestamps', () => {

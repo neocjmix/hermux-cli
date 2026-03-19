@@ -353,6 +353,7 @@ function mergePartDelta(state, event, seq) {
   const props = event && event.properties;
   if (!props) return;
   const field = toText(props.field).trim();
+  const deltaType = toText(props.type).trim().toLowerCase();
   const message = ensureMessage(state, props.messageID);
   if (!message) return;
   if (!String(message.role || '').trim()) {
@@ -368,7 +369,9 @@ function mergePartDelta(state, event, seq) {
   }
 
   if (field === 'text') {
-    if (!entry.type || (entry.type === 'reasoning' && !entry.sawNonEmptyTextUpdate)) {
+    if (!entry.type) {
+      entry.type = deltaType || 'text';
+    } else if (entry.type === 'reasoning' && deltaType === 'text' && !entry.sawNonEmptyTextUpdate) {
       entry.type = 'text';
     }
     entry.text = `${toText(entry.text)}${toText(props.delta)}`;
