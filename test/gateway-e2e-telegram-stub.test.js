@@ -518,14 +518,6 @@ test('gateway e2e remains alive when scenario forces sendMessage API error', asy
       },
     });
 
-    await waitFor(async () => {
-      const reqs = await httpJson({ method: 'GET', url: `${started.controlUrl}/requests` });
-      return reqs.body.requests.some((r) => (
-        r.method === 'sendMessageDraft'
-        && String((r.params && r.params.text) || '').includes('carryover:draft-preview')
-      )) ? true : null;
-    }, { timeoutMs: 10000, stepMs: 100 });
-
     await httpJson({
       method: 'POST',
       url: `${started.controlUrl}/updates`,
@@ -2023,6 +2015,82 @@ test('gateway e2e uses sendMessageDraft for non-final private-chat assistant tai
   }
 });
 
+test('gateway e2e sends typing action while session is busy', async () => {
+  const cfgSnapshot = backupFile(config.CONFIG_PATH);
+  const token = 'test-token';
+  const telegram = createTelegramMockServer();
+  const started = await telegram.start(0);
+
+  config.save({
+    global: { telegramBotToken: token },
+    repos: [{
+      name: 'demo',
+      enabled: true,
+      workdir: '/tmp/demo',
+      chatIds: ['100'],
+      opencodeCommand: 'opencode sdk',
+      logFile: './logs/demo.log',
+    }],
+  });
+
+  const runtime = startGateway({
+    HERMUX_TELEGRAM_BASE_API_URL: started.baseApiUrl,
+    HERMUX_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
+    HERMUX_OPENCODE_SDK_SHIM: path.resolve(__dirname, 'fixtures', 'fake-opencode-sdk.js'),
+  });
+
+  let stopped = false;
+  try {
+    await waitForBootstrapAndClearRequests(started.controlUrl);
+
+    await httpJson({
+      method: 'POST',
+      url: `${started.controlUrl}/updates`,
+      body: {
+        token,
+        update: {
+          update_id: 57,
+          message: {
+            message_id: 57,
+            date: Math.floor(Date.now() / 1000),
+            text: 'delayed-tail',
+            chat: { id: 100, type: 'private' },
+            from: { id: 200, is_bot: false, first_name: 'Tester' },
+          },
+        },
+      },
+    });
+
+    const requests = await waitFor(async () => {
+      const reqs = await httpJson({ method: 'GET', url: `${started.controlUrl}/requests` });
+      const all = reqs.body.requests;
+      const hasTyping = all.some((r) => r.method === 'sendChatAction' && String((r.params && r.params.action) || '') === 'typing');
+      const hasOutput = all.some((r) => (
+        (r.method === 'sendMessage' || r.method === 'editMessageText' || r.method === 'sendMessageDraft')
+        && String((r.params && r.params.text) || '').includes('tail-arrived')
+      ));
+      return hasTyping && hasOutput ? all : null;
+    }, { timeoutMs: 30000, stepMs: 120 });
+
+    const typingRequest = requests.find((r) => r.method === 'sendChatAction' && String((r.params && r.params.action) || '') === 'typing');
+    assert.ok(typingRequest);
+    assert.equal(String(typingRequest.params.chat_id || ''), '100');
+    assert.equal(requests.some((r) => (
+      (r.method === 'sendMessage' || r.method === 'editMessageText' || r.method === 'sendMessageDraft')
+      && String((r.params && r.params.text) || '').includes('tail-arrived')
+    )), true);
+
+    await stopGateway(runtime, { controlUrl: started.controlUrl, testName: 'busy-typing', status: 'ok' });
+    stopped = true;
+  } finally {
+    if (!stopped) {
+      await stopGateway(runtime, { controlUrl: started.controlUrl, testName: 'busy-typing', status: 'teardown' });
+    }
+    await telegram.stop();
+    restoreFile(config.CONFIG_PATH, cfgSnapshot);
+  }
+});
+
 test('gateway e2e incident replay should deliver second run text despite post-complete late events', async () => {
   const cfgSnapshot = backupFile(config.CONFIG_PATH);
   const token = 'test-token';
@@ -2255,7 +2323,12 @@ test('gateway e2e should reproduce missing second response when assistant text l
         (r.kind === 'telegram.send' || r.kind === 'telegram.edit' || r.kind === 'telegram.draft')
         && r.payload
         && r.payload.meta
-        && (r.payload.meta.channel === 'run_view_send' || r.payload.meta.channel === 'run_view_edit' || r.payload.meta.channel === 'run_view_draft')
+        && (
+          r.payload.meta.channel === 'run_view_send'
+          || r.payload.meta.channel === 'run_view_edit'
+          || r.payload.meta.channel === 'run_view_draft'
+          || r.payload.meta.channel === 'run_view_draft_materialize'
+        )
         && String(r.payload.textPreview || '').includes('second-post-complete:pc-second')
       ));
       return completed.length >= 2 && hasPostCompleteTextEvent && hasRunViewSecond ? rows : null;
@@ -2284,7 +2357,11 @@ test('gateway e2e should reproduce missing second response when assistant text l
         (r.kind === 'telegram.send' || r.kind === 'telegram.edit')
         && r.payload
         && r.payload.meta
-        && (r.payload.meta.channel === 'run_view_send' || r.payload.meta.channel === 'run_view_edit')
+        && (
+          r.payload.meta.channel === 'run_view_send'
+          || r.payload.meta.channel === 'run_view_edit'
+          || r.payload.meta.channel === 'run_view_draft_materialize'
+        )
       ))
       .map((r) => String(r.payload && r.payload.textPreview || ''))
       .join('\n');
@@ -2321,7 +2398,7 @@ test('gateway e2e should reproduce missing second response when assistant text l
   }
 });
 
-test('gateway e2e materializes post-complete draft preview into final second response', async () => {
+test('gateway e2e eagerly materializes post-complete second response from strong hint', async () => {
   const cfgSnapshot = backupFile(config.CONFIG_PATH);
   const token = 'test-token';
   const telegram = createTelegramMockServer();
@@ -2405,15 +2482,14 @@ test('gateway e2e materializes post-complete draft preview into final second res
           && content.includes('"id":"part-second-text"')
           && content.includes('second-post-complete:pc-second-materialize');
       });
-      const hasMaterializeRoute = secondRows.some((r) => (
-        r.kind === 'telegram.preview.route'
+      const hasMaterializeSend = secondRows.some((r) => (
+        r.kind === 'telegram.send'
         && r.payload
-        && r.payload.phase === 'materialize'
         && r.payload.meta
         && r.payload.meta.channel === 'run_view_draft_materialize'
         && String(r.payload.textPreview || '').includes('second-post-complete:pc-second-materialize')
       ));
-      return hasFinalSamePartUpdated && hasMaterializeRoute ? rows : null;
+      return hasFinalSamePartUpdated && hasMaterializeSend ? rows : null;
     }, { timeoutMs: 30000, stepMs: 120 });
 
     const runStarts = records.filter((r) => r.kind === 'run.start');
@@ -2435,18 +2511,17 @@ test('gateway e2e materializes post-complete draft preview into final second res
     });
     assert.ok(finalSamePartUpdated.length > 0);
 
-    const materializeRoutes = secondRows.filter((r) => (
-      r.kind === 'telegram.preview.route'
+    const materializeSends = secondRows.filter((r) => (
+      r.kind === 'telegram.send'
       && r.payload
-      && r.payload.phase === 'materialize'
       && r.payload.meta
       && r.payload.meta.channel === 'run_view_draft_materialize'
       && String(r.payload.textPreview || '').includes('second-post-complete:pc-second-materialize')
     ));
 
     assert.ok(
-      materializeRoutes.length > 0,
-      'expected post-complete second response to materialize the draft preview into a normal Telegram message'
+      materializeSends.length > 0,
+      'expected post-complete second response to eagerly materialize into a normal Telegram message'
     );
 
     await stopGateway(runtime, { controlUrl: started.controlUrl, testName: 'post-complete-same-part-materialize', status: 'ok' });
