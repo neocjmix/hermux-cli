@@ -48,6 +48,7 @@ const {
   createMessageHandler,
   createCallbackQueryHandler,
   reconcileRunViewForTelegram,
+  createTelegramBotEffects,
 } = downstreamProvider;
 const { splitTelegramHtml } = require('./providers/downstream/telegram/html-chunker');
 
@@ -225,6 +226,13 @@ function parsePayloadMeta(payload) {
 function audit(kind, payload) {
   auditLogger.write(kind, payload);
 }
+
+const telegramBotEffects = createTelegramBotEffects({
+  audit,
+  sleep,
+  getTelegramRetryAfterSeconds,
+});
+const { safeSendChatAction } = telegramBotEffects;
 
 function withConnectMutationLock(task) {
   const run = connectMutationQueue.then(task, task);
@@ -1830,6 +1838,39 @@ async function safeSend(bot, chatId, text, opts, auditMeta) {
     }
   }
   return null;
+}
+
+function clearTypingIndicatorTimer(state) {
+  if (!state || !state.typingIndicator || !state.typingIndicator.timer) return;
+  clearTimeout(state.typingIndicator.timer);
+  state.typingIndicator.timer = null;
+}
+
+function shouldRenewTypingIndicator(now, lastSentAt, intervalMs) {
+  const current = Number(now || 0) || 0;
+  const last = Number(lastSentAt || 0) || 0;
+  const interval = Number(intervalMs || 0) || 0;
+  if (current <= 0) return false;
+  if (last <= 0) return true;
+  return (current - last) >= interval;
+}
+
+function readBusySignalFromSessionPayload(payload) {
+  const source = payload && typeof payload === 'object' ? payload : null;
+  const raw = source ? '' : String(payload || '').trim();
+  if (!source && !raw) return null;
+  try {
+    const parsed = source || JSON.parse(raw);
+    const type = String(parsed && parsed.type ? parsed.type : '').trim();
+    if (type === 'session.idle') return false;
+    if (type !== 'session.status') return null;
+    const statusType = String(parsed && parsed.properties && parsed.properties.status && parsed.properties.status.type ? parsed.properties.status.type : '').trim();
+    if (statusType === 'busy') return true;
+    if (statusType === 'idle') return false;
+    return null;
+  } catch (_err) {
+    return null;
+  }
 }
 
 async function sendHtml(bot, chatId, html, auditMeta) {
@@ -3653,6 +3694,16 @@ async function startPromptRun(bot, repo, state, runItem) {
     : null;
 
   state.running = true;
+  clearTypingIndicatorTimer(state);
+  if (!state.typingIndicator || typeof state.typingIndicator !== 'object') {
+    state.typingIndicator = {
+      timer: null,
+      lastSentAt: 0,
+      busy: false,
+      runId: '',
+      chatId: '',
+    };
+  }
   state.interruptRequested = false;
   state.interruptTrace = null;
   state.waitingInfo = null;
@@ -3706,6 +3757,10 @@ async function startPromptRun(bot, repo, state, runItem) {
     startedAtMs: runStartedAtMs,
     sessionId: String(activeSessionId || '').trim(),
   };
+  state.typingIndicator.runId = runId;
+  state.typingIndicator.chatId = String(chatId);
+  state.typingIndicator.lastSentAt = 0;
+  state.typingIndicator.busy = false;
   state.runView = {
     runId,
     sessionId: String(activeSessionId || '').trim(),
@@ -3721,11 +3776,52 @@ async function startPromptRun(bot, repo, state, runItem) {
     repo: repo.name,
     chatId: String(chatId),
   };
+  const TYPING_RENEW_MS = 4000;
   const isCurrentRunOwner = () => {
     const currentContext = state.currentRunContext && typeof state.currentRunContext === 'object'
       ? state.currentRunContext
       : null;
     return !!(currentContext && String(currentContext.runId || '').trim() === String(runId));
+  };
+  const scheduleTypingIndicatorRenewal = () => {
+    clearTypingIndicatorTimer(state);
+    if (!state.typingIndicator || !state.typingIndicator.busy || !isCurrentRunOwner()) return;
+    const now = Date.now();
+    const lastSentAt = Number(state.typingIndicator.lastSentAt || 0) || 0;
+    const waitMs = Math.max(250, TYPING_RENEW_MS - Math.max(0, now - lastSentAt));
+    state.typingIndicator.timer = setTimeout(() => {
+      if (state.typingIndicator) state.typingIndicator.timer = null;
+      void maybeSendTypingIndicator('renew');
+    }, waitMs);
+  };
+  const maybeSendTypingIndicator = async (source) => {
+    if (!state.typingIndicator || !state.typingIndicator.busy || !isCurrentRunOwner()) {
+      clearTypingIndicatorTimer(state);
+      return;
+    }
+    const now = Date.now();
+    if (!shouldRenewTypingIndicator(now, state.typingIndicator.lastSentAt, TYPING_RENEW_MS)) {
+      scheduleTypingIndicatorRenewal();
+      return;
+    }
+    const sent = await safeSendChatAction(bot, String(chatId), 'typing', {
+      ...runAuditMeta,
+      channel: 'run_typing',
+      source: String(source || 'session_busy'),
+    });
+    if (sent && state.typingIndicator) {
+      state.typingIndicator.lastSentAt = Date.now();
+    }
+    scheduleTypingIndicatorRenewal();
+  };
+  const syncTypingIndicator = (busy, source) => {
+    if (!state.typingIndicator) return;
+    state.typingIndicator.busy = !!busy;
+    if (!state.typingIndicator.busy) {
+      clearTypingIndicatorTimer(state);
+      return;
+    }
+    void maybeSendTypingIndicator(source || 'session_busy');
   };
   const getActiveSessionOwner = () => String(state.activeSessionId || activeSessionId || '').trim();
   const runMetrics = {
@@ -4152,6 +4248,11 @@ async function startPromptRun(bot, repo, state, runItem) {
         const payloads = batchEntries.map((entry) => (entry && Object.prototype.hasOwnProperty.call(entry, 'payload')
           ? entry.payload
           : entry));
+        for (const payload of payloads) {
+          const busySignal = readBusySignalFromSessionPayload(payload);
+          if (busySignal === null) continue;
+          syncTypingIndicator(busySignal, busySignal ? 'session_status_event' : 'session_idle_event');
+        }
         let snapshotState = state.sessionRenderStates.get(key) || createRunViewSnapshotState(key);
         auditRun('run.session_event.apply.batch.begin', {
           sid: key,
@@ -4181,6 +4282,7 @@ async function startPromptRun(bot, repo, state, runItem) {
         const next = snapshotState && snapshotState.renderState ? snapshotState.renderState : null;
         state.sessionRenderStates.set(key, snapshotState);
         state.latestSessionRenderState = snapshotState;
+        syncTypingIndicator(!!(next && next.render && next.render.busy), 'session_snapshot');
         auditRun('run.session_event.apply.begin', {
           sid: key,
           renderSeq,
@@ -4404,6 +4506,10 @@ async function startPromptRun(bot, repo, state, runItem) {
         contentPreview: summarizeAuditText(evt.content || evt.name || ''),
         ...buildAuditContentMeta(evt.content || ''),
       });
+      const upstreamBusySignal = readBusySignalFromSessionPayload(evt.content || '');
+      if (upstreamBusySignal !== null) {
+        syncTypingIndicator(upstreamBusySignal, upstreamBusySignal ? 'upstream_session_status' : 'upstream_session_idle');
+      }
       runMetrics.upstreamEventCount += 1;
       const eventAtMs = Date.now() - runStartedAt;
       if (runMetrics.upstreamFirstEventAtMs === null) {
@@ -4471,6 +4577,8 @@ async function startPromptRun(bot, repo, state, runItem) {
         outputSnapshot,
       });
       state.running = false;
+      if (state.typingIndicator) state.typingIndicator.busy = false;
+      clearTypingIndicatorTimer(state);
       clearInterruptEscalationTimer(state);
       state.interruptRequested = false;
       state.interruptTrace = null;
@@ -4613,6 +4721,8 @@ async function startPromptRun(bot, repo, state, runItem) {
       if (completionHandled) return;
       completionHandled = true;
       state.running = false;
+      if (state.typingIndicator) state.typingIndicator.busy = false;
+      clearTypingIndicatorTimer(state);
       clearInterruptEscalationTimer(state);
       state.interruptRequested = false;
       state.interruptTrace = null;
@@ -4700,6 +4810,7 @@ function main() {
     activeSessionId: '',
     currentRunContext: null,
     runView: null,
+    typingIndicator: null,
     sessionProjectedTexts: new Map(),
     dispatchQueue: Promise.resolve(),
     runViewDispatchQueue: Promise.resolve(),
@@ -4942,5 +5053,8 @@ module.exports = {
     materializeTelegramDraftPreview,
     maybeMaterializeRunStartDraftPreview,
     clearTelegramDraftPreview,
+    clearTypingIndicatorTimer,
+    shouldRenewTypingIndicator,
+    readBusySignalFromSessionPayload,
   },
 };

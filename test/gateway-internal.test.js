@@ -270,6 +270,38 @@ test('clearRunRenderStateForAttachedSession clears newly attached session once',
   assert.equal(state.latestSessionRenderState, null);
 });
 
+test('shouldRenewTypingIndicator respects interval threshold', () => {
+  assert.equal(_internal.shouldRenewTypingIndicator(1000, 0, 4000), true);
+  assert.equal(_internal.shouldRenewTypingIndicator(5000, 1000, 4000), true);
+  assert.equal(_internal.shouldRenewTypingIndicator(4999, 1000, 4000), false);
+});
+
+test('readBusySignalFromSessionPayload extracts busy and idle transitions', () => {
+  assert.equal(_internal.readBusySignalFromSessionPayload(JSON.stringify({
+    type: 'session.status',
+    properties: { status: { type: 'busy' } },
+  })), true);
+  assert.equal(_internal.readBusySignalFromSessionPayload(JSON.stringify({
+    type: 'session.status',
+    properties: { status: { type: 'idle' } },
+  })), false);
+  assert.equal(_internal.readBusySignalFromSessionPayload(JSON.stringify({ type: 'session.idle', properties: {} })), false);
+  assert.equal(_internal.readBusySignalFromSessionPayload(JSON.stringify({ type: 'message.updated', properties: {} })), null);
+  assert.equal(_internal.readBusySignalFromSessionPayload('not-json'), null);
+});
+
+test('clearTypingIndicatorTimer clears active timer reference', async () => {
+  const state = {
+    typingIndicator: {
+      timer: setTimeout(() => {}, 1000),
+    },
+  };
+
+  _internal.clearTypingIndicatorTimer(state);
+
+  assert.equal(state.typingIndicator.timer, null);
+});
+
 test('createTrailingThrottleProcessor applies leading then trailing latest value', async () => {
   const seen = [];
   const throttled = _internal.createTrailingThrottleProcessor({
