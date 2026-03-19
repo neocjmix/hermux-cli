@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { createCallbackQueryHandler } = require('../src/providers/downstream/telegram/gateway-callback-query-handler');
+const { createModelControlService } = require('../src/app/model-control-service');
 
 function makeHarness(overrides = {}) {
   const safeSendCalls = [];
@@ -61,6 +62,10 @@ function makeHarness(overrides = {}) {
     handleRevertCancelCallback: () => ({ answerText: 'cancelled' }),
     ...overrides,
   };
+
+  if (!deps.modelControlService) {
+    deps.modelControlService = createModelControlService(deps);
+  }
 
   const handler = createCallbackQueryHandler(deps);
   return {
