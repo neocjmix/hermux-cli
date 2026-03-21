@@ -1,13 +1,13 @@
 // @ts-check
 'use strict';
 
-const { version } = require('../../package.json');
+const HERMUX_VERSION = require('../../package.json').version;
 
 function getHermuxVersion() {
-  return String(version || '').trim() || '0.0.0';
+  return HERMUX_VERSION;
 }
 
 module.exports = {
-  HERMUX_VERSION: getHermuxVersion(),
+  HERMUX_VERSION,
   getHermuxVersion,
 };

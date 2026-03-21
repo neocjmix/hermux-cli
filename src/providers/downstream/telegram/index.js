@@ -7,6 +7,7 @@ const { createCallbackQueryHandler } = require('./gateway-callback-query-handler
 const { reconcileRunViewForTelegram } = require('./view-reconciler');
 const { createTelegramBotEffects } = require('./bot-effects');
 const { createTelegramTransport } = require('./transport');
+const { md2html, escapeHtml } = require('./md2html');
 
 module.exports = {
   TelegramBot,
@@ -16,4 +17,6 @@ module.exports = {
   reconcileRunViewForTelegram,
   createTelegramBotEffects,
   createTelegramTransport,
+  md2html,
+  escapeHtml,
 };

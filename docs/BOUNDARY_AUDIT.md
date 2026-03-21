@@ -181,4 +181,15 @@ Downstream (providers/downstream/*)
 | 13 | gateway-internal test raw event parsing | ANNOTATED | 주석 추가, 정규 테스트는 opencode-payload-introspection |
 | 14 | app service tests Telegram options | ANNOTATED | 주석 추가, 리빌드 시 channel-agnostic으로 변경 |
 
-**CRITICAL 6건, MODERATE 4건, MINOR 1건, FIXED 1건, ANNOTATED 2건. 리빌드의 새 `src/` 구현은 이 위반을 포함해서는 안 된다.**
+**CRITICAL 6건, MODERATE 4건, MINOR 1건, FIXED 1건, ANNOTATED 2건.**
+
+## Skeleton Status (2026-03-21)
+
+`src/`가 스켈레톤으로 교체됨. 레거시 구현은 `legacy/`에 읽기 전용 아카이브로 보존.
+
+- 모든 모듈: `module.exports` API surface 유지, 구현은 `throw new Error('NOT_IMPLEMENTED')`
+- `src/lib/md2html.js`: 삭제됨 → `src/providers/downstream/telegram/md2html.js`로 재배치 (BOUNDARY_AUDIT #2 해소)
+- `src/lib/runner.js`: 삭제됨 (opencode shim, BOUNDARY_AUDIT #3 해소). upstream runner는 `src/providers/upstream/opencode/runner.js`에만 존재
+- `src/gateway.js`: 경계 계약 주석만 포함. BOUNDARY_AUDIT #1, 4, 5, 6, 8, 9 해소
+- `src/app/model-*-service.js`: channel-agnostic 반환 계약 주석 포함 (BOUNDARY_AUDIT #7)
+- 테스트는 전부 NOT_IMPLEMENTED로 실패 — 리빌드 시 구현을 채워 통과시켜야 함

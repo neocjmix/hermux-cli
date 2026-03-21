@@ -1,68 +1,16 @@
 'use strict';
 
-const { createRenderState, applyPayload } = require('./render-state');
-const { buildRunViewFromRenderState } = require('./view-builder');
-
-function toText(value) {
-  return String(value == null ? '' : value);
-}
+// Skeleton: upstream opencode run-view snapshot
+// See docs/REBUILD_CONTRACTS.md § 3 (RunViewSnapshot boundary)
+// BOUNDARY: Upstream produces RunViewSnapshot. Downstream MUST NOT parse raw events.
+//   snapshot MUST NOT contain transport-specific limits (BOUNDARY_AUDIT #4)
 
 function createRunViewSnapshotState(sessionId) {
-  const sid = toText(sessionId).trim();
-  return {
-    renderState: createRenderState(sid),
-    snapshot: {
-      runId: '',
-      sessionId: sid,
-      messages: [],
-      tailMaterializeHint: null,
-      isFinal: false,
-      updatedAtMs: 0,
-    },
-  };
+  throw new Error('NOT_IMPLEMENTED: createRunViewSnapshotState');
 }
 
 function applyPayloadToRunViewSnapshot(state, payload, renderSeq, options) {
-  const current = state && typeof state === 'object'
-    ? state
-    : createRunViewSnapshotState('');
-  const currentRenderState = current.renderState && typeof current.renderState === 'object'
-    ? current.renderState
-    : createRenderState('');
-
-  const nextRenderState = applyPayload(currentRenderState, payload, renderSeq);
-  const safeOptions = options && typeof options === 'object' ? options : {};
-  const runId = toText(safeOptions.runId).trim();
-  const minMessageTimeMs = Number(safeOptions.minMessageTimeMs || 0) || 0;
-  const isFinal = !!safeOptions.isFinal;
-  const viewMode = toText(safeOptions.viewMode).trim().toLowerCase() || 'normal';
-  const repoName = toText(safeOptions.repoName).trim();
-  const queueLength = Number(safeOptions.queueLength || 0) || 0;
-
-  const messages = buildRunViewFromRenderState(nextRenderState, {
-    runId,
-    minMessageTimeMs,
-    viewMode,
-    repoName,
-    queueLength,
-  });
-
-  return {
-    renderState: nextRenderState,
-    snapshot: {
-      runId,
-      sessionId: toText(nextRenderState.sessionId || (nextRenderState.session && nextRenderState.session.id)).trim(),
-      messages: Array.isArray(messages) ? messages : [],
-      tailMaterializeHint: nextRenderState
-        && nextRenderState.render
-        && nextRenderState.render.latestAssistantTailMaterializeHint
-        && typeof nextRenderState.render.latestAssistantTailMaterializeHint === 'object'
-        ? { ...nextRenderState.render.latestAssistantTailMaterializeHint }
-        : null,
-      isFinal,
-      updatedAtMs: Date.now(),
-    },
-  };
+  throw new Error('NOT_IMPLEMENTED: applyPayloadToRunViewSnapshot');
 }
 
 module.exports = {

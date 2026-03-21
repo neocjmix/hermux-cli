@@ -1,49 +1,14 @@
 // @ts-check
 'use strict';
 
-/**
- * @param {string} text
- * @returns {string[]}
- */
-function splitByOmoInitiatorMarker(text) {
-  const src = String(text || '');
-  if (!src) return [];
-  return src
-    .split(/(?:<!--\s*OMO_INTERNAL_INITIATOR\s*-->|&lt;!--\s*OMO_INTERNAL_INITIATOR\s*--&gt;)/gi)
-    .map((part) => String(part || '').trim())
-    .filter(Boolean);
-}
+// Skeleton: see docs/COMPONENT_CONTRACTS.md § output-sanitizer
 
-function extractLatestSystemReminder(text) {
-  const src = String(text || '');
-  if (!src) return { text: '', reminderText: '' };
-  const regex = /<system-reminder>([\s\S]*?)<\/system-reminder>/gi;
-  let latest = '';
-  const stripped = src.replace(regex, (_m, body) => {
-    latest = String(body || '').trim();
-    return '';
-  }).trim();
-  return {
-    text: stripped,
-    reminderText: latest,
-  };
-}
-
-function sanitizeCanonicalOutputText(text, _promptText) {
-  return String(text || '').trim();
-}
-
-function sanitizeDisplayOutputText(text) {
-  return String(text || '').trim();
-}
-
-function sanitizeWithoutPromptEchoStrip(text) {
-  return String(text || '').trim();
-}
-
-function sanitizeFinalOutputText(text, promptText) {
-  return sanitizeCanonicalOutputText(text, promptText);
-}
+function splitByOmoInitiatorMarker(text) { throw new Error('NOT_IMPLEMENTED: splitByOmoInitiatorMarker'); }
+function extractLatestSystemReminder(text) { throw new Error('NOT_IMPLEMENTED: extractLatestSystemReminder'); }
+function sanitizeCanonicalOutputText(text, _promptText) { throw new Error('NOT_IMPLEMENTED: sanitizeCanonicalOutputText'); }
+function sanitizeDisplayOutputText(text) { throw new Error('NOT_IMPLEMENTED: sanitizeDisplayOutputText'); }
+function sanitizeWithoutPromptEchoStrip(text) { throw new Error('NOT_IMPLEMENTED: sanitizeWithoutPromptEchoStrip'); }
+function sanitizeFinalOutputText(text, promptText) { throw new Error('NOT_IMPLEMENTED: sanitizeFinalOutputText'); }
 
 module.exports = {
   splitByOmoInitiatorMarker,

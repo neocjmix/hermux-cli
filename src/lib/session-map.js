@@ -1,101 +1,23 @@
 // @ts-check
 'use strict';
 
-const fs = require('fs');
+// Skeleton: see docs/COMPONENT_CONTRACTS.md § session-map
+
 const path = require('path');
 
-/**
- * @typedef {Object} SessionEntry
- * @property {string} sessionId
- * @property {string} updatedAt
- * @property {string} repoName
- * @property {string} chatId
- */
-
-/**
- * @typedef {Object} SessionMap
- * @property {Object<string, SessionEntry>} sessions
- */
-
-const TEST_PROFILE_ENABLED = String(process.env.HERMUX_TEST_PROFILE || '').trim() === '1'
-  || process.argv.includes('--test');
-const TEST_PROFILE_ROOT = path.resolve(
-  process.env.HERMUX_TEST_PROFILE_ROOT
-    || path.join(__dirname, '..', '..', '.tmp', 'test-profile', `p-${process.pid}`)
+const SESSION_MAP_PATH = path.join(
+  process.env.HERMUX_DATA_DIR || path.join(require('os').homedir(), '.hermux'),
+  'sessions.json',
 );
-const DEFAULT_STATE_DIR = TEST_PROFILE_ENABLED
-  ? path.join(TEST_PROFILE_ROOT, 'state')
-  : path.join(__dirname, '..', '..', 'state');
-const STATE_DIR = path.resolve(process.env.HERMUX_STATE_DIR || DEFAULT_STATE_DIR);
-const SESSION_MAP_PATH = path.resolve(process.env.HERMUX_SESSION_MAP_PATH || path.join(STATE_DIR, 'session-map.json'));
 
-function normalize(raw) {
-  if (!raw || typeof raw !== 'object') return { sessions: {} };
-  const sessions = raw.sessions && typeof raw.sessions === 'object' ? raw.sessions : {};
-  return { sessions };
-}
-
-function loadSessionMap() {
-  if (!fs.existsSync(SESSION_MAP_PATH)) return { sessions: {} };
-  const raw = JSON.parse(fs.readFileSync(SESSION_MAP_PATH, 'utf8'));
-  return normalize(raw);
-}
-
-function saveSessionMap(data) {
-  fs.mkdirSync(STATE_DIR, { recursive: true });
-  const normalized = normalize(data);
-  const tempPath = SESSION_MAP_PATH + '.tmp';
-  fs.writeFileSync(tempPath, JSON.stringify(normalized, null, 2) + '\n', 'utf8');
-  fs.renameSync(tempPath, SESSION_MAP_PATH);
-}
-
-function makeSessionKey(repoName, chatId) {
-  return `${String(repoName || '').trim()}::${String(chatId || '').trim()}`;
-}
-
-function getSessionId(repoName, chatId) {
-  const key = makeSessionKey(repoName, chatId);
-  const map = loadSessionMap();
-  const row = map.sessions[key];
-  return row && row.sessionId ? String(row.sessionId) : '';
-}
-
-function setSessionId(repoName, chatId, sessionId) {
-  const key = makeSessionKey(repoName, chatId);
-  const map = loadSessionMap();
-  map.sessions[key] = {
-    sessionId: String(sessionId || '').trim(),
-    updatedAt: new Date().toISOString(),
-    repoName: String(repoName || '').trim(),
-    chatId: String(chatId || '').trim(),
-  };
-  saveSessionMap(map);
-  return map.sessions[key];
-}
-
-function clearSessionId(repoName, chatId) {
-  const key = makeSessionKey(repoName, chatId);
-  const map = loadSessionMap();
-  if (map.sessions[key]) {
-    delete map.sessions[key];
-    saveSessionMap(map);
-    return true;
-  }
-  return false;
-}
-
-function getSessionInfo(repoName, chatId) {
-  const key = makeSessionKey(repoName, chatId);
-  const map = loadSessionMap();
-  return map.sessions[key] || null;
-}
-
-function clearAllSessions() {
-  const current = loadSessionMap();
-  const count = Object.keys(current.sessions || {}).length;
-  saveSessionMap({ sessions: {} });
-  return count;
-}
+function makeSessionKey(repoName, chatId) { throw new Error('NOT_IMPLEMENTED: makeSessionKey'); }
+function loadSessionMap() { throw new Error('NOT_IMPLEMENTED: loadSessionMap'); }
+function saveSessionMap(data) { throw new Error('NOT_IMPLEMENTED: saveSessionMap'); }
+function getSessionId(repoName, chatId) { throw new Error('NOT_IMPLEMENTED: getSessionId'); }
+function setSessionId(repoName, chatId, sessionId) { throw new Error('NOT_IMPLEMENTED: setSessionId'); }
+function clearSessionId(repoName, chatId) { throw new Error('NOT_IMPLEMENTED: clearSessionId'); }
+function getSessionInfo(repoName, chatId) { throw new Error('NOT_IMPLEMENTED: getSessionInfo'); }
+function clearAllSessions() { throw new Error('NOT_IMPLEMENTED: clearAllSessions'); }
 
 module.exports = {
   SESSION_MAP_PATH,
