@@ -50,6 +50,7 @@ test('telegram view reconciler applies edit/send/delete with final-state flag', 
       deleteCount: 0,
       deferredCount: 0,
       draftCount: 0,
+      sendFailCount: 0,
     },
   });
 });

@@ -349,7 +349,13 @@ function addSessionObserver(entry, sessionId, observer, instance, options) {
   if (replayBuffered) {
     const buffered = entry.sessionBuffers.get(sid) || [];
     for (const framed of buffered) {
-      observer.onEvent(framed).catch(() => {});
+      observer.onEvent(framed).catch((err) => {
+        queueScopeAudit(entry, instance, 'router.event.replay_error', {
+          lane: 'session',
+          sessionId: sid,
+          error: String(err && err.message ? err.message : err || ''),
+        });
+      });
     }
   }
 
@@ -378,9 +384,15 @@ function addSessionObserver(entry, sessionId, observer, instance, options) {
 function replaceRunLifecycleObserver(entry, sessionId, controller, instance) {
   const sid = String(sessionId || '').trim();
   if (!sid || !entry || typeof controller !== 'object' || controller === null) return;
-  const existing = entry.runLifecycleBySession.get(sid);
-  if (existing && existing !== controller && typeof existing.close === 'function') {
-    existing.close('next_run_start');
+  // Close ALL existing lifecycle observers, not just the one matching this session ID.
+  // This prevents observer leaks when session IDs change between runs.
+  for (const [existingSid, existing] of entry.runLifecycleBySession.entries()) {
+    if (existing && existing !== controller && typeof existing.close === 'function') {
+      existing.close(existingSid === sid ? 'next_run_start' : 'next_run_session_change');
+    }
+    if (existing !== controller) {
+      entry.runLifecycleBySession.delete(existingSid);
+    }
   }
   entry.runLifecycleBySession.set(sid, controller);
 }
@@ -462,7 +474,14 @@ async function ensureSdkEventPump(instance, entry) {
       }
 
       for (const observer of observers) {
-        observer.onEvent(framed).catch(() => {});
+        observer.onEvent(framed).catch((err) => {
+          queueScopeAudit(entry, instance, 'router.event.observer_error', {
+            lane: 'session',
+            sessionId: resolved.sessionId,
+            type: resolved.type,
+            error: String(err && err.message ? err.message : err || ''),
+          });
+        });
       }
       queueScopeAudit(entry, instance, 'router.event.routed', {
         lane: 'session',
@@ -663,7 +682,6 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
   };
 
   const partMap = new Map();
-  const processedDeltas = new Set(); // Track processed deltas to prevent text duplication
   let partSeq = 0;
   let abortSession = null;
   let detachObserver = null;
@@ -902,7 +920,9 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
       const abortFn = handle._abortSession || abortSession;
       if (typeof abortFn === 'function') {
         console.log('[DEBUG] Calling abort function');
-        abortFn().catch(() => {});
+        abortFn().catch((err) => {
+          console.error('[abort] session abort failed:', String(err && err.message ? err.message : err || ''));
+        });
       } else {
         console.log('[DEBUG] No abort function available');
       }
@@ -1015,14 +1035,7 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
       const field = String(props.field || '');
       const delta = String(props.delta || '');
       if (!partId || field !== 'text' || !delta) return;
-      
-      // Create unique key for this delta event to prevent duplication
-      const deltaKey = `${partId}:${field}:${delta}:${props.messageID || ''}`;
-      if (processedDeltas.has(deltaKey)) {
-        return; // Skip already processed delta
-      }
-      processedDeltas.add(deltaKey);
-      
+
       const ptype = String(props.type || '').trim().toLowerCase();
       if (ptype === 'reasoning') {
         await dispatchEvent({
@@ -1183,9 +1196,6 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
           query,
         });
       };
-      // Store reference in handle
-      handle._abortSession = abortSession;
-      // Store reference in handle so it's available even after async setup
       handle._abortSession = abortSession;
       await ensureSdkEventPump(instance, runtimeEntry);
       let observerQueue = Promise.resolve();

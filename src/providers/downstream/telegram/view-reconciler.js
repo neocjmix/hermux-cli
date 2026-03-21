@@ -122,6 +122,7 @@ async function reconcileRunViewForTelegram(params) {
     deleteCount: 0,
     deferredCount: 0,
     draftCount: 0,
+    sendFailCount: 0,
   };
   let nextDraftPreview = currentDraftPreview;
   let nextMaterializedTail = keepCommittedTail ? requestedMaterializedTail : null;
@@ -163,7 +164,10 @@ async function reconcileRunViewForTelegram(params) {
         continue;
       }
       const sentMessageId = sent && sent.message_id ? sent.message_id : null;
-      if (!sentMessageId) continue;
+      if (!sentMessageId) {
+        stats.sendFailCount += 1;
+        continue;
+      }
       messageIds[command.index] = sentMessageId;
       appliedTexts[command.index] = command.text;
       if (typeof onMessagePersist === 'function' && sentMessageId) {

@@ -223,13 +223,17 @@ const chatRoutingService = createChatRoutingService({
 
 function withConnectMutationLock(task) {
   const run = connectMutationQueue.then(task, task);
-  connectMutationQueue = run.catch(() => {});
+  connectMutationQueue = run.catch((err) => {
+    console.error('[gateway] connect mutation failed:', String(err && err.message ? err.message : err || ''));
+  });
   return run;
 }
 
 function withRestartMutationLock(task) {
   const run = restartMutationQueue.then(task, task);
-  restartMutationQueue = run.catch(() => {});
+  restartMutationQueue = run.catch((err) => {
+    console.error('[gateway] restart mutation failed:', String(err && err.message ? err.message : err || ''));
+  });
   return run;
 }
 
