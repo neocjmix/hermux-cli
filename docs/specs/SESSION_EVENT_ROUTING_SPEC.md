@@ -88,20 +88,8 @@ Contract:
 
 ## 6. Session ID Extraction Contract
 
-Event-to-session extraction MUST use typed fallback order:
-
-1. `properties.sessionID`
-2. `properties.part.sessionID`
-3. `properties.info.sessionID`
-4. `properties.info.id` only for `session.*` info events
-5. unresolved => `null` => `global lane`
-
-Additional fields captured when present:
-
-- `messageId`: `properties.messageID` or `properties.part.messageID`
-- `partId`: `properties.partID` or `properties.part.id`
-
-If extraction succeeds but event type contract conflicts (example: mismatched embedded session fields), event MUST be dropped and audited as `drop_reason=conflicting_session_identity`.
+Event-to-session extraction MUST use a typed fallback order defined by the upstream provider adapter.
+If extraction yields conflicting session identities within the same event, the event MUST be dropped and audited (`drop_reason=conflicting_session_identity`).
 
 Extraction rule:
 
@@ -212,16 +200,9 @@ Default during development:
 
 ### 10.3 Reconstructability Requirements
 
-Each audit record MUST include:
+Each audit record MUST include sufficient context to reconstruct the accept/drop decision for any event. This includes routing context, decision outcome, and reason when not accepted.
 
-- `auditSeq` (monotonic per process)
-- `ingestTs` (daemon receive timestamp)
-- `sourceTs` (if supplied by source event)
-- routing context (`repoScope`, `sessionId?`, `sessionTurn?`, `serverEpoch`, `subscriptionEpoch`, `eventCursor`)
-- decision (`accepted`, `dropped`, `dedup_skip`, `retry`, `error`)
-- `reason` when not accepted
-
-Audit writer MUST be async-buffered; overflow MUST emit summarized drop record (`audit.dropped`).
+Audit writer MUST be async-buffered; overflow MUST emit summarized drop record.
 
 Non-blocking rule:
 

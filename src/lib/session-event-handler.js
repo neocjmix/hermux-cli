@@ -1,6 +1,15 @@
+// @ts-check
 'use strict';
 
 const { routeEventBySession } = require('./event-router');
+
+/**
+ * @typedef {Object} SessionEventResult
+ * @property {boolean} handled
+ * @property {string} nextSessionId
+ * @property {boolean} delivered
+ * @property {string} dropReason
+ */
 
 async function runChain(steps, initialContext) {
   let ctx = initialContext;

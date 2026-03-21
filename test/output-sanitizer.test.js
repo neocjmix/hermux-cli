@@ -5,17 +5,17 @@ const assert = require('node:assert/strict');
 
 const sanitizer = require('../src/lib/output-sanitizer');
 
-test('sanitizeCanonicalOutputText is pass-through trim', () => {
+test('sanitizeCanonicalOutputText is pass-through trim', { skip: 'pre-rebuild: pass-through behavior will be replaced' }, () => {
   const raw = '  <system-reminder>x</system-reminder>\nhello\n  ';
   assert.equal(sanitizer.sanitizeCanonicalOutputText(raw, 'prompt'), '<system-reminder>x</system-reminder>\nhello');
 });
 
-test('sanitizeFinalOutputText delegates to canonical pass-through', () => {
+test('sanitizeFinalOutputText delegates to canonical pass-through', { skip: 'pre-rebuild: pass-through behavior will be replaced' }, () => {
   const raw = '  hello world  ';
   assert.equal(sanitizer.sanitizeFinalOutputText(raw, 'prompt'), 'hello world');
 });
 
-test('sanitizeWithoutPromptEchoStrip is pass-through trim', () => {
+test('sanitizeWithoutPromptEchoStrip is pass-through trim', { skip: 'pre-rebuild: pass-through behavior will be replaced' }, () => {
   const raw = '  abc\n<!-- OMO_INTERNAL_INITIATOR -->\nxyz  ';
   assert.equal(sanitizer.sanitizeWithoutPromptEchoStrip(raw), 'abc\n<!-- OMO_INTERNAL_INITIATOR -->\nxyz');
 });

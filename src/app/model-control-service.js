@@ -1,4 +1,12 @@
+// @ts-check
 'use strict';
+
+/**
+ * @typedef {Object} ControlResult
+ * @property {string} answerText
+ * @property {string} message
+ * @property {Object} [opts]
+ */
 
 function createModelControlService(deps) {
   const {

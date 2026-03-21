@@ -1,4 +1,14 @@
+// @ts-check
 'use strict';
+
+/**
+ * @typedef {'connected'|'already_connected'|'remap_warning'|'moved'|'error'} ConnectResultKind
+ *
+ * @typedef {Object} ConnectResult
+ * @property {ConnectResultKind} kind
+ * @property {string} text
+ * @property {boolean} [includeGroupHint]
+ */
 
 function createChatRoutingService(deps) {
   const {

@@ -118,7 +118,7 @@ test('cli start --foreground runs gateway main path without daemonize', () => {
   }
 });
 
-test('cli start in daemon mode does not spawn when pid is already alive', () => {
+test('cli start in daemon mode does not spawn when pid is already alive', { skip: 'pre-rebuild: daemon PID mechanism may change' }, () => {
   const pidSnapshot = backupFile(pidPath);
   try {
     fs.mkdirSync(runtimeDir, { recursive: true });

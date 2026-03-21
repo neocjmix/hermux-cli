@@ -1,5 +1,10 @@
+// @ts-check
 'use strict';
 
+/**
+ * @param {string} text
+ * @returns {string[]}
+ */
 function splitByOmoInitiatorMarker(text) {
   const src = String(text || '');
   if (!src) return [];

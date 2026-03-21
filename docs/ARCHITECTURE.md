@@ -96,17 +96,8 @@ Boundary rule:
 
 ## Observability
 
-Development/debug runtime uses dense structured audit logs.
-
-- File: `runtime/audit-events.jsonl` (or `${HERMUX_RUNTIME_DIR}/audit-events.jsonl`)
-- Source: `src/lib/audit-log.js` and integration points in `src/gateway.js`
-- Coverage:
-  - inbound Telegram updates (`telegram.update`)
-  - message/callback router decisions (`router.message.*`, `router.callback.*`, `repo.message.*`)
-  - normalized runtime events and reaction decisions (`run.event_received`, `run.reaction`, `run.finalization`, `run.complete`, `run.error`)
-  - final/reminder/UI/reconcile internals (`run.final_pipeline.*`, `run.reconcile.*`, `run.ui.*`, `run.final_unit_send*`, `run.heartbeat.*`)
-  - Telegram API outcomes (`telegram.send`, `telegram.edit`, `telegram.delete`, `telegram.send_photo`, `telegram.send_document`)
-  - chunked-send boundaries and completion (`telegram.send_batch.start`, `telegram.send_batch.complete`)
+- Structured audit logging via `src/lib/audit-log.js` to `runtime/audit-events.jsonl`.
+- Covers inbound updates, routing decisions, runtime events, finalization, and delivery outcomes.
 
 ## Isolation Model
 
@@ -121,28 +112,11 @@ This state is not shared across repo contexts.
 
 ## Runtime Executor Lifecycle
 
-- scope key: `repoName::workdir`
-- runtime status key: in-memory state keyed by scope in `src/lib/runner.js`
-
 Recovery guarantees:
 
 - per-scope active run tracking
 - explicit global executor stop during restart/shutdown
-- command-transport timeout kill fallback
-
-## Command Surface (Current)
-
-- setup/mapping: `/onboard`, `/onboard cancel`, `/init`, `/init confirm`, `/repos`, `/connect <repo>`, `/whereami`, `/help`
-- runtime: `/start`, `/status`, `/models`, `/session`, `/version`, `/revert`, `/unrevert`, `/verbose`, `/interrupt`, `/restart`, `/reset`
-- utility: `/test`
-
-## Data and Persistence
-
-- config: `config/instances.json`
-- session map: runtime session map file
-- runtime status/state: in-memory map in `src/lib/runner.js`
-- run logs: per-repo log path
-- telegram e2e stub fixture: `test/fixtures/telegram-mock-server.js`
+- timeout kill fallback
 
 ## Failure Semantics
 

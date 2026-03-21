@@ -1,5 +1,7 @@
+// @ts-check
 'use strict';
 
+/** @type {Readonly<Record<string, () => any>>} */
 const upstreamStrategies = Object.freeze({
   opencode: () => require('./opencode'),
 });

@@ -1,5 +1,7 @@
+// @ts-check
 'use strict';
 
+/** @type {Readonly<Record<string, () => any>>} */
 const downstreamStrategies = Object.freeze({
   telegram: () => require('./telegram'),
 });

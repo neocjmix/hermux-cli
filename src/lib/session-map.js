@@ -1,7 +1,21 @@
+// @ts-check
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
+
+/**
+ * @typedef {Object} SessionEntry
+ * @property {string} sessionId
+ * @property {string} updatedAt
+ * @property {string} repoName
+ * @property {string} chatId
+ */
+
+/**
+ * @typedef {Object} SessionMap
+ * @property {Object<string, SessionEntry>} sessions
+ */
 
 const TEST_PROFILE_ENABLED = String(process.env.HERMUX_TEST_PROFILE || '').trim() === '1'
   || process.argv.includes('--test');

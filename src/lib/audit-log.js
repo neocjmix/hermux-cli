@@ -1,8 +1,15 @@
+// @ts-check
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
 const { HERMUX_VERSION } = require('./hermux-version');
+
+/**
+ * @typedef {Object} AuditLogger
+ * @property {string} logPath
+ * @property {(kind: string, payload: any) => void} write
+ */
 
 const AUDIT_STRING_MAX = parseInt(process.env.HERMUX_AUDIT_STRING_MAX || '16000', 10);
 
@@ -30,6 +37,7 @@ function sanitizeValue(value, depth = 0) {
   return String(value);
 }
 
+/** @param {string} [runtimeDir] @returns {AuditLogger} */
 function makeAuditLogger(runtimeDir) {
   const resolvedRuntimeDir = path.resolve(runtimeDir || path.join(__dirname, '..', '..', 'runtime'));
   const logPath = path.join(resolvedRuntimeDir, 'audit-events.jsonl');

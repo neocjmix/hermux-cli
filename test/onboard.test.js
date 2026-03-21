@@ -27,7 +27,7 @@ function restoreFile(filePath, snapshot) {
   fs.writeFileSync(filePath, snapshot, 'utf8');
 }
 
-test('onboard CLI fails fast on invalid token format', () => {
+test('onboard CLI fails fast on invalid token format', { skip: 'pre-rebuild: requires opencode in PATH; onboard flow will be redesigned' }, () => {
   const snapshot = backupFile(config.CONFIG_PATH);
   const tempWorkdir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-onboard-fail-'));
 

@@ -80,14 +80,7 @@ Legacy `instances[]` configs are normalized during load.
 
 ## Runtime Tuning Environment Variables
 
-- `HERMUX_MAX_PROCESS_SECONDS`
-- `HERMUX_SDK_SERVER_START_TIMEOUT_MS`
-- `HERMUX_SDK_PORT_RANGE_MIN`
-- `HERMUX_SDK_PORT_RANGE_MAX`
-- `HERMUX_SDK_PORT_PICK_ATTEMPTS`
-- `HERMUX_EXECUTION_TRANSPORT` (`sdk` or `command`)
-- `HERMUX_OPENCODE_SDK_SHIM` (test shim path override)
-- `HERMUX_SDK_POST_COMPLETE_LINGER_MS` (UX pacing window only; MUST NOT be required for session-event acceptance correctness)
+Runtime behavior can be tuned via environment variables. See source code for current variables and defaults.
 
 ## Test Profile Isolation
 
@@ -111,29 +104,9 @@ If you run tests manually (outside npm scripts), keep isolation enabled:
 node --require ./test/helpers/test-profile.js --test --test-concurrency=1 test/*.test.js
 ```
 
-## Event/Telegram Audit Logging
+## Audit Logging
 
-Hermux now writes dense JSONL audit logs for development/debugging to:
-
-- `runtime/audit-events.jsonl` (or `${HERMUX_RUNTIME_DIR}/audit-events.jsonl`)
-
-Each record includes:
-
-- `kind`: event category (`telegram.update`, `router.message.*`, `router.callback.*`, `repo.message.*`, `run.event_received`, `run.reaction`, `run.final_pipeline.*`, `run.reconcile.*`, `run.ui.*`, `run.finalization`, `run.complete`, `telegram.send`, `telegram.send_batch.*`, `telegram.edit`, `telegram.delete`, etc.)
-- `payload`: structured metadata (repo/chat/run correlation ids, event type, decision summary, and Telegram API outcome)
-
-Additional high-signal fields now commonly included in payloads:
-
-- `durationMs` for Telegram API calls and batch send windows
-- `textLength` / `htmlLength` and truncated previews for safe payload visibility
-- reconciliation decision counters (`targetCount`, `currentCount`, `edited`, `removed`, `skippedSame`)
-- UI/update control reasons (`reason: interval_throttled|unchanged|superseded|empty`)
-
-Use cases:
-
-- trace OpenCode runtime events to gateway reactions,
-- trace gateway reactions to actual Telegram send/edit/delete outcomes,
-- diagnose output loss/merge/leak behavior with per-run context.
+Structured JSONL audit logs are written to `runtime/audit-events.jsonl` for development/debugging. Each record includes event kind and structured payload for tracing the full path from inbound update through runtime event to delivery outcome.
 
 ## Telegram E2E Stub Loop
 
@@ -177,6 +150,3 @@ Reference: `docs/specs/TELEGRAM_E2E_STUB_SPEC.md`.
 - binary: `hermux`
 - publish configuration: public npm package
 
-## Backlog
-
-- Validate OpenCode `session.revert` stability in real-world runs (timeline rollback vs filesystem rollback consistency), and document expected/no-op edge cases in operator-facing UX text.

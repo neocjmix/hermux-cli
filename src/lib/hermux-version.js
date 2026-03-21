@@ -1,3 +1,4 @@
+// @ts-check
 'use strict';
 
 const { version } = require('../../package.json');

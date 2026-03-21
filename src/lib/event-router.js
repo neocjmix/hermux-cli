@@ -1,4 +1,13 @@
+// @ts-check
 'use strict';
+
+/**
+ * @typedef {Object} RouteResult
+ * @property {boolean} deliver
+ * @property {string} sessionId
+ * @property {string} payload
+ * @property {string} [reason]
+ */
 
 function toSessionId(value) {
   return String(value || '').trim();
@@ -49,6 +58,10 @@ function extractSessionIdsFromRawEvent(rawEvent) {
   return ids.filter(Boolean);
 }
 
+/**
+ * @param {{ event: { sessionId?: string, content?: string }, activeSessionId: string }} params
+ * @returns {RouteResult}
+ */
 function routeEventBySession({ event, activeSessionId }) {
   const currentSessionId = toSessionId(activeSessionId);
   const eventSessionId = toSessionId(event && event.sessionId);

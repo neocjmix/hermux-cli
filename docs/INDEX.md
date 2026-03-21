@@ -10,19 +10,27 @@ This is the canonical documentation entrypoint.
 
 ## Read Order
 
-1. `README.md`
-2. `docs/INDEX.md`
-3. `docs/rules/DOCUMENTATION_RULES.md`
-4. `docs/specs/UX_SPEC.md`
-5. `docs/specs/COMPONENT_CONTRACTS.md`
-6. `docs/specs/TELEGRAM_E2E_STUB_SPEC.md`
-7. `docs/specs/EVENT_HANDLING_COMPARISON.md`
-8. `docs/specs/SESSION_EVENT_ROUTING_SPEC.md`
-9. `docs/specs/ADAPTER_STRATEGY_DI_SPEC.md`
-10. `docs/ARCHITECTURE.md`
-11. `docs/DEVELOPER_GUIDE.md`
+For rebuild, start with `docs/REBUILD_CONTRACTS.md` — it consolidates all essential invariants.
+
+1. `docs/REBUILD_CONTRACTS.md` (**rebuild authoritative reference**)
+2. `README.md`
+3. `docs/INDEX.md`
+4. `docs/rules/DOCUMENTATION_RULES.md`
+5. `docs/specs/UX_SPEC.md`
+6. `docs/specs/COMPONENT_CONTRACTS.md`
+7. `docs/specs/TELEGRAM_E2E_STUB_SPEC.md`
+8. `docs/specs/EVENT_HANDLING_COMPARISON.md`
+9. `docs/specs/SESSION_EVENT_ROUTING_SPEC.md`
+10. `docs/specs/ADAPTER_STRATEGY_DI_SPEC.md`
+11. `docs/ARCHITECTURE.md`
+12. `docs/DEVELOPER_GUIDE.md`
 
 ## Documents
+
+- `docs/REBUILD_CONTRACTS.md`
+  - Audience: rebuild implementers
+  - Purpose: consolidated essential invariants, interface contracts, data contracts, and verification checklist
+  - Update when: any contract-level decision changes during rebuild
 
 - `README.md`
   - Audience: users and agents

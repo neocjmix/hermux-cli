@@ -1,4 +1,11 @@
+// @ts-check
 'use strict';
+
+/**
+ * @typedef {Object} CommandResult
+ * @property {string} text
+ * @property {Object} [opts]
+ */
 
 function createModelCommandService(deps) {
   const {

@@ -1,7 +1,48 @@
+// @ts-check
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
+
+/**
+ * @typedef {Object} RepoConfig
+ * @property {string} name
+ * @property {boolean} enabled
+ * @property {string} workdir
+ * @property {string[]} chatIds
+ * @property {string} opencodeCommand
+ * @property {string} logFile
+ */
+
+/**
+ * @typedef {Object} GlobalConfig
+ * @property {string} telegramBotToken
+ */
+
+/**
+ * @typedef {Object} HermuxConfig
+ * @property {GlobalConfig} global
+ * @property {RepoConfig[]} repos
+ */
+
+/**
+ * @typedef {Object} AddChatResult
+ * @property {boolean} ok
+ * @property {string} [reason]
+ * @property {boolean} [changed]
+ * @property {string} [existingRepo]
+ * @property {RepoConfig} [repo]
+ */
+
+/**
+ * @typedef {Object} MoveChatResult
+ * @property {boolean} ok
+ * @property {string} [reason]
+ * @property {boolean} [changed]
+ * @property {boolean} [moved]
+ * @property {string} [previousRepo]
+ * @property {RepoConfig} [repo]
+ */
 
 const TEST_PROFILE_ENABLED = String(process.env.HERMUX_TEST_PROFILE || '').trim() === '1'
   || process.argv.includes('--test');
@@ -90,6 +131,7 @@ function normalize(raw) {
   return normalizeFromLegacy(raw);
 }
 
+/** @returns {HermuxConfig} */
 function load() {
   if (!fs.existsSync(CONFIG_PATH)) {
     return { global: { telegramBotToken: '' }, repos: [] };
@@ -98,6 +140,7 @@ function load() {
   return normalize(raw);
 }
 
+/** @param {HermuxConfig} config */
 function save(config) {
   fs.mkdirSync(CONFIG_DIR, { recursive: true });
   const normalized = normalize(config);
@@ -126,6 +169,11 @@ function addOrUpdateRepo(repo) {
   return config;
 }
 
+/**
+ * @param {string} repoName
+ * @param {string} chatId
+ * @returns {AddChatResult}
+ */
 function addChatIdToRepo(repoName, chatId) {
   const config = load();
   const targetName = String(repoName || '').trim();
@@ -165,6 +213,11 @@ function addChatIdToRepo(repoName, chatId) {
   return { ok: true, changed: false, repo: normalizeRepo(repo) };
 }
 
+/**
+ * @param {string} repoName
+ * @param {string} chatId
+ * @returns {MoveChatResult}
+ */
 function moveChatIdToRepo(repoName, chatId) {
   const config = load();
   const targetName = String(repoName || '').trim();

@@ -115,7 +115,6 @@ Rules:
 - Last-snapshot application MUST be safe because snapshot is already materialized view state.
 - Upstream snapshot builders MUST NOT split or truncate `messages` for Telegram or any other downstream transport limit.
 - Downstream adapters MAY apply presentation formatting per channel, but any transport-size chunking MUST occur after that formatting step.
-- For Telegram delivery, HTML formatting MUST happen before max-size chunking for visible run-view/final-answer delivery.
 - Visible content MUST be preserved by chunk splitting rather than silent truncation when a downstream transport limit is exceeded.
 
 ### 3.3 SessionRoutingPolicy
@@ -193,21 +192,11 @@ Errors surfaced to users SHOULD contain a stable category and concise recovery h
 - Interrupt/restart command semantics MUST remain idempotent.
 - Canonical event emission MUST remain auditable.
 
-## 9) Implementation Order (Normative)
+## 9) Migration Guardrails
 
-Implementation MUST proceed in this order:
-
-1. introduce interfaces + composition root wiring
-2. wrap current OpenCode runner as `OpenCodeRuntimeAdapter`
-3. wrap current Telegram send path as `TelegramDeliveryAdapter`
-4. move command handlers to orchestrator-facing application layer
-5. add new upstream/downstream adapters without core orchestrator changes
-
-Migration guardrails:
-
-- each refactor slice MUST preserve current user-visible behavior and session-first late-event semantics
-- docs/contracts must be updated before code in each non-trivial slice
-- contract tests must be added or updated before implementation in each slice
+- Each refactor slice MUST preserve current user-visible behavior and session-first late-event semantics.
+- Docs/contracts must be updated before code in each non-trivial slice.
+- Contract tests must be added or updated before implementation in each slice.
 
 ## 10) Diagrams
 

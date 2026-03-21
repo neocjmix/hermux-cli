@@ -36,3 +36,19 @@ test('lib runner remains a compatibility shim over the opencode upstream runner'
   assert.equal(runnerCompat.subscribeSessionEvents, upstreamRunner.subscribeSessionEvents);
   assert.equal(runnerCompat.stopAllRuntimeExecutors, upstreamRunner.stopAllRuntimeExecutors);
 });
+
+test('provider registry rejects empty and whitespace-only provider ids', () => {
+  assert.throws(() => providers.resolveUpstreamProvider(''), /unsupported upstream provider/);
+  assert.throws(() => providers.resolveUpstreamProvider('  '), /unsupported upstream provider/);
+  assert.throws(() => providers.resolveUpstreamProvider(null), /unsupported upstream provider/);
+  assert.throws(() => providers.resolveDownstreamProvider(''), /unsupported downstream provider/);
+  assert.throws(() => providers.resolveDownstreamProvider(undefined), /unsupported downstream provider/);
+});
+
+test('provider-selection module is frozen and exports only upstream and downstream', () => {
+  const selection = require('../src/provider-selection');
+  assert.equal(Object.isFrozen(selection), true);
+  assert.deepEqual(Object.keys(selection).sort(), ['downstream', 'upstream']);
+  assert.equal(typeof selection.upstream, 'string');
+  assert.equal(typeof selection.downstream, 'string');
+});

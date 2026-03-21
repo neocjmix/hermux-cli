@@ -55,9 +55,7 @@ Runtime contract:
 - per-repo lock allows one active run
 - queued prompts maintain FIFO order
 - `src/gateway.js` acts as composition/orchestration root and MUST prefer provider/application facades over direct provider-private logic
-- non-final run-view latest-assistant preview MAY use Bot API `sendMessageDraft` in eligible private-chat flows, while committed status/older messages remain regular Telegram messages
-- non-final run-view Telegram send/edit retries MAY degrade by deferring stale updates instead of sleeping inline on long `retry_after`; final-state delivery MUST keep explicit success/failure semantics
-- draft-preview transport MUST fall back to regular send/edit preview if the method is unavailable or rejected by the Telegram API
+- non-final run-view delivery MAY use optimistic transport strategies; final-state delivery MUST keep explicit success/failure semantics
 
 Boundary contract:
 
@@ -78,8 +76,7 @@ Execution contract:
 - `runOpencode(instance, prompt, handlers)` is primary execution entrypoint
 - SDK transport is the default runtime path
 - optional command transport fallback can be forced via `HERMUX_EXECUTION_TRANSPORT=command`
-- runtime status is tracked by repo scope key
-- `src/lib/runner.js` is a compatibility shim over the active upstream provider surface and MUST NOT become a second long-term provider implementation layer
+- runtime status is tracked by repo scope
 
 Failure contract:
 
@@ -93,7 +90,7 @@ Contract:
 - markdown subset converts to Telegram-safe HTML
 - escaping is enforced for unsafe HTML characters
 - code blocks and inline code preserve readability semantics
-- because this module is channel-specific today, future boundary cleanup SHOULD relocate or rename it to make its Telegram ownership explicit
+- this module is channel-specific and belongs under downstream provider in a rebuild
 
 ## 7) Test Mapping Rule
 
@@ -139,16 +136,5 @@ Contract rules:
 - Snapshot emission must allow last-snapshot application without semantic loss at downstream boundary.
 - `isFinal` marks provider phase completion for the emitting run snapshot; it MUST NOT be interpreted as session lifecycle termination.
 - `runId` remains a correlation field for rendering/audit, while lifecycle ownership still follows session-first routing and next-run/session-end termination semantics from `docs/specs/SESSION_EVENT_ROUTING_SPEC.md`.
-- Status-pane rendering SHOULD include the latest reasoning preview as the final line when upstream render state exposes reasoning text.
-- When a new run starts in the same session, downstream reconciliation MUST preserve prior-run chat history and start a fresh status-panel message for the new run instead of reusing prior-run body or status slots.
-- Run-start handoff MUST materialize any non-empty prior Telegram draft preview before `state.runView` is reset for the next run; empty draft previews are ignored.
-- Active-run Telegram reconciliation SHOULD treat `tailMaterializeHint.reason === "text_part_updated_after_delta"` as a strong boundary for immediate tail materialization while preserving weaker hints for fallback-only behavior.
-- Gateway runtime SHOULD renew Telegram `typing` chat actions while the active session snapshot reports `render.busy === true`, and stop renewing when the session goes idle or the run exits.
-- `RunViewSnapshot` delivery is the only supported render contract between upstream and downstream modules; downstream behavior changes MUST be expressed through snapshot semantics or downstream-local policy, not through upstream raw event knowledge in gateway.
-
-Current implementation anchors:
-
-- `src/providers/upstream/opencode/run-view-snapshot.js`
-- `src/providers/upstream/opencode/render-state.js`
-- `src/providers/upstream/opencode/view-builder.js`
-- `src/providers/downstream/telegram/view-reconciler.js`
+- When a new run starts in the same session, downstream MUST preserve prior-run chat history and start fresh rendering for the new run.
+- `RunViewSnapshot` is the only supported render contract between upstream and downstream; downstream behavior changes MUST be expressed through snapshot semantics or downstream-local policy, not through upstream raw event knowledge.

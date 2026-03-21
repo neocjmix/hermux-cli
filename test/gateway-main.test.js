@@ -43,3 +43,33 @@ test('gateway main exits early with setup guidance when global token is missing'
     restoreFile(config.CONFIG_PATH, snapshot);
   }
 });
+
+test('gateway main function is exported and callable', () => {
+  const { main } = require('../src/gateway');
+  assert.equal(typeof main, 'function');
+});
+
+test('gateway main exports _internal with essential contract functions', () => {
+  const { _internal: gi } = require('../src/gateway');
+
+  // Concurrency contracts
+  assert.equal(typeof gi.withStateDispatchLock, 'function');
+  assert.equal(typeof gi.withRunViewDispatchLock, 'function');
+  assert.equal(typeof gi.withRestartMutationLock, 'function');
+
+  // Interrupt contract
+  assert.equal(typeof gi.requestInterrupt, 'function');
+
+  // Output pipeline contracts
+  assert.equal(typeof gi.reconcileOutputSnapshot, 'function');
+  assert.equal(typeof gi.selectFinalOutputText, 'function');
+  assert.equal(typeof gi.resolveFinalizationOutput, 'function');
+
+  // Session/render lifecycle
+  assert.equal(typeof gi.clearRunRenderStateAtRunStart, 'function');
+  assert.equal(typeof gi.clearRunRenderStateForAttachedSession, 'function');
+
+  // Routing
+  assert.equal(typeof gi.parseCommand, 'function');
+  assert.equal(typeof gi.handleConnectCommand, 'function');
+});

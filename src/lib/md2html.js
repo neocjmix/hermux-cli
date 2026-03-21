@@ -1,5 +1,7 @@
+// @ts-check
 'use strict';
 
+/** @param {string} s */
 function escapeHtml(s) {
   return String(s)
     .replace(/&/g, '&amp;')
