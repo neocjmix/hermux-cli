@@ -1,8 +1,10 @@
 # Telegram E2E Stub Spec
 
+Note: 이 spec은 **Telegram downstream channel 전용** 테스트 인프라를 정의한다. 다른 downstream channel(Slack, webhook 등)이 추가되면 해당 채널의 스텁 spec을 별도로 작성한다. 스텁 패턴(제어 API, 시나리오 주입, 요청 검사)은 채널 간 재사용 가능하다.
+
 ## Objective
 
-Provide a reusable Telegram Bot API contract stub for hermux that supports:
+Provide a reusable [Telegram Bot API](https://core.telegram.org/bots/api) contract stub for hermux that supports:
 
 - deterministic CI test loops,
 - polling + callback flow validation,

@@ -1,6 +1,8 @@
 # Documentation Rules
 
-This document defines documentation governance for this repository.
+이 문서는 이 저장소의 문서 거버넌스를 정의한다.
+
+모든 문서 탐색의 시작점은 [`docs/INDEX.md`](../INDEX.md)이다.
 
 ## Source-of-Truth Policy
 
@@ -54,5 +56,6 @@ Do not place temporary status snapshots, one-off migration notes, or implementat
 ## Agent Discoverability Rules
 
 - Agents start at `AGENTS.md` then `docs/INDEX.md`.
-- New docs must be linked from `docs/INDEX.md`.
+- New docs must be linked from `docs/INDEX.md` and the "All Documents" 테이블에 추가.
 - Rules updates must be reflected in both `AGENTS.md` and this file.
+- `docs/INDEX.md`는 모든 독자의 단일 시작점이다. 에이전트도 `AGENTS.md` 읽기 후 `docs/INDEX.md`를 따른다.

@@ -1,6 +1,8 @@
 # Session-Centric Event Routing Spec
 
-This spec defines the target architecture for global Hermux daemon event handling across multiple repos.
+이 spec은 여러 레포에 걸친 전역 hermux 데몬 이벤트 처리의 목표 아키텍처를 정의한다.
+
+이 라우팅 계약은 **upstream provider에 독립적**이다. 현재 opencode가 유일한 upstream이지만, 다른 provider(Claude Code, Codex 등)가 추가되어도 세션 라우팅 규칙은 동일하게 적용된다. Provider별 차이는 세션 ID 추출 규칙(§ 6)에서만 나타난다.
 
 ## 1. Intent
 

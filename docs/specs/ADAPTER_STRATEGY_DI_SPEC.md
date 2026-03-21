@@ -1,6 +1,8 @@
 # Adapter Strategy + DI Spec
 
-This document defines the normative architecture contract for provider-agnostic upstream runtime execution and transport-agnostic downstream delivery.
+이 문서는 provider-agnostic upstream 실행과 transport-agnostic downstream 전달을 위한 정규 아키텍처 계약을 정의한다.
+
+hermux의 핵심 확장성 전략은 upstream provider(현재 opencode, 목표: Claude Code CLI, Codex CLI, Cursor CLI 등)와 downstream channel(현재 Telegram, 목표: Slack, webhook, stdout 등)을 플러그 가능한 어댑터로 분리하는 것이다.
 
 ## Scope
 

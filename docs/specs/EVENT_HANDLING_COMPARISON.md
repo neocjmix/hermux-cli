@@ -1,7 +1,9 @@
 # Event Handling Comparison
 
-This document captures architectural comparison insights from reviewing reference implementations.
-It serves as design context for the rebuild, not as a prescriptive specification.
+이 문서는 레퍼런스 구현 리뷰에서 얻은 아키텍처 비교 인사이트를 기록한다.
+리빌드의 **설계 배경 컨텍스트**이며, 규범적 명세가 아니다.
+
+비교 대상은 모두 opencode+Telegram 조합이지만, hermux가 도출한 아키텍처 결정(이벤트 정규화, 결정론적 완결, 호환성 분기)은 **provider/channel-agnostic 원칙**에 기반한다.
 
 ## Compared Implementations
 

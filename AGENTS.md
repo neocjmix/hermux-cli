@@ -1,22 +1,30 @@
 # AGENTS
 
-This file defines the always-read documentation entrypoint for agents working in this repository.
+이 파일은 이 저장소에서 작업하는 에이전트의 필수 진입점이다.
+
+## Quick Context
+
+hermux는 텔레그램 등 메시징 채널에서 로컬 AI 코딩 에이전트(opencode 등)를 원격 조작하는 게이트웨이다. upstream provider(현재 opencode)와 downstream channel(현재 Telegram)은 플러그 가능한 어댑터 구조로 확장 가능하다. 제품 전체 맥락은 [`docs/PRODUCT_GUIDE.md`](docs/PRODUCT_GUIDE.md)를 참조한다.
 
 ## Read Order (Mandatory)
 
-1. `README.md`
-2. `docs/INDEX.md`
+1. `AGENTS.md` (이 문서)
+2. `docs/INDEX.md` — **단일 문서 허브**, 목적별 탐색 경로
 3. `docs/rules/DOCUMENTATION_RULES.md`
 4. Relevant spec/contract docs for the task
 
 ## Document Source of Truth
 
+- 제품 개요, 외부 의존성, 목표/비목표: `docs/PRODUCT_GUIDE.md`
 - Product behavior and user experience contracts: `docs/specs/UX_SPEC.md`
 - Component and interface contracts: `docs/specs/COMPONENT_CONTRACTS.md`
 - System structure and boundaries: `docs/ARCHITECTURE.md`
 - Development workflow and commands: `docs/DEVELOPER_GUIDE.md`
+- 리빌드 불변량 (session-first 정규 정의 포함): `docs/REBUILD_CONTRACTS.md`
 
 ## Critical Invariant (Top Priority)
+
+정규 정의: [`docs/REBUILD_CONTRACTS.md` § 1](docs/REBUILD_CONTRACTS.md#1-session-first-event-acceptance).
 
 - Event delivery acceptance is session-first.
 - Run lifecycle state is never a routing acceptance condition for session-resolved events.
@@ -31,7 +39,7 @@ This file defines the always-read documentation entrypoint for agents working in
 
 ### Mandatory Pre-Change Check
 
-Before changing any event handling, run-view, Telegram delivery, completion, finalization, revert, or interrupt logic, explicitly verify all of the following:
+Before changing any event handling, run-view, downstream delivery, completion, finalization, revert, or interrupt logic, explicitly verify all of the following:
 
 1. Am I using `run.complete`, `completionHandled`, idle/completed state, or "final run" status as a gate for accepting or rendering session events?
 2. Am I changing transport mode or downstream behavior for same-session late events because the run reached `complete`?
