@@ -67,10 +67,22 @@ legacy/
 
 ## Known Boundary Issues in Legacy Code
 
-리빌드 시 주의해야 할 경계 침범 사항:
+상세 감사 결과는 [`docs/BOUNDARY_AUDIT.md`](../docs/BOUNDARY_AUDIT.md)를 참조한다.
 
-1. **`src/lib/md2html.js`**: Telegram HTML 변환이 core lib에 위치. downstream/telegram으로 이동해야 함.
-2. **`src/lib/runner.js`**: opencode 전용 호환 심이 core lib에 위치. upstream/opencode 또는 AgentRuntimeAdapter로 교체해야 함.
-3. **`src/gateway.js`**: 일부 Telegram 전송 로직과 opencode raw 이벤트 해석이 잔존. 각각 downstream/upstream 어댑터로 분리해야 함.
+핵심 경계 침범 (CRITICAL 6건):
 
-이런 경계 침범이 리빌드에서 반복되지 않도록, 새 구현은 `docs/specs/ADAPTER_STRATEGY_DI_SPEC.md`의 경계 계약을 따라야 한다.
+1. **`src/gateway.js:56`** — Telegram html-chunker를 core에서 직접 import
+2. **`src/lib/md2html.js`** — Telegram HTML 변환(`<tg-spoiler>`, `tg://`)이 core lib에 위치
+3. **`src/lib/runner.js`** — opencode 전용 호환 심이 core lib에 위치
+4. **`src/gateway.js:61`** — `TG_MAX_LEN=4000`을 upstream snapshot builder에 전달 (transport 제한 누출)
+5. **`src/gateway.js:1371,3152-3154`** — raw opencode event type(`message.part.delta`, `session.status`)을 gateway에서 직접 파싱
+6. **`src/gateway.js:409-443`** — Telegram formatting showcase가 core에 위치
+
+추가 침범 (MODERATE 4건):
+
+7. **`src/app/model-*-service.js`** — `parse_mode: 'HTML'`, `reply_markup` 등 Telegram 옵션 직접 반환
+8. **`src/gateway.js:587-634,2052-2074`** — Telegram keyboard builders가 core에 위치
+9. **`src/gateway.js:558-585,2077-2101`** — Telegram HTML builders가 core에 위치
+10. **`src/lib/config.js`** — `telegramBotToken`, `opencodeCommand` 등 specific 필드명
+
+리빌드에서 이 침범이 반복되지 않도록, 새 구현은 `docs/specs/ADAPTER_STRATEGY_DI_SPEC.md`의 경계 계약을 따라야 한다.
