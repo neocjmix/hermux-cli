@@ -276,6 +276,9 @@ test('shouldRenewTypingIndicator respects interval threshold', { skip: 'pre-rebu
   assert.equal(_internal.shouldRenewTypingIndicator(4999, 1000, 4000), false);
 });
 
+// BOUNDARY NOTE: This tests raw opencode event type parsing in gateway._internal.
+// Per BOUNDARY_AUDIT #5, this logic should move to upstream EventNormalizer.
+// Canonical test is in test/opencode-payload-introspection.test.js.
 test('readBusySignalFromSessionPayload extracts busy and idle transitions', () => {
   assert.equal(_internal.readBusySignalFromSessionPayload(JSON.stringify({
     type: 'session.status',

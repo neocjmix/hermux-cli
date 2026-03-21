@@ -125,6 +125,26 @@ Downstream (providers/downstream/*)
 - **Boundary**: Core → Downstream (Telegram-specific protocol)
 - **Fix**: md2html 이동 시 함께 해결됨 (§ 2 참조).
 
+### TEST-LEVEL VIOLATIONS (Fixed/Annotated)
+
+#### 12. session-event-handler used Telegram-specific parameter name (Fixed)
+
+- **File**: `src/lib/session-event-handler.js`, `test/session-event-handler.test.js`
+- **Was**: `sendRawTelegram` 파라미터명이 core lib에서 사용됨
+- **Fix Applied**: `deliverPayload`로 리네이밍 완료. 호환성 shim 없음.
+
+#### 13. gateway-internal test validates raw opencode event parsing (Annotated)
+
+- **File**: `test/gateway-internal.test.js:279-291`
+- **Issue**: `readBusySignalFromSessionPayload`가 gateway `_internal`에서 raw opencode 이벤트 타입을 직접 파싱하는 것을 검증
+- **Status**: 주석으로 경계 침범 표시. 정규 테스트는 `test/opencode-payload-introspection.test.js`에 있음.
+
+#### 14. app service tests assert Telegram-specific response options (Annotated)
+
+- **File**: `test/model-control-service.test.js`, `test/model-command-service.test.js`
+- **Issue**: `parse_mode: 'HTML'`, `reply_markup: { inline_keyboard: [...] }` 반환을 검증
+- **Status**: 주석으로 경계 침범 표시. 리빌드 시 channel-agnostic 응답 형태로 변경 필요.
+
 ### CLEAN (No Violations)
 
 - **Downstream → Upstream**: `src/providers/downstream/`에서 upstream 모듈 import 없음. **Clean.**
@@ -157,5 +177,8 @@ Downstream (providers/downstream/*)
 | 9 | gateway Telegram HTML builders | MODERATE | downstream adapter로 이동 |
 | 10 | config Telegram/opencode field names | MODERATE | 채널/프로바이더별 설정 구조로 변경 |
 | 11 | md2html tg:// protocol | MINOR | md2html 이동 시 함께 해결 |
+| 12 | session-event-handler `sendRawTelegram` | FIXED | `deliverPayload`로 리네이밍 완료 |
+| 13 | gateway-internal test raw event parsing | ANNOTATED | 주석 추가, 정규 테스트는 opencode-payload-introspection |
+| 14 | app service tests Telegram options | ANNOTATED | 주석 추가, 리빌드 시 channel-agnostic으로 변경 |
 
-**CRITICAL 6건, MODERATE 4건, MINOR 1건. 리빌드의 새 `src/` 구현은 이 위반을 포함해서는 안 된다.**
+**CRITICAL 6건, MODERATE 4건, MINOR 1건, FIXED 1건, ANNOTATED 2건. 리빌드의 새 `src/` 구현은 이 위반을 포함해서는 안 된다.**

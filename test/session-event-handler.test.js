@@ -8,7 +8,7 @@ const { createSessionEventHandler } = require('../src/lib/session-event-handler'
 test('session event handler routes by session and forwards unwrapped payload', async () => {
   const sent = [];
   const handler = createSessionEventHandler({
-    sendRawTelegram: async (payload, channel) => {
+    deliverPayload: async (payload, channel) => {
       sent.push({ payload, channel });
     },
   });
@@ -32,7 +32,7 @@ test('session event handler routes by session and forwards unwrapped payload', a
 test('session event handler accepts mismatched active session when event session is valid', async () => {
   const sent = [];
   const handler = createSessionEventHandler({
-    sendRawTelegram: async (payload, channel) => {
+    deliverPayload: async (payload, channel) => {
       sent.push({ payload, channel });
     },
   });
@@ -58,7 +58,7 @@ test('session event handler drops conflicting session identity payload', async (
   const sent = [];
   const delivered = [];
   const handler = createSessionEventHandler({
-    sendRawTelegram: async (payload, channel) => {
+    deliverPayload: async (payload, channel) => {
       sent.push({ payload, channel });
     },
     onDeliver: async (ctx) => {
@@ -86,7 +86,7 @@ test('session event handler drops conflicting session identity payload', async (
 test('session event handler invokes onDeliver for routed payload', async () => {
   const delivered = [];
   const handler = createSessionEventHandler({
-    sendRawTelegram: async () => {},
+    deliverPayload: async () => {},
     onDeliver: async (ctx) => {
       delivered.push(ctx);
     },

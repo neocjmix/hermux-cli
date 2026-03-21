@@ -3339,7 +3339,7 @@ async function startPromptRun(bot, repo, state, runItem) {
     });
   };
   const handleSessionEvent = createSessionEventHandler({
-    sendRawTelegram,
+    deliverPayload: sendRawTelegram,
     onDeliver: onDeliverSessionEvent,
   });
 

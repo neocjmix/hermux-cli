@@ -29,6 +29,11 @@ function makeService(overrides = {}) {
   };
 }
 
+// BOUNDARY NOTE: These tests assert Telegram-specific options (parse_mode, reply_markup)
+// returned from app services. Per BOUNDARY_AUDIT #7, app services should return
+// channel-agnostic data; downstream adapters should apply channel formatting.
+// During rebuild, these assertions must change to channel-agnostic shapes.
+
 test('model command service returns summary view when no args are provided', () => {
   const { service } = makeService();
   const result = service.execute({ repoName: 'demo', running: false, args: [] });
