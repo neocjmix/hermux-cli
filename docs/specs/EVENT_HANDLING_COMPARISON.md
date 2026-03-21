@@ -47,7 +47,7 @@ They belong in diagnostics/trace only.
 
 These divergences MUST remain explicit branches in any rebuild:
 
-1. **Model-layer bifurcation**: Separate control for OpenCode core model vs oh-my-opencode agent model overrides.
+1. **Model-layer bifurcation**: Separate control when upstream provider supports multiple model layers (e.g., OpenCode core model vs oh-my-opencode agent model overrides).
 2. **Control-command fast path**: `/interrupt` and `/restart` MUST bypass dispatch lock.
 3. **Transport compatibility**: SDK-first with command fallback.
 4. **Session continuity by `(repo, chat)`**: Deterministic continuation scope for workflows.

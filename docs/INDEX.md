@@ -4,7 +4,7 @@
 
 ## Quick Orientation
 
-hermux는 텔레그램에서 로컬 AI 코딩 에이전트([opencode](https://opencode.ai))를 원격 조작하는 게이트웨이다. 제품 전체 맥락은 [`PRODUCT_GUIDE.md`](PRODUCT_GUIDE.md)를 참조한다.
+hermux는 메시징 채널(현재 텔레그램)에서 로컬 AI 코딩 에이전트(현재 [opencode](https://opencode.ai))를 원격 조작하는 게이트웨이다. 제품 전체 맥락은 [`PRODUCT_GUIDE.md`](PRODUCT_GUIDE.md)를 참조한다.
 
 ## Critical Invariant (session-first)
 

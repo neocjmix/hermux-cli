@@ -4,10 +4,12 @@
 
 이 라우팅 계약은 **upstream provider에 독립적**이다. 현재 opencode가 유일한 upstream이지만, 다른 provider(Claude Code, Codex 등)가 추가되어도 세션 라우팅 규칙은 동일하게 적용된다. Provider별 차이는 세션 ID 추출 규칙(§ 6)에서만 나타난다.
 
+Note: 이 문서에서 "upstream provider server"는 현재 구현에서 OpenCode server에 해당하지만, 모든 규칙은 provider-agnostic하게 적용된다.
+
 ## 1. Intent
 
 - Hermux daemon is singleton per host/process.
-- Each repo scope (`repoName::workdir`) owns exactly one OpenCode server instance.
+- Each repo scope (`repoName::workdir`) owns exactly one upstream provider server instance (현재 OpenCode).
 - Each repo scope owns exactly one active event subscription.
 - Global daemon consumes all repo streams and routes primarily by `sessionId`.
 - Event processing is independent from run execution state (events can be processed even when no run is active).
@@ -15,7 +17,7 @@
 Primary objective:
 
 - Filtering is weaker, routing is stronger, observability is higher.
-- Hermux MUST ingest all OpenCode events first, then route with strict session-boundary rules.
+- Hermux MUST ingest all upstream provider events first, then route with strict session-boundary rules.
 
 ## 2. Non-Goals
 
@@ -31,9 +33,9 @@ Anti-goals:
 ## 3. Core Entities
 
 - `repoScope`: `repoName::workdir`
-- `serverEpoch`: monotonic integer bumped whenever repo OpenCode server is recreated
+- `serverEpoch`: monotonic integer bumped whenever repo upstream provider server is recreated
 - `subscriptionEpoch`: monotonic integer bumped whenever repo event subscription is recreated
-- `sessionId`: OpenCode session id (`ses_*`)
+- `sessionId`: upstream provider session id (현재 OpenCode의 경우 `ses_*` 형식)
 - `sessionTurn`: monotonic counter per `(repoScope, sessionId)` for observability and optional local ordering
 - `eventCursor`: daemon-local monotonic cursor per `repoScope` event ingress
 
@@ -41,7 +43,7 @@ Note: `runId` MAY exist for UI/audit correlation but MUST NOT be router key nor 
 
 ## 4. Required Invariants
 
-1. For each `repoScope`, OpenCode server instance count MUST be `<= 1`.
+1. For each `repoScope`, upstream provider server instance count MUST be `<= 1`.
 2. For each `repoScope`, active subscription count MUST be `<= 1`.
 3. Duplicate server start requests MUST be idempotent and return existing handle when healthy.
 4. Duplicate subscription requests MUST be idempotent and return existing subscriber handle when healthy.
@@ -69,7 +71,7 @@ Transitions MUST be serialized by per-scope lock.
 - `startRepoRuntime(repoScope)`:
   - If `RUNNING`, return existing runtime handle.
   - If `STARTING`, await same in-flight promise and return same handle.
-  - Else create server, bump `serverEpoch`, establish subscription, bump `subscriptionEpoch`.
+  - Else create upstream provider server, bump `serverEpoch`, establish subscription, bump `subscriptionEpoch`.
 - `stopRepoRuntime(repoScope)`:
   - Safe to call multiple times.
   - MUST close subscription before server close when possible.
@@ -152,7 +154,7 @@ Fence semantics:
 
 ## 8. Idempotency Contract
 
-Side effects (Telegram send/edit/delete, state transitions, finalization markers) MUST use dedupe key:
+Side effects (downstream send/edit/delete, state transitions, finalization markers) MUST use dedupe key:
 
 `kind + repoScope + sessionId + sessionTurn + sourceEventCursor + targetMessageId`
 
@@ -212,7 +214,7 @@ Non-blocking rule:
 
 ## 11. Failure Semantics
 
-- Server crash/restart: bump `serverEpoch`, recreate subscription, stale old-epoch events dropped.
+- Upstream provider server crash/restart: bump `serverEpoch`, recreate subscription, stale old-epoch events dropped.
 - Subscription disconnect: bump `subscriptionEpoch`, reconnect with backoff.
 - Duplicate callback delivery: resolved by side-effect dedupe key.
 - Session-end cleanup MUST be session-scoped; it MUST NOT be inferred solely from provider `complete`.
@@ -225,12 +227,12 @@ Revised session-reuse rule:
 ## 12. Compatibility Notes
 
 - Existing `runId` audit fields may remain for observability but MUST NOT gate routing.
-- Existing per-run event loops can be migrated incrementally to repo-global subscriber.
+- Existing per-run event loops can be migrated incrementally to repo-global subscriber (현재 OpenCode 구현 기준).
 - During migration, dual-path mode MUST audit source (`per-run` vs `global-sub`) for comparison.
 
 ## 13. Testable Acceptance Criteria
 
-1. Starting same repo runtime concurrently yields exactly one server + one subscription.
+1. Starting same repo runtime concurrently yields exactly one upstream provider server + one subscription.
 2. Restarting repo runtime bumps epochs and stale pre-epoch events are dropped.
 3. Session events are processed while run state is idle.
 4. Global-lane events never mutate session state.

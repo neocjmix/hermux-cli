@@ -2,7 +2,7 @@
 
 ## System Purpose
 
-hermux는 [텔레그램](https://core.telegram.org/bots/api) 채팅 입력을 로컬 [opencode](https://opencode.ai) 실행에 연결하는 게이트웨이다. 레포 단위 격리를 제공하며, 하나의 프로세스에서 여러 레포를 동시에 관리한다.
+hermux는 메시징 채널(현재 [텔레그램](https://core.telegram.org/bots/api)) 채팅 입력을 로컬 AI 코딩 에이전트(현재 [opencode](https://opencode.ai)) 실행에 연결하는 게이트웨이다. 레포 단위 격리를 제공하며, 하나의 프로세스에서 여러 레포를 동시에 관리한다.
 
 제품 전체 맥락(외부 의존성, 목표/비목표 등)은 [`docs/PRODUCT_GUIDE.md`](PRODUCT_GUIDE.md)를 참조한다.
 

@@ -27,7 +27,7 @@ This loop is mandatory for agent and human contributors.
 
 ## Invariant Review Gate
 
-For any change touching event intake, routing, run-view rendering, Telegram delivery, completion/finalization, interrupt, revert, or session cleanup, contributors MUST verify and document this check before considering the task done:
+For any change touching event intake, routing, run-view rendering, downstream delivery, completion/finalization, interrupt, revert, or session cleanup, contributors MUST verify and document this check before considering the task done:
 
 1. `run.complete` is treated only as a phase marker.
 2. Session-resolved late events are still accepted and rendered after `run.complete`.

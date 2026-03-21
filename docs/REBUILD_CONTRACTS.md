@@ -146,7 +146,7 @@ Note: `global.telegramBotToken`은 현재 downstream이 Telegram뿐이므로 이
 
 이 분기들은 단순화를 위해 추상화로 합쳐서는 안 되며, 명시적 분기로 유지해야 한다:
 
-1. **Model-layer bifurcation**: opencode 코어 모델과 oh-my-opencode 에이전트 오버라이드의 별도 제어. **이유**: 두 모델 레이어는 서로 다른 설정 스코프와 업데이트 주기를 가진다.
+1. **Model-layer bifurcation**: upstream provider가 복수 모델 레이어를 지원하는 경우(예: opencode 코어 모델 vs oh-my-opencode 에이전트 오버라이드), 각 레이어를 별도로 제어해야 한다. **이유**: 모델 레이어는 서로 다른 설정 스코프와 업데이트 주기를 가질 수 있다.
 2. **Control-command fast path**: `/interrupt`와 `/restart`는 dispatch lock을 바이패스한다. **이유**: 장시간 실행 중 즉각적인 제어가 필요하며, 큐 대기는 UX를 파괴한다.
 3. **Transport compatibility**: SDK-first with command fallback. **이유**: SDK가 기본이지만, SDK 미설치 환경에서도 CLI 폴백으로 동작해야 한다.
 4. **Session continuity by `(repo, chat)`**: 결정론적 연속 스코프. **이유**: 세션 키가 예측 가능해야 디버깅과 감사 추적이 가능하다.

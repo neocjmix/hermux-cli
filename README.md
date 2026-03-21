@@ -1,6 +1,6 @@
 # hermux
 
-Telegram gateway for running local AI coding agent sessions from chat, with repo-scoped isolation and an SDK-backed runtime executor.
+Gateway for running local AI coding agent sessions from chat, with repo-scoped isolation and an SDK-backed runtime executor. Currently supports Telegram (downstream) and opencode (upstream).
 
 ## What is hermux?
 
@@ -17,7 +17,7 @@ hermux start
 
 ## Product Overview
 
-- One global [Telegram bot](https://core.telegram.org/bots/api) token.
+- One global downstream channel token (현재 [Telegram bot](https://core.telegram.org/bots/api) token).
 - Multiple repo contexts (`name`, `workdir`, `chatIds`) under one gateway process.
 - One active execution per repo context (`running` lock per repo).
 - Persistent repo-scoped runtime session continuity via [opencode](https://opencode.ai) SDK session IDs.
