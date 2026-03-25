@@ -188,7 +188,7 @@ async function loadSdkModule() {
       sdkModulePromise = import(pathToFileURL(path.resolve(shim)).href)
         .then((mod) => (mod && mod.default && mod.default.createOpencode ? mod.default : mod));
     } else {
-      sdkModulePromise = import('@opencode-ai/sdk');
+      sdkModulePromise = import('@opencode-ai/sdk/v2');
     }
   }
   return sdkModulePromise;
@@ -414,8 +414,7 @@ async function ensureSdkEventPump(instance, entry) {
     entry.subscriptionEpoch += 1;
     const query = { directory: instance.workdir };
     const subscription = await entry.client.event.subscribe({
-      url: '/event',
-      query,
+      directory: query.directory,
     });
     const stream = subscription && subscription.stream;
     if (!stream || typeof stream[Symbol.asyncIterator] !== 'function') {
@@ -554,9 +553,8 @@ async function runSessionRevert(instance, input) {
 
   return withSdkClient(instance, async (client, query) => {
     await unwrapData(await client.session.get({
-      url: '/session/{id}',
-      path: { id: sessionId },
-      query,
+      sessionID: sessionId,
+      directory: query.directory,
     }));
 
     const body = partId
@@ -564,10 +562,9 @@ async function runSessionRevert(instance, input) {
       : { messageID: messageId };
 
     const result = await unwrapData(await client.session.revert({
-      url: '/session/{id}/revert',
-      path: { id: sessionId },
-      query,
-      body,
+      sessionID: sessionId,
+      directory: query.directory,
+      ...body,
     }));
 
     return {
@@ -588,9 +585,8 @@ async function runSessionUnrevert(instance, input) {
 
   return withSdkClient(instance, async (client, query) => {
     const before = await unwrapData(await client.session.get({
-      url: '/session/{id}',
-      path: { id: sessionId },
-      query,
+      sessionID: sessionId,
+      directory: query.directory,
     }));
     const hadRevert = !!(before && before.revert);
     if (!hadRevert) {
@@ -603,9 +599,8 @@ async function runSessionUnrevert(instance, input) {
     }
 
     const result = await unwrapData(await client.session.unrevert({
-      url: '/session/{id}/unrevert',
-      path: { id: sessionId },
-      query,
+      sessionID: sessionId,
+      directory: query.directory,
     }));
 
     return {
@@ -615,6 +610,45 @@ async function runSessionUnrevert(instance, input) {
       noop: false,
       result,
     };
+  });
+}
+
+async function runQuestionReply(instance, input) {
+  if (!shouldUseSdk(instance)) {
+    throw new Error('question reply requires sdk transport');
+  }
+  const requestID = String((input && (input.requestID || input.requestId)) || '').trim();
+  const answers = Array.isArray(input && input.answers) ? input.answers : null;
+  if (!requestID) throw new Error('missing requestID for question reply');
+  if (!answers) throw new Error('missing answers for question reply');
+  return withSdkClient(instance, async (client, query) => {
+    const questionApi = client && client.question ? client.question : null;
+    if (!questionApi || typeof questionApi.reply !== 'function') {
+      throw new Error('installed opencode sdk runtime does not support question.reply');
+    }
+    return unwrapData(await questionApi.reply({
+      requestID,
+      directory: query.directory,
+      answers,
+    }));
+  });
+}
+
+async function runQuestionReject(instance, input) {
+  if (!shouldUseSdk(instance)) {
+    throw new Error('question reject requires sdk transport');
+  }
+  const requestID = String((input && (input.requestID || input.requestId)) || '').trim();
+  if (!requestID) throw new Error('missing requestID for question reject');
+  return withSdkClient(instance, async (client, query) => {
+    const questionApi = client && client.question ? client.question : null;
+    if (!questionApi || typeof questionApi.reject !== 'function') {
+      throw new Error('installed opencode sdk runtime does not support question.reject');
+    }
+    return unwrapData(await questionApi.reject({
+      requestID,
+      directory: query.directory,
+    }));
   });
 }
 
@@ -1143,18 +1177,14 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
       if (state.sessionId) {
         try {
           await unwrapData(await client.session.get({
-            url: '/session/{id}',
-            path: { id: state.sessionId },
-            query,
+            sessionID: state.sessionId,
+            directory: query.directory,
           }));
         } catch (_err) {
           const resumed = await unwrapData(await client.session.create({
-            url: '/session',
-            query,
-            body: {
-              parentID: state.sessionId,
-              title: `hermux ${new Date().toISOString()}`,
-            },
+            directory: query.directory,
+            parentID: state.sessionId,
+            title: `hermux ${new Date().toISOString()}`,
           }));
           state.sessionId = String((resumed && resumed.id) || '').trim();
         }
@@ -1162,11 +1192,8 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
 
       if (!state.sessionId) {
         const created = await unwrapData(await client.session.create({
-          url: '/session',
-          query,
-          body: {
-            title: `hermux ${new Date().toISOString()}`,
-          },
+          directory: query.directory,
+          title: `hermux ${new Date().toISOString()}`,
         }));
         state.sessionId = String((created && created.id) || '').trim();
       }
@@ -1178,9 +1205,8 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
       abortSession = async () => {
         console.log('[DEBUG] abortSession called for session:', state.sessionId);
         await client.session.abort({
-          url: '/session/{id}/abort',
-          path: { id: state.sessionId },
-          query,
+          sessionID: state.sessionId,
+          directory: query.directory,
         });
       };
       // Store reference in handle
@@ -1211,12 +1237,9 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
       });
 
       await unwrapData(await client.session.promptAsync({
-        url: '/session/{id}/prompt_async',
-        path: { id: state.sessionId },
-        query,
-        body: {
-          parts: [{ type: 'text', text: prompt }],
-        },
+        sessionID: state.sessionId,
+        directory: query.directory,
+        parts: [{ type: 'text', text: prompt }],
       }));
 
       if (!idlePending && !state.done) {
@@ -1313,6 +1336,8 @@ module.exports = {
   endSessionLifecycle,
   runSessionRevert,
   runSessionUnrevert,
+  runQuestionReply,
+  runQuestionReject,
   stopAllRuntimeExecutors,
   getRuntimeStatusForInstance,
   _internal: {

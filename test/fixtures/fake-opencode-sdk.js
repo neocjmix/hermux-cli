@@ -47,7 +47,17 @@ function createQueue() {
 async function createOpencode() {
   global.__FAKE_OPENCODE_SDK_STARTS__ = Number(global.__FAKE_OPENCODE_SDK_STARTS__ || 0) + 1;
   global.__FAKE_OPENCODE_SDK_SUBSCRIBES__ = Number(global.__FAKE_OPENCODE_SDK_SUBSCRIBES__ || 0);
+  global.__FAKE_OPENCODE_SDK_QUESTION_REPLIES__ = Array.isArray(global.__FAKE_OPENCODE_SDK_QUESTION_REPLIES__)
+    ? global.__FAKE_OPENCODE_SDK_QUESTION_REPLIES__
+    : [];
+  global.__FAKE_OPENCODE_SDK_QUESTION_REJECTS__ = Array.isArray(global.__FAKE_OPENCODE_SDK_QUESTION_REJECTS__)
+    ? global.__FAKE_OPENCODE_SDK_QUESTION_REJECTS__
+    : [];
+  global.__FAKE_OPENCODE_SDK_PROMPTS__ = Array.isArray(global.__FAKE_OPENCODE_SDK_PROMPTS__)
+    ? global.__FAKE_OPENCODE_SDK_PROMPTS__
+    : [];
   const queue = createQueue();
+  const disableQuestionApi = String(process.env.HERMUX_FAKE_SDK_DISABLE_QUESTION_API || '').trim() === '1';
   if (!global.__FAKE_OPENCODE_SDK_SESSIONS__) {
     global.__FAKE_OPENCODE_SDK_SESSIONS__ = new Map();
   }
@@ -63,7 +73,7 @@ async function createOpencode() {
     client: {
       session: {
         async get(options) {
-          const id = String(((options || {}).path || {}).id || '');
+          const id = String((options && options.sessionID) || (((options || {}).path || {}).id) || '');
           if (!sessions.has(id)) {
             return { data: undefined, error: { message: 'not found' } };
           }
@@ -71,7 +81,7 @@ async function createOpencode() {
         },
         async create(options) {
           const body = (options || {}).body || {};
-          const parent = String(body.parentID || '').trim();
+          const parent = String((options && options.parentID) || body.parentID || '').trim();
           const id = parent || 'sdk-session';
           const existing = sessions.get(id) || {};
           const next = { id, ...existing, revert: existing.revert || undefined };
@@ -79,12 +89,19 @@ async function createOpencode() {
           return { data: next, error: undefined };
         },
         async promptAsync(options) {
-          const path = (options || {}).path || {};
           const body = (options || {}).body || {};
-          const id = String(path.id || 'sdk-session');
+          const parts = Array.isArray(options && options.parts)
+            ? options.parts
+            : body.parts;
+          const id = String((options && options.sessionID) || (((options || {}).path || {}).id) || 'sdk-session');
           if (!sessions.has(id)) sessions.set(id, { id });
-          const textPart = Array.isArray(body.parts)
-            ? body.parts.find((x) => x && x.type === 'text')
+          global.__FAKE_OPENCODE_SDK_PROMPTS__.push({
+            sessionID: id,
+            directory: String((options && options.directory) || (((options || {}).query || {}).directory) || ''),
+            parts,
+          });
+          const textPart = Array.isArray(parts)
+            ? parts.find((x) => x && x.type === 'text')
             : null;
           const promptText = String((textPart && textPart.text) || '');
 
@@ -234,14 +251,14 @@ async function createOpencode() {
           return { data: true, error: undefined };
         },
         async revert(options) {
-          const id = String(((options || {}).path || {}).id || '');
+          const id = String((options && options.sessionID) || (((options || {}).path || {}).id) || '');
           const body = (options || {}).body || {};
           if (!sessions.has(id)) {
             return { data: undefined, error: { message: 'not found' } };
           }
           const existing = sessions.get(id) || { id };
-          const messageID = String(body.messageID || '');
-          const partID = String(body.partID || '');
+          const messageID = String((options && options.messageID) || body.messageID || '');
+          const partID = String((options && options.partID) || body.partID || '');
           const hasValidMessageID = messageID.startsWith('msg_') || messageID.startsWith('msg-');
           const hasValidPartID = partID.startsWith('prt_') || partID.startsWith('prt-');
           if (!hasValidMessageID && !hasValidPartID) {
@@ -259,7 +276,7 @@ async function createOpencode() {
           return { data: next, error: undefined };
         },
         async unrevert(options) {
-          const id = String(((options || {}).path || {}).id || '');
+          const id = String((options && options.sessionID) || (((options || {}).path || {}).id) || '');
           if (!sessions.has(id)) {
             return { data: undefined, error: { message: 'not found' } };
           }
@@ -269,6 +286,48 @@ async function createOpencode() {
           return { data: next, error: undefined };
         },
       },
+      ...(disableQuestionApi ? {} : { question: {
+        async reply(options) {
+          const requestID = String(
+            (options && options.requestID)
+            || (options && options.path && options.path.requestID)
+            || ''
+          );
+          const answers = Array.isArray(options && options.answers)
+            ? options.answers
+            : (Array.isArray(options && options.body && options.body.answers)
+              ? options.body.answers
+              : []);
+          const directory = String(
+            (options && options.directory)
+            || (options && options.query && options.query.directory)
+            || ''
+          );
+          global.__FAKE_OPENCODE_SDK_QUESTION_REPLIES__.push({
+            requestID,
+            directory,
+            answers,
+          });
+          return { data: { ok: true }, error: undefined };
+        },
+        async reject(options) {
+          const requestID = String(
+            (options && options.requestID)
+            || (options && options.path && options.path.requestID)
+            || ''
+          );
+          const directory = String(
+            (options && options.directory)
+            || (options && options.query && options.query.directory)
+            || ''
+          );
+          global.__FAKE_OPENCODE_SDK_QUESTION_REJECTS__.push({
+            requestID,
+            directory,
+          });
+          return { data: { ok: true }, error: undefined };
+        },
+      } }),
       event: {
         async subscribe() {
           global.__FAKE_OPENCODE_SDK_SUBSCRIBES__ = Number(global.__FAKE_OPENCODE_SDK_SUBSCRIBES__ || 0) + 1;

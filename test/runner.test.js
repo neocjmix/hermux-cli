@@ -17,6 +17,7 @@ function loadRunnerWithEnv(vars) {
 }
 
 test('runOpencode sdk mode streams events and builds final text', async () => {
+  global.__FAKE_OPENCODE_SDK_PROMPTS__ = [];
   const { runOpencode } = loadRunnerWithEnv({
     HERMUX_MAX_PROCESS_SECONDS: 10,
     HERMUX_EXECUTION_TRANSPORT: 'sdk',
@@ -47,6 +48,11 @@ test('runOpencode sdk mode streams events and builds final text', async () => {
   assert.equal(done.meta.sessionId, 'sdk-session');
   assert.equal(done.meta.finalText, '');
   assert.equal(events.some((e) => e.type === 'raw' && /final:sdk-hello/.test(String(e.content))), true);
+  assert.deepEqual(global.__FAKE_OPENCODE_SDK_PROMPTS__, [{
+    sessionID: 'sdk-session',
+    directory: process.cwd(),
+    parts: [{ type: 'text', text: 'sdk-hello' }],
+  }]);
 });
 
 test('runOpencode sdk mode drains async onEvent work before onDone', async () => {
@@ -535,6 +541,75 @@ test('runSessionUnrevert reports noop when no revert state exists', async () => 
   assert.equal(out.ok, true);
   assert.equal(out.noop, true);
   assert.equal(out.hadRevert, false);
+});
+
+test('runQuestionReply calls sdk question reply with answers payload', async () => {
+  global.__FAKE_OPENCODE_SDK_QUESTION_REPLIES__ = [];
+  const { runQuestionReply } = loadRunnerWithEnv({
+    HERMUX_EXECUTION_TRANSPORT: 'sdk',
+    HERMUX_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
+  });
+
+  const repo = {
+    opencodeCommand: 'opencode sdk',
+    workdir: process.cwd(),
+    logFile: path.join(os.tmpdir(), 'runner-question-reply.log'),
+  };
+
+  const out = await runQuestionReply(repo, {
+    requestId: 'req-1',
+    answers: [['Ship now'], ['Use Telegram callback']],
+  });
+
+  assert.deepEqual(out, { ok: true });
+  assert.deepEqual(global.__FAKE_OPENCODE_SDK_QUESTION_REPLIES__, [{
+    requestID: 'req-1',
+    directory: process.cwd(),
+    answers: [['Ship now'], ['Use Telegram callback']],
+  }]);
+});
+
+test('runQuestionReject calls sdk question reject with request id', async () => {
+  global.__FAKE_OPENCODE_SDK_QUESTION_REJECTS__ = [];
+  const { runQuestionReject } = loadRunnerWithEnv({
+    HERMUX_EXECUTION_TRANSPORT: 'sdk',
+    HERMUX_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
+  });
+
+  const repo = {
+    opencodeCommand: 'opencode sdk',
+    workdir: process.cwd(),
+    logFile: path.join(os.tmpdir(), 'runner-question-reject.log'),
+  };
+
+  const out = await runQuestionReject(repo, {
+    requestId: 'req-2',
+  });
+
+  assert.deepEqual(out, { ok: true });
+  assert.deepEqual(global.__FAKE_OPENCODE_SDK_QUESTION_REJECTS__, [{
+    requestID: 'req-2',
+    directory: process.cwd(),
+  }]);
+});
+
+test('runQuestionReply reports unsupported question api clearly', async () => {
+  const { runQuestionReply } = loadRunnerWithEnv({
+    HERMUX_EXECUTION_TRANSPORT: 'sdk',
+    HERMUX_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
+    HERMUX_FAKE_SDK_DISABLE_QUESTION_API: '1',
+  });
+
+  const repo = {
+    opencodeCommand: 'opencode sdk',
+    workdir: process.cwd(),
+    logFile: path.join(os.tmpdir(), 'runner-question-reply-unsupported.log'),
+  };
+
+  await assert.rejects(
+    () => runQuestionReply(repo, { requestId: 'req-unsupported', answers: [['Ship now']] }),
+    /does not support question\.reply/
+  );
 });
 
 test('runOpencode sdk mode captures late text that arrives after idle', async () => {
