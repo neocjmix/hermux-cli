@@ -594,3 +594,35 @@ test('run view snapshot materializer does not truncate reasoning preview', () =>
   assert.equal(statusLines[2], `🤔 ${longReasoning}`);
   assert.equal(state.snapshot.messages[0].includes('...'), false);
 });
+
+test('run view snapshot materializer renders active question prompts in the status pane', () => {
+  let state = createRunViewSnapshotState('ses-question');
+
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'question.asked',
+    properties: {
+      id: 'req-question',
+      sessionID: 'ses-question',
+      questions: [{
+        header: 'Need input',
+        question: 'How should I continue?',
+        options: [
+          { label: 'Ship now', description: 'continue immediately' },
+          { label: 'Wait', description: 'pause for review' },
+        ],
+      }],
+    },
+  }), 1, {
+    runId: 'run-question',
+    minMessageTimeMs: 0,
+    isFinal: false,
+    repoName: 'repo-q',
+  });
+
+  const statusLines = String(state.snapshot.messages[0]).split('\n');
+  assert.equal(statusLines[2], '❓ Need input');
+  assert.equal(statusLines[3], 'How should I continue?');
+  assert.equal(statusLines[4], '1. Ship now - continue immediately');
+  assert.equal(statusLines[5], '2. Wait - pause for review');
+  assert.equal(state.snapshot.messages.length, 1);
+});

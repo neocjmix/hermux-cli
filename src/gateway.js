@@ -4,6 +4,7 @@
 const fs = require('fs');
 const path = require('path');
 const fsp = require('fs/promises');
+const dns = require('dns');
 const { pipeline } = require('stream/promises');
 const { spawn, spawnSync } = require('child_process');
 const { createHash } = require('crypto');
@@ -36,6 +37,8 @@ const {
   endSessionLifecycle,
   runSessionRevert,
   runSessionUnrevert,
+  runQuestionReply,
+  runQuestionReject,
   stopAllRuntimeExecutors,
   getRuntimeStatusForInstance,
   createRunViewSnapshotState,
@@ -57,6 +60,21 @@ const { splitTelegramHtml } = require('./providers/downstream/telegram/html-chun
 const { createChatRoutingService } = require('./app/chat-routing-service');
 const { createModelControlService } = require('./app/model-control-service');
 const { createModelCommandService } = require('./app/model-command-service');
+const {
+  syncQuestionFlow,
+  getCurrentQuestion,
+  toggleQuestionOption,
+  startCustomInput,
+  setCustomAnswer,
+  advanceQuestion,
+  hasNextQuestion,
+  canSubmitCurrentQuestion,
+  collectQuestionAnswers,
+  buildQuestionMessage,
+  buildQuestionKeyboard,
+  buildQuestionRenderSignature,
+  summarizeQuestionAnswers,
+} = require('./app/question-interaction-service');
 
 const TG_MAX_LEN = 4000;
 const IMAGE_UPLOAD_DIR = '.hermux/uploads';
@@ -326,15 +344,35 @@ function serializePollingError(err) {
   const response = err && err.response ? err.response : {};
   const body = response && response.body ? response.body : {};
   const result = body && body.result ? body.result : {};
+  const message = String((err && err.message) || '');
+  const lookupMatch = message.match(/getaddrinfo\s+(?:ENOTFOUND\s+)?([A-Za-z0-9.-]+)/);
   return {
     code: String((err && err.code) || ''),
-    message: String((err && err.message) || ''),
+    message,
     httpStatus: Number(response.statusCode || 0) || null,
     tgErrorCode: Number(body.error_code || 0) || null,
     description: String(body.description || ''),
     parameters: body.parameters || null,
     migrateToChatId: result && result.migrate_to_chat_id ? String(result.migrate_to_chat_id) : '',
     retryAfter: result && result.retry_after ? Number(result.retry_after) : null,
+    lookupTarget: lookupMatch ? String(lookupMatch[1] || '') : '',
+    runtimeContext: {
+      pid: process.pid,
+      cwd: process.cwd(),
+      node: process.version,
+      platform: process.platform,
+      dnsServers: typeof dns.getServers === 'function' ? dns.getServers() : [],
+      nodeExtraCaCerts: String(process.env.NODE_EXTRA_CA_CERTS || ''),
+      nodeUseSystemCa: String(process.env.NODE_USE_SYSTEM_CA || ''),
+      launchdLabel: String(process.env.OPENCLAW_LAUNCHD_LABEL || ''),
+      xpcServiceName: String(process.env.XPC_SERVICE_NAME || ''),
+      pathHead: String(process.env.PATH || '').split(':').slice(0, 6),
+      proxyEnv: {
+        http_proxy: String(process.env.http_proxy || process.env.HTTP_PROXY || ''),
+        https_proxy: String(process.env.https_proxy || process.env.HTTPS_PROXY || ''),
+        no_proxy: String(process.env.no_proxy || process.env.NO_PROXY || ''),
+      },
+    },
   };
 }
 
@@ -2367,6 +2405,191 @@ function handleRevertCancelCallback(token) {
   return { answerText: 'cancelled' };
 }
 
+async function upsertQuestionPromptMessage(bot, chatId, state) {
+  const flow = state && state.questionFlow && typeof state.questionFlow === 'object'
+    ? state.questionFlow
+    : null;
+  if (!flow) return;
+  const text = buildQuestionMessage(flow);
+  const replyMarkup = buildQuestionKeyboard(flow);
+  const signature = buildQuestionRenderSignature(flow);
+  if (flow.messageId && flow.renderSignature === signature) return;
+
+  if (flow.messageId) {
+    try {
+      await bot.editMessageText(text, {
+        chat_id: chatId,
+        message_id: flow.messageId,
+        ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+      });
+      state.questionFlow.renderSignature = signature;
+      return;
+    } catch (err) {
+      const msg = String(err && err.message ? err.message : err || '').toLowerCase();
+      if (msg.includes('message is not modified')) {
+        state.questionFlow.renderSignature = signature;
+        return;
+      }
+    }
+  }
+
+  const sent = await safeSend(bot, chatId, text, replyMarkup ? { reply_markup: replyMarkup } : undefined);
+  if (sent && sent.message_id && state.questionFlow) {
+    state.questionFlow.messageId = sent.message_id;
+    state.questionFlow.renderSignature = signature;
+  }
+}
+
+async function closeQuestionPromptMessage(bot, chatId, state, text) {
+  const flow = state && state.questionFlow && typeof state.questionFlow === 'object'
+    ? state.questionFlow
+    : null;
+  const messageId = Number(flow && flow.messageId ? flow.messageId : 0) || 0;
+  state.questionFlow = null;
+  if (messageId > 0) {
+    try {
+      await bot.editMessageText(String(text || '').trim() || 'Question flow closed.', {
+        chat_id: chatId,
+        message_id: messageId,
+      });
+      return;
+    } catch (_err) {
+    }
+  }
+  if (text) {
+    await safeSend(bot, chatId, text);
+  }
+}
+
+async function submitQuestionFlow(bot, repo, state, chatId) {
+  const flow = state && state.questionFlow && typeof state.questionFlow === 'object'
+    ? state.questionFlow
+    : null;
+  if (!flow) return { answerText: 'inactive' };
+  const answers = collectQuestionAnswers(flow);
+  await runQuestionReply(repo, {
+    requestId: flow.requestId,
+    answers,
+  });
+  const summary = summarizeQuestionAnswers(flow);
+  await closeQuestionPromptMessage(bot, chatId, state, summary);
+  return { answerText: 'answered' };
+}
+
+async function notifyQuestionFlowError(bot, chatId, state, err, fallbackText) {
+  const message = String(err && err.message ? err.message : err || '').trim();
+  const base = String(fallbackText || 'Question action failed.').trim();
+  const text = message ? `${base}
+
+${message}` : base;
+  await closeQuestionPromptMessage(bot, chatId, state, text);
+}
+
+async function handleQuestionCallback(bot, query, chatRouter, states, action, questionIndex, optionIndex) {
+  const chat = query && query.message && query.message.chat;
+  const chatId = chat ? String(chat.id) : '';
+  const repo = chatRouter.get(chatId);
+  if (!repo) return { answerText: 'not mapped' };
+  const state = states.get(repo.name);
+  if (!state) return { answerText: 'state missing' };
+
+  return withStateDispatchLock(state, async () => {
+    const flow = state.questionFlow && typeof state.questionFlow === 'object' ? state.questionFlow : null;
+    if (!flow || String(flow.chatId || '') !== chatId) {
+      return { answerText: 'inactive' };
+    }
+    const currentIndex = Number(flow.currentIndex || 0) || 0;
+    if (!Number.isInteger(questionIndex) || questionIndex !== currentIndex) {
+      return { answerText: 'stale' };
+    }
+
+    if (action === 'select') {
+      state.questionFlow = toggleQuestionOption(flow, optionIndex);
+      const currentQuestion = getCurrentQuestion(state.questionFlow);
+      if (currentQuestion && !currentQuestion.multiple && canSubmitCurrentQuestion(state.questionFlow)) {
+        if (hasNextQuestion(state.questionFlow)) {
+          state.questionFlow = advanceQuestion(state.questionFlow);
+          await upsertQuestionPromptMessage(bot, chatId, state);
+          return { answerText: 'next question' };
+        }
+        try {
+          return await submitQuestionFlow(bot, repo, state, chatId);
+        } catch (err) {
+          await notifyQuestionFlowError(bot, chatId, state, err, 'Failed to submit question answer.');
+          return { answerText: 'submit failed' };
+        }
+      }
+      await upsertQuestionPromptMessage(bot, chatId, state);
+      return { answerText: 'selected' };
+    }
+
+    if (action === 'submit') {
+      if (!canSubmitCurrentQuestion(flow)) {
+        return { answerText: 'choose option' };
+      }
+      if (hasNextQuestion(flow)) {
+        state.questionFlow = advanceQuestion(flow);
+        await upsertQuestionPromptMessage(bot, chatId, state);
+        return { answerText: 'next question' };
+      }
+      try {
+        return await submitQuestionFlow(bot, repo, state, chatId);
+      } catch (err) {
+        await notifyQuestionFlowError(bot, chatId, state, err, 'Failed to submit question answer.');
+        return { answerText: 'submit failed' };
+      }
+    }
+
+    if (action === 'custom') {
+      state.questionFlow = startCustomInput(flow);
+      await upsertQuestionPromptMessage(bot, chatId, state);
+      return { answerText: 'send custom answer' };
+    }
+
+    if (action === 'cancel') {
+      try {
+        await runQuestionReject(repo, { requestId: flow.requestId });
+        await closeQuestionPromptMessage(bot, chatId, state, 'Question cancelled.');
+        return { answerText: 'cancelled' };
+      } catch (err) {
+        await notifyQuestionFlowError(bot, chatId, state, err, 'Failed to cancel question.');
+        return { answerText: 'cancel failed' };
+      }
+    }
+
+    return { answerText: 'unknown action' };
+  });
+}
+
+async function handleQuestionTextInput(bot, repo, state, msg) {
+  const flow = state && state.questionFlow && typeof state.questionFlow === 'object'
+    ? state.questionFlow
+    : null;
+  const chatId = String(msg && msg.chat && msg.chat.id ? msg.chat.id : '');
+  const text = String(msg && msg.text ? msg.text : '').trim();
+  if (!flow || String(flow.chatId || '') !== chatId) return { handled: false };
+  if (!text) return { handled: false };
+
+  if (!flow.waitingForCustomInput) {
+    await safeSend(bot, chatId, 'Use the question buttons above, or tap "Type your own answer" first.');
+    return { handled: true };
+  }
+
+  state.questionFlow = setCustomAnswer(flow, text);
+  if (hasNextQuestion(state.questionFlow)) {
+    state.questionFlow = advanceQuestion(state.questionFlow);
+    await upsertQuestionPromptMessage(bot, chatId, state);
+    return { handled: true };
+  }
+
+  try {
+    await submitQuestionFlow(bot, repo, state, chatId);
+  } catch (err) {
+    await notifyQuestionFlowError(bot, chatId, state, err, 'Failed to submit custom question answer.');
+  }
+  return { handled: true };
+}
+
 function writePidAtomic(pid) {
   fs.mkdirSync(RUNTIME_DIR, { recursive: true });
   const tmp = PID_PATH + '.tmp';
@@ -3283,6 +3506,28 @@ async function startPromptRun(bot, repo, state, runItem) {
           snapshotMessages,
           { isFinalState: false, tailMaterializeHint }
         );
+        const activeQuestion = next && next.session && next.session.question && typeof next.session.question === 'object'
+          ? next.session.question
+          : null;
+        if (activeQuestion) {
+          const previousFlow = state.questionFlow && typeof state.questionFlow === 'object'
+            ? state.questionFlow
+            : null;
+          const nextFlow = syncQuestionFlow(previousFlow, activeQuestion, chatId);
+          if (nextFlow) {
+            if (previousFlow && previousFlow.requestId !== nextFlow.requestId) {
+              nextFlow.messageId = Number(previousFlow.messageId || 0) || 0;
+            }
+            state.questionFlow = nextFlow;
+            await upsertQuestionPromptMessage(bot, chatId, state);
+          }
+        } else if (
+          state.questionFlow
+          && String(state.questionFlow.chatId || '') === String(chatId)
+          && String(state.questionFlow.sessionId || '') === String(key)
+        ) {
+          await closeQuestionPromptMessage(bot, chatId, state, 'Question resolved.');
+        }
         state.sessionProjectedTexts.set(key, snapshotMessages.slice());
       },
     });
@@ -3747,6 +3992,7 @@ function main() {
     waitingInfo: null,
     queue: [],
     deferredRunStartTasks: [],
+    questionFlow: null,
     panelRefresh: null,
     sessionDelivery: null,
     sessionRenderStates: new Map(),
@@ -3816,6 +4062,7 @@ function main() {
     handleConnectCommand,
     withStateDispatchLock,
     handleRepoMessage,
+    handleQuestionTextInput,
   });
   const handleCallbackQuery = createCallbackQueryHandler({
     bot,
@@ -3829,6 +4076,8 @@ function main() {
     requestInterrupt,
     handleRevertConfirmCallback,
     handleRevertCancelCallback,
+    handleQuestionCallback,
+    withStateDispatchLock,
   });
 
   console.log(`polling with 1 bot for ${repos.length} repo(s), ${chatRouter.size} chat id(s)`);
@@ -4008,5 +4257,9 @@ module.exports = {
     clearTypingIndicatorTimer,
     shouldRenewTypingIndicator,
     readBusySignalFromSessionPayload,
+    upsertQuestionPromptMessage,
+    closeQuestionPromptMessage,
+    handleQuestionCallback,
+    handleQuestionTextInput,
   },
 };

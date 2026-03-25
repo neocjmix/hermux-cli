@@ -19,6 +19,8 @@ function createCallbackQueryHandler(deps) {
     modelControlService,
     handleRevertConfirmCallback,
     handleRevertCancelCallback,
+    handleQuestionCallback,
+    withStateDispatchLock,
     audit,
   } = deps;
 
@@ -65,6 +67,28 @@ function createCallbackQueryHandler(deps) {
         const result = handleRevertCancelCallback(token);
         if (query.id) {
           await bot.answerCallbackQuery(query.id, { text: (result && result.answerText) || 'cancelled' }).catch(() => {});
+        }
+        return;
+      }
+
+      if (data.startsWith('q:')) {
+        if (typeof audit === 'function') audit('router.callback.route', { chatId, target: 'question', dataPreview: summarizeText(data) });
+        const parts = data.split(':');
+        const verb = String(parts[1] || '').trim();
+        const questionIndex = Number(parts[2]);
+        const optionIndex = Number(parts[3]);
+        const result = await handleQuestionCallback(
+          bot,
+          query,
+          chatRouter,
+          states,
+          verb === 's' ? 'select' : verb === 'u' ? 'submit' : verb === 'c' ? 'custom' : verb === 'x' ? 'cancel' : 'unknown',
+          questionIndex,
+          optionIndex,
+          withStateDispatchLock,
+        );
+        if (query.id) {
+          await bot.answerCallbackQuery(query.id, { text: (result && result.answerText) || 'question' }).catch(() => {});
         }
         return;
       }

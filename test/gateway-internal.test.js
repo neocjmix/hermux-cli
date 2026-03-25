@@ -823,6 +823,20 @@ test('serializePollingError extracts useful telegram fields', () => {
   assert.equal(detail.httpStatus, 409);
   assert.equal(detail.tgErrorCode, 409);
   assert.match(detail.description, /terminated by other getUpdates/i);
+  assert.equal(detail.lookupTarget, '');
+  assert.equal(Array.isArray(detail.runtimeContext.dnsServers), true);
+});
+
+test('serializePollingError includes dns lookup context for ENOTFOUND failures', () => {
+  const detail = _internal.serializePollingError({
+    code: 'EFATAL',
+    message: 'EFATAL: Error: getaddrinfo ENOTFOUND api.telegram.org',
+  });
+
+  assert.equal(detail.code, 'EFATAL');
+  assert.equal(detail.lookupTarget, 'api.telegram.org');
+  assert.equal(detail.runtimeContext.pid, process.pid);
+  assert.equal(Array.isArray(detail.runtimeContext.pathHead), true);
 });
 
 test('shouldDeferRunViewRetryAfter only defers long non-final run-view retries', () => {

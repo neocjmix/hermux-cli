@@ -81,6 +81,8 @@ Lifecycle semantics:
 - during an active run, when a private-chat assistant text tail receives a stable `message.part.updated` after prior deltas, Telegram delivery SHOULD materialize that tail immediately instead of leaving it in draft preview until completion or next-run fallback
 - while a session is busy, mapped Telegram chats SHOULD emit `typing` chat actions until the session becomes idle or the run ends
 - status pane SHOULD append the latest reasoning preview as its final line when reasoning text exists, prefixed with a thinking emoji
+- status pane MUST render active upstream `question.asked` prompts as visible text instead of leaving them only in raw-event or draft-only paths, so the user can answer from Telegram immediately
+- unresolved button-only question prompts MUST NOT swallow later plain-text Telegram prompts; only explicit custom-input capture mode may treat free text as a question answer
 - `<system-reminder>` content is rendered at the bottom of the live status panel and MUST appear as a code block
 
 ## Failure Semantics

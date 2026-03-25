@@ -314,3 +314,48 @@ test('opencode render state keeps latest reasoning from newer reasoning-only ass
   assert.equal(state.render.latestAssistantText, 'visible answer');
   assert.equal(state.render.latestReasoningText, 'new reasoning preview');
 });
+
+test('opencode render state tracks active question prompt and clears it on reply', () => {
+  let state = createRenderState('ses-question');
+
+  state = applyPayload(state, JSON.stringify({
+    type: 'question.asked',
+    properties: {
+      id: 'req-question',
+      sessionID: 'ses-question',
+      questions: [{
+        header: 'Need input',
+        question: 'Pick the rollout shape',
+        options: [
+          { label: 'Ship now', description: 'continue immediately' },
+          { label: 'Wait', description: 'pause for review' },
+        ],
+      }],
+    },
+  }), 1);
+
+  assert.deepEqual(state.session.question, {
+    requestId: 'req-question',
+    askedSeq: 1,
+    questions: [{
+      custom: true,
+      header: 'Need input',
+      question: 'Pick the rollout shape',
+      options: [
+        { label: 'Ship now', description: 'continue immediately' },
+        { label: 'Wait', description: 'pause for review' },
+      ],
+      multiple: false,
+    }],
+  });
+
+  state = applyPayload(state, JSON.stringify({
+    type: 'question.replied',
+    properties: {
+      requestID: 'req-question',
+      sessionID: 'ses-question',
+    },
+  }), 2);
+
+  assert.equal(state.session.question, null);
+});

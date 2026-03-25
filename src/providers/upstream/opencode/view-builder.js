@@ -23,6 +23,35 @@ function appendReasoningLine(lines, renderState, options) {
   lines.push(`🤔 ${latestReasoningText}`);
 }
 
+function appendQuestionLines(lines, renderState, options) {
+  const active = renderState && renderState.session && renderState.session.question;
+  const questions = active && Array.isArray(active.questions) ? active.questions : [];
+  if (questions.length === 0) return;
+
+  const viewMode = toText(options && options.viewMode).trim().toLowerCase();
+  const prefix = viewMode === 'verbose' ? 'question' : '❓';
+
+  for (let i = 0; i < questions.length; i += 1) {
+    const question = questions[i] || {};
+    const header = toText(question.header).trim();
+    const prompt = toText(question.question).trim();
+    const title = header || prompt || `Question ${i + 1}`;
+    lines.push(`${prefix} ${title}`);
+    if (prompt && prompt !== title) lines.push(prompt);
+    const opts = Array.isArray(question.options) ? question.options : [];
+    for (let j = 0; j < opts.length; j += 1) {
+      const option = opts[j] || {};
+      const label = toText(option.label).trim();
+      const description = toText(option.description).trim();
+      if (!label && !description) continue;
+      lines.push(`${j + 1}. ${label}${description ? ` - ${description}` : ''}`);
+    }
+    if (question.multiple) {
+      lines.push(viewMode === 'verbose' ? 'multiple: true' : 'multiple selection allowed');
+    }
+  }
+}
+
 function formatStatusPaneVerbose(renderState, _maxLen, options) {
   const sessionId = toText(renderState.sessionId || (renderState.session && renderState.session.id)).trim();
   const status = toText(renderState.session && renderState.session.status).trim() || 'unknown';
@@ -41,6 +70,7 @@ function formatStatusPaneVerbose(renderState, _maxLen, options) {
   if (queueLength > 0) lines.push(`🔜 ${formatInlineCode(String(queueLength))}`);
   if (latestAssistantMessageId) lines.push(`assistant_message: ${formatInlineCode(latestAssistantMessageId)}`);
   appendReasoningLine(lines, renderState, options);
+  appendQuestionLines(lines, renderState, options);
   return lines.join('\n');
 }
 
@@ -59,6 +89,7 @@ function formatStatusPaneNormal(renderState, _maxLen, options) {
   ];
 
   appendReasoningLine(lines, renderState, options);
+  appendQuestionLines(lines, renderState, options);
 
   return lines.join('\n');
 }

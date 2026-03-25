@@ -58,11 +58,12 @@ function makeHarness(overrides = {}) {
     },
     withStateDispatchLock: async (_state, task) => {
       calls.withStateDispatchLock += 1;
-      await task();
+      return task();
     },
     handleRepoMessage: async () => {
       calls.repoDispatch += 1;
     },
+    handleQuestionTextInput: async () => ({ handled: false }),
     ...overrides,
   };
 
@@ -185,6 +186,34 @@ test('message handler serializes concurrent mapped messages through lock', async
   ]);
 
   assert.deepEqual(sequence, ['start:a', 'end:a', 'start:b', 'end:b']);
+});
+
+test('message handler routes plain text to active custom-input question flow before repo prompt dispatch', async () => {
+  const { calls, deps, chatRouter, states } = makeHarness({
+    handleQuestionTextInput: async () => ({ handled: true }),
+  });
+  chatRouter.set('100', { name: 'demo', workdir: '/tmp/demo' });
+  states.set('demo', { running: false, queue: [], questionFlow: { requestId: 'req-1', waitingForCustomInput: true } });
+  const handler = createMessageHandler(deps);
+
+  await handler({ chat: { id: '100' }, text: 'my custom answer' });
+
+  assert.equal(calls.withStateDispatchLock, 1);
+  assert.equal(calls.repoDispatch, 0);
+});
+
+test('message handler does not swallow plain text when question flow is button-only', async () => {
+  const { calls, deps, chatRouter, states } = makeHarness({
+    handleQuestionTextInput: async () => ({ handled: true }),
+  });
+  chatRouter.set('100', { name: 'demo', workdir: '/tmp/demo' });
+  states.set('demo', { running: false, queue: [], questionFlow: { requestId: 'req-1', waitingForCustomInput: false } });
+  const handler = createMessageHandler(deps);
+
+  await handler({ chat: { id: '100' }, text: 'new prompt after question failure' });
+
+  assert.equal(calls.withStateDispatchLock, 1);
+  assert.equal(calls.repoDispatch, 1);
 });
 
 test('message handler bypasses state lock for mapped /restart and /interrupt', async () => {

@@ -32,6 +32,7 @@ function createMessageHandler(deps) {
     handleConnectCommand,
     withStateDispatchLock,
     handleRepoMessage,
+    handleQuestionTextInput,
     audit,
   } = deps;
 
@@ -172,6 +173,13 @@ function createMessageHandler(deps) {
         command: command || null,
         running: !!(state && state.running),
       });
+    }
+
+    if (!command && state && state.questionFlow && state.questionFlow.waitingForCustomInput) {
+      const result = await withStateDispatchLock(state, async () => handleQuestionTextInput(bot, repo, state, msg));
+      if (result && result.handled) {
+        return;
+      }
     }
 
     if (command === '/restart' || command === '/interrupt') {

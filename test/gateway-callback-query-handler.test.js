@@ -10,6 +10,7 @@ function makeHarness(overrides = {}) {
   const connectCalls = [];
   const verboseCalls = [];
   const requestInterruptCalls = [];
+  const questionCalls = [];
   const writes = [];
   const modelUiState = new Map();
   const chatRouter = new Map();
@@ -60,6 +61,11 @@ function makeHarness(overrides = {}) {
     },
     handleRevertConfirmCallback: async () => ({ answerText: 'reverted' }),
     handleRevertCancelCallback: () => ({ answerText: 'cancelled' }),
+    handleQuestionCallback: async (...args) => {
+      questionCalls.push(args);
+      return { answerText: 'question' };
+    },
+    withStateDispatchLock: async (_state, task) => task(),
     ...overrides,
   };
 
@@ -78,6 +84,7 @@ function makeHarness(overrides = {}) {
     connectCalls,
     verboseCalls,
     requestInterruptCalls,
+    questionCalls,
     writes,
   };
 }
@@ -163,6 +170,24 @@ test('callback handler applies selected opencode model', async () => {
   assert.equal(h.writes[0].path, '/tmp/op.json');
   assert.equal(h.writes[0].cfg.model, 'openai/gpt-5.3-codex');
   assert.equal(h.answerCalls[0].payload.text, 'applied');
+});
+
+test('callback handler routes question select callback', async () => {
+  const h = makeHarness();
+  h.chatRouter.set('100', { name: 'demo', workdir: '/tmp/demo' });
+  h.states.set('demo', { questionFlow: { requestId: 'req-1', currentIndex: 0 } });
+
+  await h.handler({
+    id: 'q-question',
+    data: 'q:s:0:1',
+    message: { chat: { id: '100' } },
+  });
+
+  assert.equal(h.questionCalls.length, 1);
+  assert.equal(h.questionCalls[0][4], 'select');
+  assert.equal(h.questionCalls[0][5], 0);
+  assert.equal(h.questionCalls[0][6], 1);
+  assert.equal(h.answerCalls[0].payload.text, 'question');
 });
 
 test('callback handler acknowledges invalid callback context without side effects', async () => {

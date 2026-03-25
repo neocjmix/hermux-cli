@@ -2015,6 +2015,79 @@ test('gateway e2e uses sendMessageDraft for non-final private-chat assistant tai
   }
 });
 
+test('gateway e2e renders question.asked prompts in the visible run-view status pane', async () => {
+  const cfgSnapshot = backupFile(config.CONFIG_PATH);
+  const token = 'test-token';
+  const telegram = createTelegramMockServer();
+  const started = await telegram.start(0);
+  const fixturePath = path.resolve(__dirname, 'fixtures', 'fake-opencode-sdk-question-asked.js');
+
+  config.save({
+    global: { telegramBotToken: token },
+    repos: [{
+      name: 'demo',
+      enabled: true,
+      workdir: '/tmp/demo',
+      chatIds: ['100'],
+      opencodeCommand: 'opencode sdk',
+      logFile: './logs/demo.log',
+    }],
+  });
+
+  const runtime = startGateway({
+    HERMUX_TELEGRAM_BASE_API_URL: started.baseApiUrl,
+    HERMUX_TELEGRAM_POLLING_TIMEOUT_SECONDS: '0',
+    HERMUX_OPENCODE_SDK_SHIM: fixturePath,
+  });
+
+  let stopped = false;
+  try {
+    await waitForBootstrapAndClearRequests(started.controlUrl);
+
+    await httpJson({
+      method: 'POST',
+      url: `${started.controlUrl}/updates`,
+      body: {
+        token,
+        update: {
+          update_id: 54,
+          message: {
+            message_id: 54,
+            date: Math.floor(Date.now() / 1000),
+            text: 'show question asked',
+            chat: { id: 100, type: 'private' },
+            from: { id: 200, is_bot: false, first_name: 'Tester' },
+          },
+        },
+      },
+    });
+
+    const requests = await waitFor(async () => {
+      const reqs = await httpJson({ method: 'GET', url: `${started.controlUrl}/requests` });
+      const visible = reqs.body.requests.find((r) => (
+        (r.method === 'sendMessage' || r.method === 'editMessageText')
+        && String((r.params && r.params.text) || '').includes('How should I continue?')
+      ));
+      return visible ? reqs.body.requests : null;
+    }, { timeoutMs: 10000, stepMs: 100 });
+
+    assert.equal(requests.some((r) => (
+      (r.method === 'sendMessage' || r.method === 'editMessageText')
+      && String((r.params && r.params.text) || '').includes('❓ Need input')
+      && String((r.params && r.params.text) || '').includes('1. Ship now - continue immediately')
+    )), true);
+
+    await stopGateway(runtime, { controlUrl: started.controlUrl, testName: 'question-asked-visible-status-pane', status: 'ok' });
+    stopped = true;
+  } finally {
+    if (!stopped) {
+      await stopGateway(runtime, { controlUrl: started.controlUrl, testName: 'question-asked-visible-status-pane', status: 'teardown' });
+    }
+    await telegram.stop();
+    restoreFile(config.CONFIG_PATH, cfgSnapshot);
+  }
+});
+
 test('gateway e2e sends typing action while session is busy', async () => {
   const cfgSnapshot = backupFile(config.CONFIG_PATH);
   const token = 'test-token';

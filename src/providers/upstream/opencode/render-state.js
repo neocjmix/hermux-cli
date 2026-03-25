@@ -34,6 +34,31 @@ function appendUnique(arr, value) {
   return arr;
 }
 
+function normalizeQuestionOption(option) {
+  const raw = option && typeof option === 'object' ? option : {};
+  const label = toText(raw.label).trim();
+  const description = toText(raw.description).trim();
+  if (!label && !description) return null;
+  return { label, description };
+}
+
+function normalizeQuestion(question) {
+  const raw = question && typeof question === 'object' ? question : {};
+  const header = toText(raw.header).trim();
+  const prompt = toText(raw.question).trim();
+  const options = Array.isArray(raw.options)
+    ? raw.options.map(normalizeQuestionOption).filter(Boolean)
+    : [];
+  if (!header && !prompt && options.length === 0) return null;
+  return {
+    header,
+    question: prompt,
+    options,
+    multiple: !!raw.multiple,
+    custom: raw.custom !== false,
+  };
+}
+
 function createRenderState(sessionId) {
   return {
     schemaVersion: 'opencode-render-state.v1',
@@ -52,6 +77,7 @@ function createRenderState(sessionId) {
       diff: null,
       stepCount: 0,
       toolCount: 0,
+      question: null,
     },
     messages: {
       order: [],
@@ -417,6 +443,35 @@ function mergeSessionDiff(state, event) {
   state.session.diff = diff;
 }
 
+function mergeQuestionAsked(state, event, seq) {
+  const props = event && event.properties && typeof event.properties === 'object'
+    ? event.properties
+    : null;
+  if (!props) return;
+  const questions = Array.isArray(props.questions)
+    ? props.questions.map(normalizeQuestion).filter(Boolean)
+    : [];
+  if (questions.length === 0) return;
+  state.session.question = {
+    requestId: toText(props.id || props.requestID).trim(),
+    askedSeq: Number(seq || 0) || 0,
+    questions,
+  };
+}
+
+function mergeQuestionResolved(state, event) {
+  const active = state && state.session ? state.session.question : null;
+  if (!active) return;
+  const props = event && event.properties && typeof event.properties === 'object'
+    ? event.properties
+    : null;
+  const requestId = toText(props && (props.requestID || props.id)).trim();
+  const activeRequestId = toText(active.requestId).trim();
+  if (!requestId || !activeRequestId || requestId === activeRequestId) {
+    state.session.question = null;
+  }
+}
+
 function applyEvent(renderState, event, seq) {
   const state = renderState || createRenderState('');
   const evt = event && typeof event === 'object' ? event : null;
@@ -441,6 +496,8 @@ function applyEvent(renderState, event, seq) {
   else if (kind === 'session.status') mergeSessionStatus(state, evt);
   else if (kind === 'session.idle') mergeSessionIdle(state, evt);
   else if (kind === 'session.diff') mergeSessionDiff(state, evt);
+  else if (kind === 'question.asked') mergeQuestionAsked(state, evt, seq);
+  else if (kind === 'question.replied' || kind === 'question.rejected') mergeQuestionResolved(state, evt);
 
   const now = Number(seq || 0) || Date.now();
   state.updatedAt = now;
