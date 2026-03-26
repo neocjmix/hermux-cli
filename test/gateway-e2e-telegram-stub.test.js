@@ -981,7 +981,7 @@ test('gateway e2e keeps pass-through final output behavior', async () => {
     assert.equal(panelUpdates.length, 0);
 
     const finalOutputs = runRows.filter((r) => (
-      r.kind === 'telegram.send'
+      (r.kind === 'telegram.send' || r.kind === 'telegram.edit')
       && r.payload
       && r.payload.meta
       && (

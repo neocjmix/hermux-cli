@@ -44,6 +44,7 @@ function createQueue() {
 async function createOpencode() {
   const queue = createQueue();
   const sessions = new Set();
+  let activeSessionId = 'sdk-question-asked';
   global.__FAKE_QUESTION_ASKED_REPLIES__ = Array.isArray(global.__FAKE_QUESTION_ASKED_REPLIES__)
     ? global.__FAKE_QUESTION_ASKED_REPLIES__
     : [];
@@ -81,20 +82,21 @@ async function createOpencode() {
     client: {
       session: {
         async get(options) {
-          const id = String(((options || {}).path || {}).id || '');
+          const id = String((options && options.sessionID) || (((options || {}).path || {}).id) || '');
           if (!sessions.has(id)) return { data: undefined, error: { message: 'not found' } };
           return { data: { id }, error: undefined };
         },
         async create(options) {
           const body = (options || {}).body || {};
-          const parent = String(body.parentID || '').trim();
+          const parent = String((options && options.parentID) || body.parentID || '').trim();
           const id = parent || 'sdk-question-asked';
+          activeSessionId = id;
           sessions.add(id);
           return { data: { id }, error: undefined };
         },
         async promptAsync(options) {
-          const path = (options || {}).path || {};
-          const id = String(path.id || 'sdk-question-asked');
+          const id = String((options && options.sessionID) || (((options || {}).path || {}).id) || 'sdk-question-asked');
+          activeSessionId = id;
           emitQuestionRun(id);
           return { data: undefined, error: undefined };
         },
@@ -121,7 +123,7 @@ async function createOpencode() {
           queue.push({
             type: 'question.replied',
             properties: {
-              sessionID: 'sdk-question-asked',
+              sessionID: activeSessionId,
               requestID,
               answers,
             },
@@ -140,7 +142,7 @@ async function createOpencode() {
           queue.push({
             type: 'question.rejected',
             properties: {
-              sessionID: 'sdk-question-asked',
+              sessionID: activeSessionId,
               requestID,
             },
           });

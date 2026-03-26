@@ -93,20 +93,19 @@ async function createOpencode() {
     client: {
       session: {
         async get(options) {
-          const id = String(((options || {}).path || {}).id || '');
+          const id = String((options && options.sessionID) || (((options || {}).path || {}).id) || '');
           if (!sessions.has(id)) return { data: undefined, error: { message: 'not found' } };
           return { data: { id }, error: undefined };
         },
         async create(options) {
           const body = (options || {}).body || {};
-          const parent = String(body.parentID || '').trim();
+          const parent = String((options && options.parentID) || body.parentID || '').trim();
           const id = parent || 'sdk-two-runs-draft-carryover';
           sessions.add(id);
           return { data: { id }, error: undefined };
         },
         async promptAsync(options) {
-          const path = (options || {}).path || {};
-          const id = String(path.id || 'sdk-two-runs-draft-carryover');
+                    const id = String((options && options.sessionID) || (((options || {}).path || {}).id) || 'sdk-two-runs-draft-carryover');
           const count = Number(promptCountsBySession.get(id) || 0) + 1;
           promptCountsBySession.set(id, count);
           if (count === 1) emitFirstRun(id);

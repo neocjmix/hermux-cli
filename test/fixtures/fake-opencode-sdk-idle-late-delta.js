@@ -61,7 +61,7 @@ async function createOpencode() {
           return { data: { id: 'sdk-idle-late-delta' }, error: undefined };
         },
         async promptAsync(options) {
-          const id = String((((options || {}).path || {}).id) || 'sdk-idle-late-delta');
+          const id = String((options && options.sessionID) || (((options || {}).path || {}).id) || 'sdk-idle-late-delta');
           const parts = (((options || {}).body || {}).parts) || [];
           const promptText = String(((parts.find((x) => x && x.type === 'text') || {}).text) || '');
 

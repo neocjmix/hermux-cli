@@ -60,7 +60,7 @@ async function createOpencode() {
     client: {
       session: {
         async get(options) {
-          const id = String(((options || {}).path || {}).id || '');
+          const id = String((options && options.sessionID) || (((options || {}).path || {}).id) || '');
           if (!sessions.has(id)) {
             return { data: undefined, error: { message: 'not found' } };
           }
@@ -68,14 +68,14 @@ async function createOpencode() {
         },
         async create(options) {
           const body = (options || {}).body || {};
-          const parent = String(body.parentID || '').trim();
+          const parent = String((options && options.parentID) || body.parentID || '').trim();
           const id = parent || 'sdk-stale';
           const next = sessions.get(id) || { id };
           sessions.set(id, next);
           return { data: next, error: undefined };
         },
         async promptAsync(options) {
-          const id = String((((options || {}).path || {}).id) || 'sdk-stale');
+          const id = String((options && options.sessionID) || (((options || {}).path || {}).id) || 'sdk-stale');
           if (!sessions.has(id)) sessions.set(id, { id });
           queue.push({
             type: 'session.status',

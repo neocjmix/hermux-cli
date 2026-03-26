@@ -57,23 +57,24 @@ async function createOpencode() {
     client: {
       session: {
         async get(options) {
-          const id = String(((options || {}).path || {}).id || '');
+          const id = String((options && options.sessionID) || (((options || {}).path || {}).id) || '');
           if (!sessions.has(id)) return { data: undefined, error: { message: 'not found' } };
           return { data: { id }, error: undefined };
         },
         async create(options) {
           const body = (options || {}).body || {};
-          const parent = String(body.parentID || '').trim();
+          const parts = Array.isArray(options && options.parts) ? options.parts : body.parts;
+          const parent = String((options && options.parentID) || body.parentID || '').trim();
           const id = parent || 'sdk-complete-phase-final-run';
           sessions.add(id);
           return { data: { id }, error: undefined };
         },
         async promptAsync(options) {
-          const path = (options || {}).path || {};
-          const body = (options || {}).body || {};
-          const id = String(path.id || 'sdk-complete-phase-final-run');
-          const textPart = Array.isArray(body.parts)
-            ? body.parts.find((x) => x && x.type === 'text')
+                    const body = (options || {}).body || {};
+          const parts = Array.isArray(options && options.parts) ? options.parts : body.parts;
+          const id = String((options && options.sessionID) || (((options || {}).path || {}).id) || 'sdk-complete-phase-final-run');
+          const textPart = Array.isArray(parts)
+            ? parts.find((x) => x && x.type === 'text')
             : null;
           const promptText = String((textPart && textPart.text) || '');
 

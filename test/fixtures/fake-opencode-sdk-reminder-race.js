@@ -56,25 +56,39 @@ async function createOpencode() {
     client: {
       session: {
         async get(options) {
-          const id = String(((options || {}).path || {}).id || '');
+          const id = String((options && options.sessionID) || (((options || {}).path || {}).id) || '');
           if (!sessions.has(id)) return { data: undefined, error: { message: 'not found' } };
           return { data: { id }, error: undefined };
         },
         async create(options) {
           const body = (options || {}).body || {};
-          const parent = String(body.parentID || '').trim();
+          const parts = Array.isArray(options && options.parts) ? options.parts : body.parts;
+          const parent = String((options && options.parentID) || body.parentID || '').trim();
           const id = parent || 'sdk-reminder-race-session';
           sessions.add(id);
           return { data: { id }, error: undefined };
         },
         async promptAsync(options) {
-          const path = (options || {}).path || {};
           const body = (options || {}).body || {};
-          const id = String(path.id || 'sdk-reminder-race-session');
-          const textPart = Array.isArray(body.parts)
-            ? body.parts.find((x) => x && x.type === 'text')
+          const parts = Array.isArray(options && options.parts) ? options.parts : body.parts;
+          const id = String((options && options.sessionID) || (((options || {}).path || {}).id) || 'sdk-reminder-race-session');
+          const textPart = Array.isArray(parts)
+            ? parts.find((x) => x && x.type === 'text')
             : null;
           const promptText = String((textPart && textPart.text) || '');
+
+          queue.push({ type: 'session.status', properties: { sessionID: id, status: { type: 'busy' } } });
+          queue.push({
+            type: 'message.updated',
+            properties: {
+              info: {
+                id: 'msg-reminder-race',
+                sessionID: id,
+                role: 'assistant',
+                time: { created: Date.now(), completed: Date.now() + 1 },
+              },
+            },
+          });
 
           queue.push({
             type: 'message.part.updated',
