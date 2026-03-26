@@ -52,6 +52,19 @@ function appendQuestionLines(lines, renderState, options) {
   }
 }
 
+function appendPermissionLines(lines, renderState, options) {
+  const active = renderState && renderState.session && renderState.session.permission;
+  if (!active || typeof active !== 'object') return;
+  const viewMode = toText(options && options.viewMode).trim().toLowerCase();
+  const prefix = viewMode === 'verbose' ? 'permission' : '🔐';
+  const permission = toText(active.permission).trim() || 'approval required';
+  lines.push(`${prefix} ${permission}`);
+  const patterns = Array.isArray(active.patterns) ? active.patterns.filter(Boolean) : [];
+  if (patterns.length > 0) lines.push(`patterns: ${patterns.join(', ')}`);
+  const always = Array.isArray(active.always) ? active.always.filter(Boolean) : [];
+  if (always.length > 0) lines.push(`always: ${always.join(', ')}`);
+}
+
 function formatStatusPaneVerbose(renderState, _maxLen, options) {
   const sessionId = toText(renderState.sessionId || (renderState.session && renderState.session.id)).trim();
   const status = toText(renderState.session && renderState.session.status).trim() || 'unknown';
@@ -70,6 +83,7 @@ function formatStatusPaneVerbose(renderState, _maxLen, options) {
   if (queueLength > 0) lines.push(`🔜 ${formatInlineCode(String(queueLength))}`);
   if (latestAssistantMessageId) lines.push(`assistant_message: ${formatInlineCode(latestAssistantMessageId)}`);
   appendReasoningLine(lines, renderState, options);
+  appendPermissionLines(lines, renderState, options);
   appendQuestionLines(lines, renderState, options);
   return lines.join('\n');
 }
@@ -89,6 +103,7 @@ function formatStatusPaneNormal(renderState, _maxLen, options) {
   ];
 
   appendReasoningLine(lines, renderState, options);
+  appendPermissionLines(lines, renderState, options);
   appendQuestionLines(lines, renderState, options);
 
   return lines.join('\n');

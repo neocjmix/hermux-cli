@@ -53,6 +53,9 @@ async function createOpencode() {
   global.__FAKE_OPENCODE_SDK_QUESTION_REJECTS__ = Array.isArray(global.__FAKE_OPENCODE_SDK_QUESTION_REJECTS__)
     ? global.__FAKE_OPENCODE_SDK_QUESTION_REJECTS__
     : [];
+  global.__FAKE_OPENCODE_SDK_PERMISSION_REPLIES__ = Array.isArray(global.__FAKE_OPENCODE_SDK_PERMISSION_REPLIES__)
+    ? global.__FAKE_OPENCODE_SDK_PERMISSION_REPLIES__
+    : [];
   global.__FAKE_OPENCODE_SDK_PROMPTS__ = Array.isArray(global.__FAKE_OPENCODE_SDK_PROMPTS__)
     ? global.__FAKE_OPENCODE_SDK_PROMPTS__
     : [];
@@ -284,6 +287,17 @@ async function createOpencode() {
           const next = { ...existing, revert: undefined };
           sessions.set(id, next);
           return { data: next, error: undefined };
+        },
+      },
+      permission: {
+        async reply(options) {
+          global.__FAKE_OPENCODE_SDK_PERMISSION_REPLIES__.push({
+            requestID: String((options && options.requestID) || ''),
+            directory: String((options && options.directory) || (options && options.query && options.query.directory) || ''),
+            reply: String((options && options.reply) || ''),
+            message: String((options && options.message) || ''),
+          });
+          return { data: { ok: true }, error: undefined };
         },
       },
       ...(disableQuestionApi ? {} : { question: {

@@ -359,3 +359,97 @@ test('opencode render state tracks active question prompt and clears it on reply
 
   assert.equal(state.session.question, null);
 });
+
+test('opencode render state tracks permission prompt and clears it on reply', () => {
+  let state = createRenderState('ses-perm');
+
+  state = applyPayload(state, JSON.stringify({
+    type: 'permission.asked',
+    properties: {
+      id: 'perm-1',
+      sessionID: 'ses-perm',
+      permission: 'bash',
+      patterns: ['*'],
+      always: ['skill_mcp'],
+      tool: { messageID: 'msg-tool', callID: 'call-tool' },
+    },
+  }), 1);
+
+  assert.deepEqual(state.session.permission, {
+    requestId: 'perm-1',
+    permission: 'bash',
+    patterns: ['*'],
+    always: ['skill_mcp'],
+    metadata: {},
+    tool: { messageId: 'msg-tool', callId: 'call-tool' },
+  });
+
+  state = applyPayload(state, JSON.stringify({
+    type: 'permission.replied',
+    properties: {
+      sessionID: 'ses-perm',
+      requestID: 'perm-1',
+      reply: 'once',
+    },
+  }), 2);
+
+  assert.equal(state.session.permission, null);
+});
+
+test('opencode render state removes messages and parts', () => {
+  let state = createRenderState('ses-rm');
+  state = applyPayload(state, JSON.stringify({
+    type: 'message.updated',
+    properties: { info: { id: 'msg-rm', sessionID: 'ses-rm', role: 'assistant', time: { created: 1 } } },
+  }), 1);
+  state = applyPayload(state, JSON.stringify({
+    type: 'message.part.updated',
+    properties: { part: { id: 'prt-rm', sessionID: 'ses-rm', messageID: 'msg-rm', type: 'text', text: 'hello' } },
+  }), 2);
+  state = applyPayload(state, JSON.stringify({
+    type: 'message.part.removed',
+    properties: { sessionID: 'ses-rm', messageID: 'msg-rm', partID: 'prt-rm' },
+  }), 3);
+  assert.equal(state.messages.byId['msg-rm'].renderText, '');
+
+  state = applyPayload(state, JSON.stringify({
+    type: 'message.removed',
+    properties: { sessionID: 'ses-rm', messageID: 'msg-rm' },
+  }), 4);
+  assert.equal(state.messages.byId['msg-rm'], undefined);
+  assert.deepEqual(state.messages.order, []);
+});
+
+test('opencode render state handles session lifecycle and extra part subtypes', () => {
+  let state = createRenderState('ses-life');
+  state = applyPayload(state, JSON.stringify({
+    type: 'session.created',
+    properties: { info: { id: 'ses-life', title: 'demo', directory: '/tmp/demo' } },
+  }), 1);
+  state = applyPayload(state, JSON.stringify({
+    type: 'message.updated',
+    properties: { info: { id: 'msg-life', sessionID: 'ses-life', role: 'assistant', time: { created: 2 } } },
+  }), 2);
+  state = applyPayload(state, JSON.stringify({
+    type: 'message.part.updated',
+    properties: { part: { id: 'prt-sub', sessionID: 'ses-life', messageID: 'msg-life', type: 'subtask', description: 'Inspect state', prompt: 'inspect', agent: 'metis' } },
+  }), 3);
+  state = applyPayload(state, JSON.stringify({
+    type: 'message.part.updated',
+    properties: { part: { id: 'prt-patch', sessionID: 'ses-life', messageID: 'msg-life', type: 'patch', hash: 'abc', files: ['a.js', 'b.js'] } },
+  }), 4);
+  state = applyPayload(state, JSON.stringify({
+    type: 'session.compacted',
+    properties: { sessionID: 'ses-life' },
+  }), 5);
+  state = applyPayload(state, JSON.stringify({
+    type: 'session.deleted',
+    properties: { info: { id: 'ses-life', title: 'demo' } },
+  }), 6);
+
+  assert.match(state.messages.byId['msg-life'].renderText, /Subtask \(metis\): Inspect state/);
+  assert.match(state.messages.byId['msg-life'].renderText, /Patch updated \(2 files\)/);
+  assert.ok(state.session.compactedAt > 0);
+  assert.ok(state.session.deletedAt > 0);
+  assert.equal(state.session.status, 'deleted');
+});

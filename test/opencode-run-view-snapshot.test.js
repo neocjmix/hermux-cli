@@ -626,3 +626,61 @@ test('run view snapshot materializer renders active question prompts in the stat
   assert.equal(statusLines[5], '2. Wait - pause for review');
   assert.equal(state.snapshot.messages.length, 1);
 });
+
+test('run view snapshot materializer renders active permission prompts in the status pane', () => {
+  let state = createRunViewSnapshotState('ses-perm');
+
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'permission.asked',
+    properties: {
+      id: 'perm-1',
+      sessionID: 'ses-perm',
+      permission: 'bash',
+      patterns: ['*'],
+      always: ['skill_mcp'],
+    },
+  }), 1, {
+    runId: 'run-perm',
+    minMessageTimeMs: 0,
+    isFinal: false,
+    repoName: 'repo-p',
+  });
+
+  const statusLines = String(state.snapshot.messages[0]).split('\n');
+  assert.equal(statusLines[2], '🔐 bash');
+  assert.equal(statusLines[3], 'patterns: *');
+  assert.equal(statusLines[4], 'always: skill_mcp');
+  assert.equal(state.snapshot.messages.length, 1);
+});
+
+test('run view snapshot materializer removes deleted messages from visible output', () => {
+  let state = createRunViewSnapshotState('ses-remove');
+
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'message.updated',
+    properties: { info: { id: 'msg-rm', sessionID: 'ses-remove', role: 'assistant', time: { created: 1 } } },
+  }), 1, { runId: 'run-remove', minMessageTimeMs: 0, isFinal: false, repoName: 'repo-rm' });
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'message.part.updated',
+    properties: { part: { id: 'prt-rm', sessionID: 'ses-remove', messageID: 'msg-rm', type: 'text', text: 'to be removed' } },
+  }), 2, { runId: 'run-remove', minMessageTimeMs: 0, isFinal: false, repoName: 'repo-rm' });
+  assert.equal(state.snapshot.messages[1], 'to be removed');
+
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'message.removed',
+    properties: { sessionID: 'ses-remove', messageID: 'msg-rm' },
+  }), 3, { runId: 'run-remove', minMessageTimeMs: 0, isFinal: false, repoName: 'repo-rm' });
+
+  assert.equal(state.snapshot.messages.length, 1);
+});
+
+test('run view snapshot materializer reflects deleted session status', () => {
+  let state = createRunViewSnapshotState('ses-del');
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'session.deleted',
+    properties: { info: { id: 'ses-del', title: 'gone' } },
+  }), 1, { runId: 'run-del', minMessageTimeMs: 0, isFinal: false, repoName: 'repo-del' });
+
+  const statusLines = String(state.snapshot.messages[0]).split('\n');
+  assert.match(statusLines[0], /deleted/);
+});

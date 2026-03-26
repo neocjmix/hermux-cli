@@ -569,6 +569,33 @@ test('runQuestionReply calls sdk question reply with answers payload', async () 
   }]);
 });
 
+test('runPermissionReply calls sdk permission reply with approval payload', async () => {
+  global.__FAKE_OPENCODE_SDK_PERMISSION_REPLIES__ = [];
+  const { runPermissionReply } = loadRunnerWithEnv({
+    HERMUX_EXECUTION_TRANSPORT: 'sdk',
+    HERMUX_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
+  });
+
+  const repo = {
+    opencodeCommand: 'opencode sdk',
+    workdir: process.cwd(),
+    logFile: path.join(os.tmpdir(), 'runner-permission-reply.log'),
+  };
+
+  const out = await runPermissionReply(repo, {
+    requestId: 'perm-1',
+    reply: 'always',
+  });
+
+  assert.deepEqual(out, { ok: true });
+  assert.deepEqual(global.__FAKE_OPENCODE_SDK_PERMISSION_REPLIES__, [{
+    requestID: 'perm-1',
+    directory: process.cwd(),
+    reply: 'always',
+    message: '',
+  }]);
+});
+
 test('runQuestionReject calls sdk question reject with request id', async () => {
   global.__FAKE_OPENCODE_SDK_QUESTION_REJECTS__ = [];
   const { runQuestionReject } = loadRunnerWithEnv({

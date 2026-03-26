@@ -82,7 +82,10 @@ Lifecycle semantics:
 - while a session is busy, mapped Telegram chats SHOULD emit `typing` chat actions until the session becomes idle or the run ends
 - status pane SHOULD append the latest reasoning preview as its final line when reasoning text exists, prefixed with a thinking emoji
 - status pane MUST render active upstream `question.asked` prompts as visible text instead of leaving them only in raw-event or draft-only paths, so the user can answer from Telegram immediately
+- status pane MUST render active upstream `permission.asked` prompts as visible text so Telegram users can approve or reject stalled work without opening another interface
 - unresolved button-only question prompts MUST NOT swallow later plain-text Telegram prompts; only explicit custom-input capture mode may treat free text as a question answer
+- removed message and part events MUST retract deleted content from future Telegram run-view reconciliation instead of leaving stale assistant text visible
+- session compaction and deletion MUST update projected state without breaking same-session event acceptance or leaving stale question/permission prompts open
 - `<system-reminder>` content is rendered at the bottom of the live status panel and MUST appear as a code block
 
 ## Failure Semantics

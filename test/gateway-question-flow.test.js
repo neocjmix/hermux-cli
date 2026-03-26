@@ -210,3 +210,65 @@ test('gateway question text input reports unsupported sdk question api without c
   assert.equal(state.questionFlow, null);
   assert.equal(bot.editMessageTextCalls.length + bot.sendMessageCalls.length >= 0, true);
 });
+
+test('gateway permission callback submits upstream reply and closes prompt', async () => {
+  global.__FAKE_OPENCODE_SDK_PERMISSION_REPLIES__ = [];
+  const gateway = loadGatewayWithEnv({
+    HERMUX_EXECUTION_TRANSPORT: 'sdk',
+    HERMUX_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
+  });
+
+  const bot = {
+    editMessageTextCalls: [],
+    sendMessageCalls: [],
+    async editMessageText(text, opts) {
+      this.editMessageTextCalls.push({ text, opts });
+      return { message_id: opts.message_id };
+    },
+    async sendMessage(chatId, text) {
+      this.sendMessageCalls.push({ chatId, text });
+      return { message_id: 2001 };
+    },
+  };
+  const repo = {
+    name: 'demo',
+    opencodeCommand: 'opencode sdk',
+    workdir: process.cwd(),
+    logFile: path.join(os.tmpdir(), 'gateway-permission-callback.log'),
+  };
+  const state = {
+    dispatchQueue: Promise.resolve(),
+    permissionFlow: {
+      requestId: 'perm-1',
+      sessionId: 'ses-1',
+      chatId: '100',
+      permission: 'bash',
+      patterns: ['*'],
+      always: ['skill_mcp'],
+      metadata: {},
+      tool: null,
+      messageId: 15,
+      renderSignature: '',
+    },
+  };
+  const chatRouter = new Map([['100', repo]]);
+  const states = new Map([[repo.name, state]]);
+
+  const out = await gateway._internal.handlePermissionCallback(
+    bot,
+    { message: { chat: { id: '100' } } },
+    chatRouter,
+    states,
+    'always',
+  );
+
+  assert.equal(out.answerText, 'always');
+  assert.deepEqual(global.__FAKE_OPENCODE_SDK_PERMISSION_REPLIES__, [{
+    requestID: 'perm-1',
+    directory: process.cwd(),
+    reply: 'always',
+    message: '',
+  }]);
+  assert.equal(state.permissionFlow, null);
+  assert.equal(bot.editMessageTextCalls.some((call) => String(call.text).includes('always allowed')), true);
+});

@@ -37,6 +37,7 @@ const {
   endSessionLifecycle,
   runSessionRevert,
   runSessionUnrevert,
+  runPermissionReply,
   runQuestionReply,
   runQuestionReject,
   stopAllRuntimeExecutors,
@@ -75,6 +76,12 @@ const {
   buildQuestionRenderSignature,
   summarizeQuestionAnswers,
 } = require('./app/question-interaction-service');
+const {
+  syncPermissionFlow,
+  buildPermissionMessage,
+  buildPermissionKeyboard,
+  buildPermissionRenderSignature,
+} = require('./app/permission-interaction-service');
 
 const TG_MAX_LEN = 4000;
 const IMAGE_UPLOAD_DIR = '.hermux/uploads';
@@ -184,6 +191,17 @@ function buildAuditContentMeta(text) {
     auditStringMax: AUDIT_STRING_MAX,
     willAuditTruncate: length > AUDIT_STRING_MAX,
   };
+}
+
+function parseSessionEventPayload(text) {
+  const src = String(text || '').trim();
+  if (!src) return null;
+  try {
+    const parsed = JSON.parse(src);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch (_err) {
+    return null;
+  }
 }
 
 function shouldTraceSessionDiagnostic(...sessionCandidates) {
@@ -2461,6 +2479,83 @@ async function closeQuestionPromptMessage(bot, chatId, state, text) {
   }
 }
 
+async function upsertPermissionPromptMessage(bot, chatId, state) {
+  const flow = state && state.permissionFlow && typeof state.permissionFlow === 'object'
+    ? state.permissionFlow
+    : null;
+  if (!flow) return;
+  const text = buildPermissionMessage(flow);
+  const replyMarkup = buildPermissionKeyboard(flow);
+  const signature = buildPermissionRenderSignature(flow);
+  if (flow.messageId && flow.renderSignature === signature) return;
+
+  if (flow.messageId) {
+    try {
+      await bot.editMessageText(text, {
+        chat_id: chatId,
+        message_id: flow.messageId,
+        ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+      });
+      state.permissionFlow.renderSignature = signature;
+      return;
+    } catch (err) {
+      const msg = String(err && err.message ? err.message : err || '').toLowerCase();
+      if (msg.includes('message is not modified')) {
+        state.permissionFlow.renderSignature = signature;
+        return;
+      }
+    }
+  }
+
+  const sent = await safeSend(bot, chatId, text, replyMarkup ? { reply_markup: replyMarkup } : undefined);
+  if (sent && sent.message_id && state.permissionFlow) {
+    state.permissionFlow.messageId = sent.message_id;
+    state.permissionFlow.renderSignature = signature;
+  }
+}
+
+async function closePermissionPromptMessage(bot, chatId, state, text) {
+  const flow = state && state.permissionFlow && typeof state.permissionFlow === 'object'
+    ? state.permissionFlow
+    : null;
+  const messageId = Number(flow && flow.messageId ? flow.messageId : 0) || 0;
+  state.permissionFlow = null;
+  if (messageId > 0) {
+    try {
+      await bot.editMessageText(String(text || '').trim() || 'Permission flow closed.', {
+        chat_id: chatId,
+        message_id: messageId,
+      });
+      return;
+    } catch (_err) {
+    }
+  }
+  if (text) {
+    await safeSend(bot, chatId, text);
+  }
+}
+
+async function submitPermissionFlow(bot, repo, state, chatId, reply) {
+  const flow = state && state.permissionFlow && typeof state.permissionFlow === 'object'
+    ? state.permissionFlow
+    : null;
+  if (!flow) return { answerText: 'inactive' };
+  await runPermissionReply(repo, {
+    requestId: flow.requestId,
+    reply,
+  });
+  const labels = { once: 'Permission allowed once.', always: 'Permission always allowed for this session.', reject: 'Permission rejected.' };
+  await closePermissionPromptMessage(bot, chatId, state, labels[reply] || 'Permission handled.');
+  return { answerText: reply };
+}
+
+async function notifyPermissionFlowError(bot, chatId, state, err, fallbackText) {
+  const message = String(err && err.message ? err.message : err || '').trim();
+  const base = String(fallbackText || 'Permission action failed.').trim();
+  const text = message ? `${base}\n\n${message}` : base;
+  await closePermissionPromptMessage(bot, chatId, state, text);
+}
+
 async function submitQuestionFlow(bot, repo, state, chatId) {
   const flow = state && state.questionFlow && typeof state.questionFlow === 'object'
     ? state.questionFlow
@@ -2558,6 +2653,32 @@ async function handleQuestionCallback(bot, query, chatRouter, states, action, qu
     }
 
     return { answerText: 'unknown action' };
+  });
+}
+
+async function handlePermissionCallback(bot, query, chatRouter, states, action) {
+  const chat = query && query.message && query.message.chat;
+  const chatId = chat ? String(chat.id) : '';
+  const repo = chatRouter.get(chatId);
+  if (!repo) return { answerText: 'not mapped' };
+  const state = states.get(repo.name);
+  if (!state) return { answerText: 'state missing' };
+
+  return withStateDispatchLock(state, async () => {
+    const flow = state.permissionFlow && typeof state.permissionFlow === 'object' ? state.permissionFlow : null;
+    if (!flow || String(flow.chatId || '') !== chatId) {
+      return { answerText: 'inactive' };
+    }
+    const reply = action === 'once' ? 'once' : action === 'always' ? 'always' : action === 'reject' ? 'reject' : '';
+    if (!reply) {
+      return { answerText: 'unknown action' };
+    }
+    try {
+      return await submitPermissionFlow(bot, repo, state, chatId, reply);
+    } catch (err) {
+      await notifyPermissionFlowError(bot, chatId, state, err, 'Failed to submit permission reply.');
+      return { answerText: 'submit failed' };
+    }
   });
 }
 
@@ -2916,6 +3037,10 @@ async function startPromptRun(bot, repo, state, runItem) {
   };
   let textEventSeq = 0;
   let eventOrdinal = 0;
+  const firstUpstreamSessionTypes = [];
+  const assistantMessageIdsSeen = new Set();
+  let sawAssistantSessionMessage = false;
+  let sawAssistantSessionText = false;
   const runStartedAt = Date.now();
   const runId = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
   const runStartedAtMs = Date.now();
@@ -3509,6 +3634,9 @@ async function startPromptRun(bot, repo, state, runItem) {
         const activeQuestion = next && next.session && next.session.question && typeof next.session.question === 'object'
           ? next.session.question
           : null;
+        const activePermission = next && next.session && next.session.permission && typeof next.session.permission === 'object'
+          ? next.session.permission
+          : null;
         if (activeQuestion) {
           const previousFlow = state.questionFlow && typeof state.questionFlow === 'object'
             ? state.questionFlow
@@ -3527,6 +3655,25 @@ async function startPromptRun(bot, repo, state, runItem) {
           && String(state.questionFlow.sessionId || '') === String(key)
         ) {
           await closeQuestionPromptMessage(bot, chatId, state, 'Question resolved.');
+        }
+        if (activePermission) {
+          const previousPermissionFlow = state.permissionFlow && typeof state.permissionFlow === 'object'
+            ? state.permissionFlow
+            : null;
+          const nextPermissionFlow = syncPermissionFlow(previousPermissionFlow, activePermission, chatId);
+          if (nextPermissionFlow) {
+            if (previousPermissionFlow && previousPermissionFlow.requestId !== nextPermissionFlow.requestId) {
+              nextPermissionFlow.messageId = Number(previousPermissionFlow.messageId || 0) || 0;
+            }
+            state.permissionFlow = nextPermissionFlow;
+            await upsertPermissionPromptMessage(bot, chatId, state);
+          }
+        } else if (
+          state.permissionFlow
+          && String(state.permissionFlow.chatId || '') === String(chatId)
+          && String(state.permissionFlow.sessionId || '') === String(key)
+        ) {
+          await closePermissionPromptMessage(bot, chatId, state, 'Permission resolved.');
         }
         state.sessionProjectedTexts.set(key, snapshotMessages.slice());
       },
@@ -3697,6 +3844,42 @@ async function startPromptRun(bot, repo, state, runItem) {
         ...buildAuditContentMeta(evt.content || ''),
       });
       const upstreamBusySignal = readBusySignalFromSessionPayload(evt.content || '');
+      const rawPayload = evt.type === 'raw' ? parseSessionEventPayload(evt.content || '') : null;
+      const rawType = rawPayload && rawPayload.type ? String(rawPayload.type) : '';
+      if (rawType && firstUpstreamSessionTypes.length < 8) {
+        firstUpstreamSessionTypes.push(rawType);
+      }
+      if (rawType === 'message.updated') {
+        const info = rawPayload && rawPayload.properties ? rawPayload.properties.info || {} : {};
+        const role = String(info.role || '').toLowerCase();
+        const messageId = String(info.id || '').trim();
+        if (role === 'assistant' && messageId) {
+          assistantMessageIdsSeen.add(messageId);
+          if (!sawAssistantSessionMessage) {
+            sawAssistantSessionMessage = true;
+            auditRun('run.assistant.first_message_event', {
+              messageId,
+              parentId: String(info.parentID || '').trim(),
+              rawType,
+            });
+          }
+        }
+      }
+      if (rawType === 'message.part.updated' || rawType === 'message.part.delta') {
+        const part = rawPayload && rawPayload.properties
+          ? (rawPayload.properties.part || rawPayload.properties)
+          : {};
+        const assistantMessageId = String(part.messageID || '').trim();
+        if (assistantMessageId && assistantMessageIdsSeen.has(assistantMessageId) && !sawAssistantSessionText) {
+          sawAssistantSessionText = true;
+          auditRun('run.assistant.first_text_event', {
+            messageId: assistantMessageId,
+            partId: String(part.partID || part.id || '').trim(),
+            rawType,
+            field: String(part.field || '').trim(),
+          });
+        }
+      }
       if (upstreamBusySignal !== null) {
         syncTypingIndicator(upstreamBusySignal, upstreamBusySignal ? 'upstream_session_status' : 'upstream_session_idle');
       }
@@ -3766,6 +3949,16 @@ async function startPromptRun(bot, repo, state, runItem) {
         pendingReasoning: true,
         outputSnapshot,
       });
+      if (runMetrics.upstreamEventCount > 0 && !sawAssistantSessionMessage && !sawAssistantSessionText) {
+        auditRun('run.completion.no_assistant_output', {
+          upstreamEventCount: runMetrics.upstreamEventCount,
+          firstUpstreamSessionTypes: firstUpstreamSessionTypes.slice(),
+          sawAssistantSessionMessage,
+          sawAssistantSessionText,
+          activeSessionId: String(activeSessionId || '').trim(),
+          attachCursor: Number(state.runObserverAttachCursor || 0) || 0,
+        });
+      }
       state.running = false;
       if (state.typingIndicator) state.typingIndicator.busy = false;
       clearTypingIndicatorTimer(state);
@@ -3993,6 +4186,7 @@ function main() {
     queue: [],
     deferredRunStartTasks: [],
     questionFlow: null,
+    permissionFlow: null,
     panelRefresh: null,
     sessionDelivery: null,
     sessionRenderStates: new Map(),
@@ -4076,6 +4270,7 @@ function main() {
     requestInterrupt,
     handleRevertConfirmCallback,
     handleRevertCancelCallback,
+    handlePermissionCallback,
     handleQuestionCallback,
     withStateDispatchLock,
   });
@@ -4259,6 +4454,9 @@ module.exports = {
     readBusySignalFromSessionPayload,
     upsertQuestionPromptMessage,
     closeQuestionPromptMessage,
+    upsertPermissionPromptMessage,
+    closePermissionPromptMessage,
+    handlePermissionCallback,
     handleQuestionCallback,
     handleQuestionTextInput,
   },

@@ -11,6 +11,7 @@ function makeHarness(overrides = {}) {
   const verboseCalls = [];
   const requestInterruptCalls = [];
   const questionCalls = [];
+  const permissionCalls = [];
   const writes = [];
   const modelUiState = new Map();
   const chatRouter = new Map();
@@ -65,6 +66,10 @@ function makeHarness(overrides = {}) {
       questionCalls.push(args);
       return { answerText: 'question' };
     },
+    handlePermissionCallback: async (...args) => {
+      permissionCalls.push(args);
+      return { answerText: 'permission' };
+    },
     withStateDispatchLock: async (_state, task) => task(),
     ...overrides,
   };
@@ -85,6 +90,7 @@ function makeHarness(overrides = {}) {
     verboseCalls,
     requestInterruptCalls,
     questionCalls,
+    permissionCalls,
     writes,
   };
 }
@@ -101,6 +107,20 @@ test('callback handler routes connect callback to connect command', async () => 
   assert.equal(h.connectCalls.length, 1);
   assert.deepEqual(h.connectCalls[0], { chatId: '100', args: ['demo'] });
   assert.equal(h.answerCalls[0].payload.text, 'connect: demo');
+});
+
+test('callback handler routes permission callback to permission handler', async () => {
+  const h = makeHarness();
+
+  await h.handler({
+    id: 'qp',
+    data: 'p:o',
+    message: { chat: { id: '100' } },
+  });
+
+  assert.equal(h.permissionCalls.length, 1);
+  assert.equal(h.permissionCalls[0][4], 'once');
+  assert.equal(h.answerCalls[0].payload.text, 'permission');
 });
 
 test('callback handler returns not-mapped response for verbose action', async () => {

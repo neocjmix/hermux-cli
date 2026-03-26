@@ -3,6 +3,7 @@
 const fs = require('fs');
 const net = require('net');
 const path = require('path');
+const { createHash } = require('crypto');
 const { pathToFileURL } = require('url');
 const { HERMUX_VERSION } = require('../../../lib/hermux-version');
 
@@ -652,6 +653,26 @@ async function runQuestionReject(instance, input) {
   });
 }
 
+async function runPermissionReply(instance, input) {
+  const requestId = String(input && input.requestId ? input.requestId : '').trim();
+  const reply = String(input && input.reply ? input.reply : '').trim();
+  const message = String(input && input.message ? input.message : '').trim();
+  if (!requestId) throw new Error('permission requestId is required');
+  if (!reply) throw new Error('permission reply is required');
+  return withSdkClient(instance, async (client, query) => {
+    const permissionApi = client && client.permission ? client.permission : null;
+    if (!permissionApi || typeof permissionApi.reply !== 'function') {
+      throw new Error('installed opencode sdk runtime does not support permission.reply');
+    }
+    return unwrapData(await permissionApi.reply({
+      requestID: requestId,
+      directory: query.directory,
+      reply,
+      ...(message ? { message } : {}),
+    }));
+  });
+}
+
 function unwrapData(result) {
   if (!result || typeof result !== 'object') return result;
   if (result.error) {
@@ -694,9 +715,13 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
     finalText: '',
     attachCursor: 0,
     hasCurrentRunActivity: false,
+    sawAssistantMessageUpdate: false,
+    sawAssistantTextEvent: false,
+    firstRawTypes: [],
   };
 
   const partMap = new Map();
+  const assistantMessageIds = new Set();
   const processedDeltas = new Set(); // Track processed deltas to prevent text duplication
   let partSeq = 0;
   let abortSession = null;
@@ -970,6 +995,9 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
     const resolved = framed && framed.resolved ? framed.resolved : resolveSessionIdentity(evt);
     const type = String((resolved && resolved.type) || evt.type || '');
     const props = (evt && evt.properties) || {};
+    if (type && state.firstRawTypes.length < 8) {
+      state.firstRawTypes.push(type);
+    }
 
     logStream.write(`${JSON.stringify(evt)}\n`);
     trace('sdk.event.raw', {
@@ -1018,6 +1046,24 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
       return;
     }
 
+    if (type === 'message.updated') {
+      const info = props.info || {};
+      const role = String(info.role || '').toLowerCase();
+      const messageId = String(info.id || '').trim();
+      if (role === 'assistant' && messageId) {
+        assistantMessageIds.add(messageId);
+        if (!state.sawAssistantMessageUpdate) {
+          state.sawAssistantMessageUpdate = true;
+          trace('sdk.assistant.first_message_updated', {
+            messageId,
+            parentId: String(info.parentID || '').trim(),
+          });
+        }
+      }
+      await dispatchEvent({ type: 'raw', content: JSON.stringify(evt), sessionId: state.sessionId });
+      return;
+    }
+
     if (type === 'session.idle') {
       if (!state.hasCurrentRunActivity) {
         trace('sdk.session.idle.ignored.pre_activity', {
@@ -1045,6 +1091,15 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
     if (type === 'message.part.delta') {
       state.hasCurrentRunActivity = true;
       if (idlePending) scheduleIdleFinalize();
+      const messageId = String(props.messageID || '').trim();
+      if (messageId && assistantMessageIds.has(messageId) && !state.sawAssistantTextEvent) {
+        state.sawAssistantTextEvent = true;
+        trace('sdk.assistant.first_text_event', {
+          type,
+          messageId,
+          partId: String(props.partID || '').trim(),
+        });
+      }
       const partId = String(props.partID || '').trim();
       const field = String(props.field || '');
       const delta = String(props.delta || '');
@@ -1119,6 +1174,15 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
       return;
     }
     if (ptype === 'reasoning') {
+      if (String(part.messageID || '').trim() && assistantMessageIds.has(String(part.messageID || '').trim()) && !state.sawAssistantTextEvent) {
+        state.sawAssistantTextEvent = true;
+        trace('sdk.assistant.first_text_event', {
+          type,
+          messageId: String(part.messageID || '').trim(),
+          partId: String(part.id || '').trim(),
+          textKind: 'reasoning',
+        });
+      }
       const reasoningText = String(part.text || props.delta || '');
       if (reasoningText) {
         trace('sdk.reasoning.part', {
@@ -1139,6 +1203,15 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
       return;
     }
     if (ptype === 'text') {
+      if (String(part.messageID || '').trim() && assistantMessageIds.has(String(part.messageID || '').trim()) && !state.sawAssistantTextEvent) {
+        state.sawAssistantTextEvent = true;
+        trace('sdk.assistant.first_text_event', {
+          type,
+          messageId: String(part.messageID || '').trim(),
+          partId: String(part.id || '').trim(),
+          textKind: 'final',
+        });
+      }
       updatePart(part);
       state.finalText = sortedFinalText();
       trace('sdk.text.part', {
@@ -1241,6 +1314,22 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
         directory: query.directory,
         parts: [{ type: 'text', text: prompt }],
       }));
+      trace('sdk.prompt.submitted', {
+        sessionId: state.sessionId,
+        directory: query.directory,
+        promptLength: String(prompt || '').length,
+        promptSha256: createHash('sha256').update(String(prompt || '')).digest('hex'),
+        attachCursor: state.attachCursor,
+        runtimeEventCursor: Number(runtimeEntry.eventCursor || 0) || 0,
+      });
+      queueScopeAudit(runtimeEntry, instance, 'router.run.prompt_submitted', {
+        lane: 'run-observer',
+        sessionId: state.sessionId,
+        attachCursor: state.attachCursor,
+        runtimeEventCursor: Number(runtimeEntry.eventCursor || 0) || 0,
+        promptLength: String(prompt || '').length,
+        promptSha256: createHash('sha256').update(String(prompt || '')).digest('hex'),
+      });
 
       if (!idlePending && !state.done) {
         schedulePostCompleteFinalize();
@@ -1336,6 +1425,7 @@ module.exports = {
   endSessionLifecycle,
   runSessionRevert,
   runSessionUnrevert,
+  runPermissionReply,
   runQuestionReply,
   runQuestionReject,
   stopAllRuntimeExecutors,

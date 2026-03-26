@@ -19,6 +19,7 @@ function createCallbackQueryHandler(deps) {
     modelControlService,
     handleRevertConfirmCallback,
     handleRevertCancelCallback,
+    handlePermissionCallback,
     handleQuestionCallback,
     withStateDispatchLock,
     audit,
@@ -89,6 +90,23 @@ function createCallbackQueryHandler(deps) {
         );
         if (query.id) {
           await bot.answerCallbackQuery(query.id, { text: (result && result.answerText) || 'question' }).catch(() => {});
+        }
+        return;
+      }
+
+      if (data.startsWith('p:')) {
+        if (typeof audit === 'function') audit('router.callback.route', { chatId, target: 'permission', dataPreview: summarizeText(data) });
+        const verb = data.slice('p:'.length).trim();
+        const result = await handlePermissionCallback(
+          bot,
+          query,
+          chatRouter,
+          states,
+          verb === 'o' ? 'once' : verb === 'a' ? 'always' : verb === 'x' ? 'reject' : 'unknown',
+          withStateDispatchLock,
+        );
+        if (query.id) {
+          await bot.answerCallbackQuery(query.id, { text: (result && result.answerText) || 'permission' }).catch(() => {});
         }
         return;
       }

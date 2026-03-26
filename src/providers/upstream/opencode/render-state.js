@@ -78,6 +78,9 @@ function createRenderState(sessionId) {
       stepCount: 0,
       toolCount: 0,
       question: null,
+      permission: null,
+      compactedAt: 0,
+      deletedAt: 0,
     },
     messages: {
       order: [],
@@ -92,6 +95,49 @@ function createRenderState(sessionId) {
       busy: false,
     },
   };
+}
+
+function removeMessage(state, messageId) {
+  const mid = toText(messageId).trim();
+  if (!mid) return;
+  state.messages.order = state.messages.order.filter((id) => id !== mid);
+  delete state.messages.byId[mid];
+}
+
+function removePart(state, messageId, partId) {
+  const mid = toText(messageId).trim();
+  const pid = toText(partId).trim();
+  if (!mid || !pid) return;
+  const message = state.messages.byId[mid];
+  if (!message || !message.parts) return;
+  message.parts.order = message.parts.order.filter((id) => id !== pid);
+  delete message.parts.byId[pid];
+  updateMessageRender(message);
+}
+
+function summarizePart(part) {
+  if (!part || typeof part !== 'object') return '';
+  const type = toText(part.type).trim();
+  if (type === 'subtask') {
+    const desc = toText(part.description).trim() || toText(part.prompt).trim();
+    const agent = toText(part.agent).trim();
+    return agent ? `Subtask (${agent}): ${desc}`.trim() : `Subtask: ${desc}`.trim();
+  }
+  if (type === 'agent') return `Agent: ${toText(part.name).trim()}`.trim();
+  if (type === 'retry') {
+    const attempt = Number(part.attempt || 0) || 0;
+    const message = toText(part.error && part.error.message).trim();
+    return `Retry #${attempt}${message ? `: ${message}` : ''}`.trim();
+  }
+  if (type === 'compaction') {
+    return `Compaction${part.auto ? ' (auto)' : ''}${part.overflow ? ' overflow' : ''}`.trim();
+  }
+  if (type === 'snapshot') return 'Snapshot updated';
+  if (type === 'patch') {
+    const files = Array.isArray(part.files) ? part.files.length : 0;
+    return files > 0 ? `Patch updated (${files} files)` : 'Patch updated';
+  }
+  return '';
 }
 
 function ensureMessage(state, messageId) {
@@ -159,6 +205,8 @@ function updateMessageRender(message) {
     if (!part) continue;
     if (part.type === 'text' && toText(part.text)) textParts.push(toText(part.text));
     if (part.type === 'reasoning' && toText(part.text)) reasoningParts.push(toText(part.text));
+    const summary = summarizePart(part);
+    if (summary) textParts.push(summary);
     if (part.type === 'reasoning') {
       const encrypted = part.metadata
         && part.metadata.openai
@@ -169,6 +217,43 @@ function updateMessageRender(message) {
   message.renderText = textParts.join('\n\n');
   message.renderReasoningText = reasoningParts.join('\n\n');
   message.renderReasoningEncrypted = reasoningEncrypted;
+}
+
+function mergePermissionAsked(state, event) {
+  const props = event && event.properties && typeof event.properties === 'object'
+    ? event.properties
+    : null;
+  if (!props) return;
+  const requestId = toText(props.id || props.requestID).trim();
+  const permission = toText(props.permission).trim();
+  if (!requestId || !permission) return;
+  const tool = props.tool && typeof props.tool === 'object'
+    ? {
+        messageId: toText(props.tool.messageId || props.tool.messageID).trim(),
+        callId: toText(props.tool.callId || props.tool.callID).trim(),
+      }
+    : null;
+  state.session.permission = {
+    requestId,
+    permission,
+    patterns: Array.isArray(props.patterns) ? props.patterns.map((v) => toText(v).trim()).filter(Boolean) : [],
+    always: Array.isArray(props.always) ? props.always.map((v) => toText(v).trim()).filter(Boolean) : [],
+    metadata: props.metadata && typeof props.metadata === 'object' ? { ...props.metadata } : {},
+    tool,
+  };
+}
+
+function mergePermissionResolved(state, event) {
+  const active = state && state.session ? state.session.permission : null;
+  if (!active) return;
+  const props = event && event.properties && typeof event.properties === 'object'
+    ? event.properties
+    : null;
+  const requestId = toText(props && (props.requestID || props.id)).trim();
+  const activeRequestId = toText(active.requestId).trim();
+  if (!requestId || !activeRequestId || requestId === activeRequestId) {
+    state.session.permission = null;
+  }
 }
 
 function updateGlobalRender(state) {
@@ -329,6 +414,8 @@ function mergePartUpdated(state, event, seq) {
   const entry = ensurePart(message, part.id, part.sessionID);
   if (!entry) return;
 
+  Object.assign(entry, deepMerge(entry, part));
+
   entry.type = toText(part.type || entry.type);
   if (Object.prototype.hasOwnProperty.call(part, 'text')) {
     entry.text = toText(part.text);
@@ -443,6 +530,38 @@ function mergeSessionDiff(state, event) {
   state.session.diff = diff;
 }
 
+function mergeSessionCompacted(state) {
+  state.session.compactedAt = Date.now();
+}
+
+function mergeSessionDeleted(state, event) {
+  const info = event && event.properties && event.properties.info;
+  if (info) {
+    state.session = deepMerge(state.session, info);
+  }
+  state.session.deletedAt = Date.now();
+  state.session.status = 'deleted';
+  state.session.isIdle = true;
+  state.session.question = null;
+  state.session.permission = null;
+}
+
+function mergeMessageRemoved(state, event) {
+  const props = event && event.properties && typeof event.properties === 'object'
+    ? event.properties
+    : null;
+  if (!props) return;
+  removeMessage(state, props.messageID);
+}
+
+function mergePartRemoved(state, event) {
+  const props = event && event.properties && typeof event.properties === 'object'
+    ? event.properties
+    : null;
+  if (!props) return;
+  removePart(state, props.messageID, props.partID);
+}
+
 function mergeQuestionAsked(state, event, seq) {
   const props = event && event.properties && typeof event.properties === 'object'
     ? event.properties
@@ -490,12 +609,18 @@ function applyEvent(renderState, event, seq) {
 
   const kind = toText(evt.type).trim();
   if (kind === 'message.updated') mergeMessageUpdated(state, evt, seq);
+  else if (kind === 'message.removed') mergeMessageRemoved(state, evt);
   else if (kind === 'message.part.updated') mergePartUpdated(state, evt, seq);
   else if (kind === 'message.part.delta') mergePartDelta(state, evt, seq);
-  else if (kind === 'session.updated') mergeSessionUpdated(state, evt);
+  else if (kind === 'message.part.removed') mergePartRemoved(state, evt);
+  else if (kind === 'session.created' || kind === 'session.updated') mergeSessionUpdated(state, evt);
+  else if (kind === 'session.deleted') mergeSessionDeleted(state, evt);
   else if (kind === 'session.status') mergeSessionStatus(state, evt);
   else if (kind === 'session.idle') mergeSessionIdle(state, evt);
   else if (kind === 'session.diff') mergeSessionDiff(state, evt);
+  else if (kind === 'session.compacted') mergeSessionCompacted(state, evt);
+  else if (kind === 'permission.asked') mergePermissionAsked(state, evt);
+  else if (kind === 'permission.replied') mergePermissionResolved(state, evt);
   else if (kind === 'question.asked') mergeQuestionAsked(state, evt, seq);
   else if (kind === 'question.replied' || kind === 'question.rejected') mergeQuestionResolved(state, evt);
 

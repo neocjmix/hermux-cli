@@ -126,7 +126,8 @@ function createRepoMessageHandler(deps) {
         state.sessionProjectedTexts.clear();
       }
       state.questionFlow = null;
-      
+      state.permissionFlow = null;
+
       if (cleared) {
         await safeSend(bot, chatId, `Session reset complete for repo ${repo.name}.\nNext prompt will start a new opencode session.`);
       } else {

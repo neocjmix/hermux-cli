@@ -141,7 +141,11 @@ Contract rules:
 - `runId` remains a correlation field for rendering/audit, while lifecycle ownership still follows session-first routing and next-run/session-end termination semantics from `docs/specs/SESSION_EVENT_ROUTING_SPEC.md`.
 - Status-pane rendering SHOULD include the latest reasoning preview as the final line when upstream render state exposes reasoning text.
 - Upstream `question.asked` events MUST be projected into `RunViewSnapshot` as visible status-pane content, not left as provider-specific raw events or draft-only tails.
+- Upstream `permission.asked` events MUST be projected into `RunViewSnapshot` as visible status-pane content and synchronized into Telegram-local approval UI state.
 - Telegram inbound message routing MUST only divert plain text into question-answer handling when `questionFlow.waitingForCustomInput === true`; button-only question flows must fall through to normal repo prompt dispatch.
+- Telegram callback routing MUST support approval actions for active permission requests and translate them into `permission.reply` SDK calls without bypassing session-owned render state.
+- Upstream `message.removed`, `message.part.removed`, `session.compacted`, `session.created`, and `session.deleted` events MUST be reduced in `render-state` before downstream reconciliation; Telegram delete/edit behavior is derived only from resulting snapshot changes.
+- Additional v2 part subtypes (`subtask`, `agent`, `retry`, `compaction`, `snapshot`, `patch`) MUST be preserved in reducer state and surfaced through snapshot text/status semantics rather than dropped on ingest.
 - When a new run starts in the same session, downstream reconciliation MUST preserve prior-run chat history and start a fresh status-panel message for the new run instead of reusing prior-run body or status slots.
 - Run-start handoff MUST materialize any non-empty prior Telegram draft preview before `state.runView` is reset for the next run; empty draft previews are ignored.
 - Active-run Telegram reconciliation SHOULD treat `tailMaterializeHint.reason === "text_part_updated_after_delta"` as a strong boundary for immediate tail materialization while preserving weaker hints for fallback-only behavior.
