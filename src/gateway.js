@@ -3731,6 +3731,18 @@ async function startPromptRun(bot, repo, state, runItem) {
     onDeliver: onDeliverSessionEvent,
   });
 
+  const hasAttachedSessionDelivery = (sessionId) => {
+    const sid = String(sessionId || '').trim();
+    const current = state.sessionDelivery || null;
+    return !!(
+      sid
+      && current
+      && String(current.chatId || '') === String(chatId)
+      && String(current.sessionId || '') === sid
+      && String(current.ownerRunId || '') === String(runId)
+    );
+  };
+
   const ensureSessionDelivery = async (candidateSessionId) => {
     const sid = String(candidateSessionId || '').trim();
     if (!sid || !RAW_EVENT_PASSTHROUGH) return;
@@ -3891,6 +3903,10 @@ async function startPromptRun(bot, repo, state, runItem) {
       runMetrics.upstreamLastEventAtMs = eventAtMs;
 
       if (RAW_EVENT_PASSTHROUGH) {
+        const eventSessionId = evt.sessionId && String(evt.sessionId).trim()
+          ? String(evt.sessionId).trim()
+          : '';
+        const hadSessionDelivery = hasAttachedSessionDelivery(eventSessionId || activeSessionId);
         if (evt.sessionId && String(evt.sessionId).trim() && String(evt.sessionId).trim() !== activeSessionId) {
           activeSessionId = String(evt.sessionId).trim();
           state.activeSessionId = activeSessionId;
@@ -3923,6 +3939,29 @@ async function startPromptRun(bot, repo, state, runItem) {
             eventSessionId: String(eventForRouter.sessionId || ''),
             activeSessionId: String(state.activeSessionId || activeSessionId || ''),
           });
+        }
+        const attachedSessionDelivery = hasAttachedSessionDelivery(eventSessionId || activeSessionId);
+        if (!hadSessionDelivery && attachedSessionDelivery) {
+          auditRun('run.session_event.handoff_forward', {
+            eventType: String(eventForRouter.type || ''),
+            eventSessionId: String(eventForRouter.sessionId || ''),
+            activeSessionId: String(state.activeSessionId || activeSessionId || ''),
+          });
+          const routedResult = await handleSessionEvent({
+            event: {
+              ...eventForRouter,
+              _gatewaySource: 'run_callback_handoff',
+            },
+            activeSessionId: String(state.activeSessionId || activeSessionId || ''),
+          });
+          if (!routedResult.delivered) {
+            auditRun('run.session_event.skip', {
+              reason: routedResult.dropReason || 'router_rejected',
+              activeSessionId: String(state.activeSessionId || activeSessionId || ''),
+              eventSessionId: String((evt && evt.sessionId) || ''),
+            });
+          }
+          return;
         }
         auditRun('run.session_event.skip', {
           reason: 'run_callback_passthrough_shadowed_by_session_delivery',
