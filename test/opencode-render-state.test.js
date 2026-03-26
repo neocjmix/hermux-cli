@@ -439,6 +439,22 @@ test('opencode render state handles session lifecycle and extra part subtypes', 
     properties: { part: { id: 'prt-patch', sessionID: 'ses-life', messageID: 'msg-life', type: 'patch', hash: 'abc', files: ['a.js', 'b.js'] } },
   }), 4);
   state = applyPayload(state, JSON.stringify({
+    type: 'message.part.updated',
+    properties: { part: { id: 'prt-agent', sessionID: 'ses-life', messageID: 'msg-life', type: 'agent', name: 'oracle', source: { value: 'handoff.md', start: 4, end: 12 } } },
+  }), 4.1);
+  state = applyPayload(state, JSON.stringify({
+    type: 'message.part.updated',
+    properties: { part: { id: 'prt-retry', sessionID: 'ses-life', messageID: 'msg-life', type: 'retry', attempt: 2, error: { name: 'ApiError', message: 'rate limited' }, time: { created: 123 } } },
+  }), 4.2);
+  state = applyPayload(state, JSON.stringify({
+    type: 'message.part.updated',
+    properties: { part: { id: 'prt-compact', sessionID: 'ses-life', messageID: 'msg-life', type: 'compaction', auto: false, overflow: true } },
+  }), 4.3);
+  state = applyPayload(state, JSON.stringify({
+    type: 'message.part.updated',
+    properties: { part: { id: 'prt-snap', sessionID: 'ses-life', messageID: 'msg-life', type: 'snapshot', snapshot: 'snap-123' } },
+  }), 4.4);
+  state = applyPayload(state, JSON.stringify({
     type: 'session.compacted',
     properties: { sessionID: 'ses-life' },
   }), 5);
@@ -448,7 +464,13 @@ test('opencode render state handles session lifecycle and extra part subtypes', 
   }), 6);
 
   assert.match(state.messages.byId['msg-life'].renderText, /Subtask \(metis\): Inspect state/);
-  assert.match(state.messages.byId['msg-life'].renderText, /Patch updated \(2 files\)/);
+  assert.match(state.messages.byId['msg-life'].renderText, /🩹 Patch: 2 files/);
+  assert.match(state.messages.byId['msg-life'].renderText, /- a\.js/);
+  assert.match(state.messages.byId['msg-life'].renderText, /- b\.js/);
+  assert.match(state.messages.byId['msg-life'].renderText, /Agent: oracle — handoff\.md \[4:12\]/);
+  assert.match(state.messages.byId['msg-life'].renderText, /Retry #2 — ApiError: rate limited @ 123/);
+  assert.match(state.messages.byId['msg-life'].renderText, /Compaction \(manual\) — overflow/);
+  assert.match(state.messages.byId['msg-life'].renderText, /Snapshot updated — snap-123/);
   assert.ok(state.session.compactedAt > 0);
   assert.ok(state.session.deletedAt > 0);
   assert.equal(state.session.status, 'deleted');

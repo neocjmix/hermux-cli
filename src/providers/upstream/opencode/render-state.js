@@ -121,21 +121,50 @@ function summarizePart(part) {
   if (type === 'subtask') {
     const desc = toText(part.description).trim() || toText(part.prompt).trim();
     const agent = toText(part.agent).trim();
-    return agent ? `Subtask (${agent}): ${desc}`.trim() : `Subtask: ${desc}`.trim();
+    const model = part.model && typeof part.model === 'object'
+      ? [toText(part.model.providerID).trim(), toText(part.model.modelID).trim()].filter(Boolean).join('/')
+      : '';
+    const command = toText(part.command).trim();
+    const base = agent ? `Subtask (${agent}): ${desc}`.trim() : `Subtask: ${desc}`.trim();
+    const extras = [model ? `model ${model}` : '', command ? `cmd ${command}` : ''].filter(Boolean).join(' · ');
+    return extras ? `${base} — ${extras}` : base;
   }
-  if (type === 'agent') return `Agent: ${toText(part.name).trim()}`.trim();
+  if (type === 'agent') {
+    const name = toText(part.name).trim();
+    const source = part.source && typeof part.source === 'object'
+      ? [toText(part.source.value).trim(), Number(part.source.start || 0), Number(part.source.end || 0)]
+      : null;
+    const range = source && source[0]
+      ? `${source[0]} [${source[1]}:${source[2]}]`
+      : '';
+    return range ? `Agent: ${name} — ${range}`.trim() : `Agent: ${name}`.trim();
+  }
   if (type === 'retry') {
     const attempt = Number(part.attempt || 0) || 0;
-    const message = toText(part.error && part.error.message).trim();
-    return `Retry #${attempt}${message ? `: ${message}` : ''}`.trim();
+    const error = part.error && typeof part.error === 'object' ? part.error : {};
+    const label = toText(error.name || error.code || '').trim();
+    const message = toText(error.message).trim();
+    const created = Number(part.time && part.time.created ? part.time.created : 0) || 0;
+    const stamp = created > 0 ? ` @ ${created}` : '';
+    const reason = [label, message].filter(Boolean).join(': ');
+    return `Retry #${attempt}${reason ? ` — ${reason}` : ''}${stamp}`.trim();
   }
   if (type === 'compaction') {
-    return `Compaction${part.auto ? ' (auto)' : ''}${part.overflow ? ' overflow' : ''}`.trim();
+    return `Compaction${part.auto ? ' (auto)' : ' (manual)'}${part.overflow ? ' — overflow' : ''}`.trim();
   }
-  if (type === 'snapshot') return 'Snapshot updated';
+  if (type === 'snapshot') {
+    const snapshot = toText(part.snapshot).trim();
+    return snapshot ? `Snapshot updated — ${snapshot}`.trim() : 'Snapshot updated';
+  }
   if (type === 'patch') {
-    const files = Array.isArray(part.files) ? part.files.length : 0;
-    return files > 0 ? `Patch updated (${files} files)` : 'Patch updated';
+    const files = Array.isArray(part.files) ? part.files.map((v) => toText(v).trim()).filter(Boolean) : [];
+    if (files.length === 0) return '🩹 Patch';
+    if (files.length === 1) return `🩹 Patch: ${files[0]}`;
+    const visible = files.slice(0, 3).map((file) => `- ${file}`);
+    if (files.length > 3) {
+      visible.push(`- +${files.length - 3} more`);
+    }
+    return [`🩹 Patch: ${files.length} files`, ...visible].join('\n');
   }
   return '';
 }
