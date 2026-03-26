@@ -463,14 +463,14 @@ test('opencode render state handles session lifecycle and extra part subtypes', 
     properties: { info: { id: 'ses-life', title: 'demo' } },
   }), 6);
 
-  assert.match(state.messages.byId['msg-life'].renderText, /Subtask \(metis\): Inspect state/);
+  assert.match(state.messages.byId['msg-life'].renderText, /🧩 Subtask: Inspect state · `metis`/);
   assert.match(state.messages.byId['msg-life'].renderText, /🩹 Patch: 2 files/);
-  assert.match(state.messages.byId['msg-life'].renderText, /- a\.js/);
-  assert.match(state.messages.byId['msg-life'].renderText, /- b\.js/);
-  assert.match(state.messages.byId['msg-life'].renderText, /Agent: oracle — handoff\.md \[4:12\]/);
-  assert.match(state.messages.byId['msg-life'].renderText, /Retry #2 — ApiError: rate limited @ 123/);
-  assert.match(state.messages.byId['msg-life'].renderText, /Compaction \(manual\) — overflow/);
-  assert.match(state.messages.byId['msg-life'].renderText, /Snapshot updated — snap-123/);
+  assert.match(state.messages.byId['msg-life'].renderText, /- `a\.js`/);
+  assert.match(state.messages.byId['msg-life'].renderText, /- `b\.js`/);
+  assert.match(state.messages.byId['msg-life'].renderText, /🤖 Agent: `oracle` — `handoff\.md` \[4:12\]/);
+  assert.match(state.messages.byId['msg-life'].renderText, /🔁 Retry 2: `ApiError` · rate limited · `123`/);
+  assert.match(state.messages.byId['msg-life'].renderText, /🗜️ Compaction: `manual` · overflow/);
+  assert.match(state.messages.byId['msg-life'].renderText, /📸 Snapshot: `snap-123`/);
   assert.ok(state.session.compactedAt > 0);
   assert.ok(state.session.deletedAt > 0);
   assert.equal(state.session.status, 'deleted');
