@@ -19,10 +19,16 @@ test('provider registry resolves configured upstream and downstream providers', 
   const upstream = providers.resolveUpstreamProvider('opencode');
   const downstream = providers.resolveDownstreamProvider('telegram');
 
-  assert.equal(upstream.runOpencode, upstreamOpencode.runOpencode);
-  assert.equal(upstream.subscribeSessionEvents, upstreamOpencode.subscribeSessionEvents);
-  assert.equal(downstream.TelegramBot, downstreamTelegram.TelegramBot);
-  assert.equal(downstream.reconcileRunViewForTelegram, downstreamTelegram.reconcileRunViewForTelegram);
+  assert.equal(upstream.id, 'opencode');
+  assert.equal(typeof upstream.capabilities, 'function');
+  assert.equal(upstream.runtime.runOpencode, upstreamOpencode.runOpencode);
+  assert.equal(upstream.runtime.subscribeSessionEvents, upstreamOpencode.subscribeSessionEvents);
+  assert.equal(upstream.render.createRunViewSnapshotState, upstreamOpencode.createRunViewSnapshotState);
+  assert.equal(typeof upstream.render.inspectRunViewSnapshotState, 'function');
+  assert.equal(downstream.id, 'telegram');
+  assert.equal(downstream.transport.TelegramBot, downstreamTelegram.TelegramBot);
+  assert.equal(downstream.transport.reconcileRunViewForTelegram, downstreamTelegram.reconcileRunViewForTelegram);
+  assert.equal(downstream.transport.splitTelegramHtml, downstreamTelegram.splitTelegramHtml);
 });
 
 test('provider registry rejects unsupported provider ids', () => {

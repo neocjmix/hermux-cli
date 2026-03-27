@@ -11,9 +11,12 @@ async function runChain(steps, initialContext) {
   return ctx;
 }
 
-function createSessionEventHandler({ sendRawTelegram, onDeliver }) {
-  if (typeof sendRawTelegram !== 'function') {
-    throw new Error('sendRawTelegram is required');
+function createSessionEventHandler({ sendRawDelivery, sendRawTelegram, onDeliver }) {
+  const deliverRaw = typeof sendRawDelivery === 'function'
+    ? sendRawDelivery
+    : sendRawTelegram;
+  if (typeof deliverRaw !== 'function') {
+    throw new Error('sendRawDelivery is required');
   }
 
   const steps = [
@@ -47,7 +50,7 @@ function createSessionEventHandler({ sendRawTelegram, onDeliver }) {
           event: ctx.event,
         });
       }
-      await sendRawTelegram(ctx.routed.payload, 'raw_event');
+      await deliverRaw(ctx.routed.payload, 'raw_event');
       return {
         ...ctx,
         delivered: true,

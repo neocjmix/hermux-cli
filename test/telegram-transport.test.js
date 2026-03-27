@@ -114,6 +114,34 @@ test('telegram transport materializes draft preview by sending message then clea
   ]);
 });
 
+test('telegram transport editText keeps reply markup and treats not-modified as success', async () => {
+  const { deps, auditRows } = createDeps();
+  const transport = createTelegramTransport(deps);
+  const calls = [];
+  const bot = {
+    editMessageText: async (text, opts) => {
+      calls.push({ text, opts });
+      const err = new Error('message is not modified');
+      throw err;
+    },
+  };
+
+  const result = await transport.editText(bot, '100', 9, 'Question?', {
+    reply_markup: { inline_keyboard: [[{ text: 'A', callback_data: 'q:s:0:0' }]] },
+  }, { channel: 'question_prompt' });
+
+  assert.deepEqual(result, { applied: true, deferred: false });
+  assert.deepEqual(calls, [{
+    text: 'Question?',
+    opts: {
+      chat_id: '100',
+      message_id: 9,
+      reply_markup: { inline_keyboard: [[{ text: 'A', callback_data: 'q:s:0:0' }]] },
+    },
+  }]);
+  assert.equal(auditRows.some((row) => row.kind === 'telegram.edit' && row.payload.stage === 'not_modified' && row.payload.ok === true), true);
+});
+
 test('telegram transport resolves preview transport for draft, message, and ineligible chat paths', () => {
   const { deps } = createDeps();
   const transport = createTelegramTransport(deps);

@@ -6,6 +6,7 @@ const assert = require('node:assert/strict');
 const {
   createRunViewSnapshotState,
   applyPayloadToRunViewSnapshot,
+  inspectRunViewSnapshotState,
 } = require('../src/providers/upstream/opencode/run-view-snapshot');
 
 test('run view snapshot materializer converts raw payload to provider-agnostic snapshot', () => {
@@ -683,4 +684,27 @@ test('run view snapshot materializer reflects deleted session status', () => {
 
   const statusLines = String(state.snapshot.messages[0]).split('\n');
   assert.match(statusLines[0], /deleted/);
+});
+
+test('run view snapshot inspector exposes provider-agnostic metadata for gateway', () => {
+  let state = createRunViewSnapshotState('ses-meta');
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'permission.asked',
+    properties: { id: 'perm-1', sessionID: 'ses-meta', permission: 'bash', patterns: ['src/**'] },
+  }), 1, { runId: 'run-meta', minMessageTimeMs: 0, isFinal: false, repoName: 'repo-meta' });
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'message.updated',
+    properties: { info: { id: 'msg-meta', sessionID: 'ses-meta', role: 'assistant', time: { created: 1 } } },
+  }), 2, { runId: 'run-meta', minMessageTimeMs: 0, isFinal: false, repoName: 'repo-meta' });
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'message.part.updated',
+    properties: { part: { id: 'prt-meta', sessionID: 'ses-meta', messageID: 'msg-meta', type: 'text', text: 'hello' } },
+  }), 3, { runId: 'run-meta', minMessageTimeMs: 0, isFinal: false, repoName: 'repo-meta' });
+
+  const meta = inspectRunViewSnapshotState(state);
+  assert.equal(meta.latestAssistantMessageId, 'msg-meta');
+  assert.equal(meta.latestAssistantPartId, 'prt-meta');
+  assert.equal(meta.latestAssistantText, 'hello');
+  assert.equal(meta.activePermission.permission, 'bash');
+  assert.deepEqual(meta.snapshotMessages, state.snapshot.messages);
 });

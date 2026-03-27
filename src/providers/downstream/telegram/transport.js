@@ -222,46 +222,61 @@ function createTelegramTransport(deps) {
     return String(err && err.message || '').includes('message is not modified');
   }
 
-  async function editHtml(bot, chatId, messageId, html, auditMeta) {
-    const preview = summarizeAuditText(html);
+  async function editText(bot, chatId, messageId, text, opts, auditMeta) {
+    const normalizedOpts = opts && typeof opts === 'object' ? { ...opts } : {};
+    const parseMode = normalizedOpts.parse_mode ? String(normalizedOpts.parse_mode) : '';
+    const preview = summarizeAuditText(text);
+    const request = {
+      chat_id: chatId,
+      message_id: messageId,
+      ...normalizedOpts,
+    };
     try {
-      await bot.editMessageText(html, { chat_id: chatId, message_id: messageId, parse_mode: 'HTML' });
-      audit('telegram.edit', { ok: true, stage: 'primary', chatId: String(chatId), messageId, parseMode: 'HTML', textPreview: preview, meta: auditMeta || null });
+      await bot.editMessageText(text, request);
+      audit('telegram.edit', { ok: true, stage: 'primary', chatId: String(chatId), messageId, parseMode, textPreview: preview, meta: auditMeta || null });
     } catch (err) {
       if (isMessageNotModifiedError(err)) {
-        audit('telegram.edit', { ok: true, stage: 'not_modified', chatId: String(chatId), messageId, parseMode: 'HTML', textPreview: preview, meta: auditMeta || null });
-        return;
+        audit('telegram.edit', { ok: true, stage: 'not_modified', chatId: String(chatId), messageId, parseMode, textPreview: preview, meta: auditMeta || null });
+        return { applied: true, deferred: false };
       }
       let primaryErr = err;
       const retryAfterSeconds = getTelegramRetryAfterSeconds(primaryErr);
       if (retryAfterSeconds > 0) {
         const waitMs = (retryAfterSeconds * 1000) + Math.floor(Math.random() * 250);
         if (shouldDeferRunViewRetryAfter(auditMeta, waitMs)) {
-          audit('telegram.edit', { ok: false, stage: 'retry_after_deferred', chatId: String(chatId), messageId, parseMode: 'HTML', error: String(primaryErr && (primaryErr.code || primaryErr.message || primaryErr) || ''), retryAfterSeconds, waitMs, textPreview: preview, meta: auditMeta || null });
+          audit('telegram.edit', { ok: false, stage: 'retry_after_deferred', chatId: String(chatId), messageId, parseMode, error: String(primaryErr && (primaryErr.code || primaryErr.message || primaryErr) || ''), retryAfterSeconds, waitMs, textPreview: preview, meta: auditMeta || null });
           return { applied: false, deferred: true, retryAfterSeconds, waitMs };
         }
-        audit('telegram.edit', { ok: false, stage: 'retry_after_pending', chatId: String(chatId), messageId, parseMode: 'HTML', error: String(primaryErr && (primaryErr.code || primaryErr.message || primaryErr) || ''), retryAfterSeconds, waitMs, textPreview: preview, meta: auditMeta || null });
+        audit('telegram.edit', { ok: false, stage: 'retry_after_pending', chatId: String(chatId), messageId, parseMode, error: String(primaryErr && (primaryErr.code || primaryErr.message || primaryErr) || ''), retryAfterSeconds, waitMs, textPreview: preview, meta: auditMeta || null });
         await sleep(waitMs);
         try {
-          await bot.editMessageText(html, { chat_id: chatId, message_id: messageId, parse_mode: 'HTML' });
-          audit('telegram.edit', { ok: true, stage: 'retry_after', chatId: String(chatId), messageId, parseMode: 'HTML', textPreview: preview, meta: auditMeta || null });
+          await bot.editMessageText(text, request);
+          audit('telegram.edit', { ok: true, stage: 'retry_after', chatId: String(chatId), messageId, parseMode, textPreview: preview, meta: auditMeta || null });
           return { applied: true };
         } catch (retryErr) {
           primaryErr = retryErr;
         }
       }
       if (!isMessageNotModifiedError(primaryErr)) {
-        audit('telegram.edit', { ok: false, stage: 'primary', chatId: String(chatId), messageId, parseMode: 'HTML', error: String(primaryErr && (primaryErr.code || primaryErr.message || primaryErr) || ''), textPreview: preview, meta: auditMeta || null });
-        try {
-          await bot.editMessageText(html, { chat_id: chatId, message_id: messageId });
-          audit('telegram.edit', { ok: true, stage: 'fallback_plain', chatId: String(chatId), messageId, parseMode: '', textPreview: preview, meta: auditMeta || null });
-          return { applied: true };
-        } catch (e) {
-          audit('telegram.edit', { ok: false, stage: 'fallback_plain', chatId: String(chatId), messageId, parseMode: '', error: String(e && (e.code || e.message || e) || ''), textPreview: preview, meta: auditMeta || null });
+        audit('telegram.edit', { ok: false, stage: 'primary', chatId: String(chatId), messageId, parseMode, error: String(primaryErr && (primaryErr.code || primaryErr.message || primaryErr) || ''), textPreview: preview, meta: auditMeta || null });
+        if (parseMode) {
+          const fallbackRequest = { ...request };
+          delete fallbackRequest.parse_mode;
+          try {
+            await bot.editMessageText(text, fallbackRequest);
+            audit('telegram.edit', { ok: true, stage: 'fallback_plain', chatId: String(chatId), messageId, parseMode: '', textPreview: preview, meta: auditMeta || null });
+            return { applied: true };
+          } catch (e) {
+            audit('telegram.edit', { ok: false, stage: 'fallback_plain', chatId: String(chatId), messageId, parseMode: '', error: String(e && (e.code || e.message || e) || ''), textPreview: preview, meta: auditMeta || null });
+          }
         }
       }
     }
     return { applied: false, deferred: false };
+  }
+
+  async function editHtml(bot, chatId, messageId, html, auditMeta) {
+    return editText(bot, chatId, messageId, html, { parse_mode: 'HTML' }, auditMeta);
   }
 
   async function safeDeleteMessage(bot, chatId, messageId, auditMeta) {
@@ -404,6 +419,7 @@ function createTelegramTransport(deps) {
     safeSend,
     sendHtml,
     sendMarkdownAsHtml,
+    editText,
     editHtml,
     safeDeleteMessage,
     safeSendPhoto,

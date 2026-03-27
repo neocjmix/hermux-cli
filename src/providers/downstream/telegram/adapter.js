@@ -9,14 +9,22 @@ const { createTelegramBotEffects } = require('./bot-effects');
 const { createTelegramTransport } = require('./transport');
 const { splitTelegramHtml } = require('./html-chunker');
 
+function createDownstreamAdapter() {
+  return Object.freeze({
+    id: 'telegram',
+    transport: Object.freeze({
+      TelegramBot,
+      createRepoMessageHandler,
+      createMessageHandler,
+      createCallbackQueryHandler,
+      reconcileRunViewForTelegram,
+      createTelegramBotEffects,
+      createTelegramTransport,
+      splitTelegramHtml,
+    }),
+  });
+}
+
 module.exports = {
-  ...require('./adapter'),
-  TelegramBot,
-  createMessageHandler,
-  createRepoMessageHandler,
-  createCallbackQueryHandler,
-  reconcileRunViewForTelegram,
-  createTelegramBotEffects,
-  createTelegramTransport,
-  splitTelegramHtml,
+  createDownstreamAdapter,
 };

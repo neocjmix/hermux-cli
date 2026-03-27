@@ -65,7 +65,53 @@ function applyPayloadToRunViewSnapshot(state, payload, renderSeq, options) {
   };
 }
 
+function inspectRunViewSnapshotState(state) {
+  const renderState = state && state.renderState && typeof state.renderState === 'object'
+    ? state.renderState
+    : null;
+  const snapshot = state && state.snapshot && typeof state.snapshot === 'object'
+    ? state.snapshot
+    : null;
+  const render = renderState && renderState.render && typeof renderState.render === 'object'
+    ? renderState.render
+    : {};
+  const session = renderState && renderState.session && typeof renderState.session === 'object'
+    ? renderState.session
+    : {};
+  const messages = renderState && renderState.messages && renderState.messages.byId && typeof renderState.messages.byId === 'object'
+    ? renderState.messages.byId
+    : {};
+  const latestAssistantMessageId = String(render.latestAssistantMessageId || '').trim();
+  const latestAssistantMessage = latestAssistantMessageId ? messages[latestAssistantMessageId] || null : null;
+  const latestAssistantParts = latestAssistantMessage
+    && latestAssistantMessage.parts
+    && Array.isArray(latestAssistantMessage.parts.order)
+    && latestAssistantMessage.parts.byId
+    ? latestAssistantMessage.parts.order
+      .map((id) => latestAssistantMessage.parts.byId[id])
+      .filter(Boolean)
+    : [];
+  const lastPart = latestAssistantParts.length > 0 ? latestAssistantParts[latestAssistantParts.length - 1] : null;
+  return {
+    busy: !!render.busy,
+    messageCount: Array.isArray(renderState && renderState.messages && renderState.messages.order)
+      ? renderState.messages.order.length
+      : 0,
+    latestAssistantMessageId,
+    latestAssistantText: String(render.latestAssistantText || ''),
+    latestAssistantTextLength: String(render.latestAssistantText || '').length,
+    latestAssistantPartId: lastPart && lastPart.id ? String(lastPart.id) : '',
+    activeQuestion: session.question && typeof session.question === 'object' ? { ...session.question } : null,
+    activePermission: session.permission && typeof session.permission === 'object' ? { ...session.permission } : null,
+    tailMaterializeHint: snapshot && snapshot.tailMaterializeHint && typeof snapshot.tailMaterializeHint === 'object'
+      ? { ...snapshot.tailMaterializeHint }
+      : null,
+    snapshotMessages: snapshot && Array.isArray(snapshot.messages) ? snapshot.messages.slice() : [],
+  };
+}
+
 module.exports = {
   createRunViewSnapshotState,
   applyPayloadToRunViewSnapshot,
+  inspectRunViewSnapshotState,
 };

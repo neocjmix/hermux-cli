@@ -1,7 +1,7 @@
 'use strict';
 
 const downstreamStrategies = Object.freeze({
-  telegram: () => require('./telegram'),
+  telegram: () => require('./telegram').createDownstreamAdapter(),
 });
 
 function resolveDownstreamProvider(id) {

@@ -55,6 +55,7 @@ Runtime contract:
 - per-repo lock allows one active run
 - queued prompts maintain FIFO order
 - `src/gateway.js` acts as composition/orchestration root and MUST prefer provider/application facades over direct provider-private logic
+- provider resolution in `src/providers/*` MUST return explicit adapter contracts (`runtime`, `render`, `transport`) instead of raw provider module bags
 - non-final run-view latest-assistant preview MAY use Bot API `sendMessageDraft` in eligible private-chat flows, while committed status/older messages remain regular Telegram messages
 - non-final run-view Telegram send/edit retries MAY degrade by deferring stale updates instead of sleeping inline on long `retry_after`; final-state delivery MUST keep explicit success/failure semantics
 - draft-preview transport MUST fall back to regular send/edit preview if the method is unavailable or rejected by the Telegram API
@@ -64,6 +65,7 @@ Boundary contract:
 - gateway MUST NOT accumulate new Telegram transport-specific send/edit/delete/draft/chat-action behavior; such behavior belongs in `src/providers/downstream/telegram/*`
 - gateway MUST NOT accumulate new OpenCode raw payload parsing or provider-event introspection once equivalent upstream-normalized/session-aware data is available
 - app/service concerns such as config mutation, model-selection policy, and chat-mapping/session-reset policy SHOULD move behind explicit service seams instead of remaining in Telegram handlers or gateway helpers
+- core session-event delivery helpers (for example `src/lib/session-event-handler.js`) MUST use downstream-neutral naming and contracts; Telegram-specific delivery names are forbidden outside Telegram-owned modules
 
 Command handling contract:
 

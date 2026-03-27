@@ -28,8 +28,8 @@ const {
 const { createSessionEventHandler } = require('./lib/session-event-handler');
 const { HERMUX_VERSION } = require('./lib/hermux-version');
 
-const upstreamProvider = resolveUpstreamProvider(providerSelection.upstream);
-const downstreamProvider = resolveDownstreamProvider(providerSelection.downstream);
+const upstreamAdapter = resolveUpstreamProvider(providerSelection.upstream);
+const downstreamAdapter = resolveDownstreamProvider(providerSelection.downstream);
 
 const {
   runOpencode,
@@ -42,11 +42,18 @@ const {
   runQuestionReject,
   stopAllRuntimeExecutors,
   getRuntimeStatusForInstance,
+} = upstreamAdapter.runtime;
+
+const {
   createRunViewSnapshotState,
   applyPayloadToRunViewSnapshot,
+  inspectRunViewSnapshotState,
+  formatPayloadPreview,
   parsePayloadMeta,
+  rankPayloadPriority,
+  readAssistantLifecycleEvent,
   readBusySignalFromSessionPayload,
-} = upstreamProvider;
+} = upstreamAdapter.render;
 
 const {
   TelegramBot,
@@ -56,8 +63,8 @@ const {
   reconcileRunViewForTelegram,
   createTelegramBotEffects,
   createTelegramTransport,
-} = downstreamProvider;
-const { splitTelegramHtml } = require('./providers/downstream/telegram/html-chunker');
+  splitTelegramHtml,
+} = downstreamAdapter.transport;
 const { createChatRoutingService } = require('./app/chat-routing-service');
 const { createModelControlService } = require('./app/model-control-service');
 const { createModelCommandService } = require('./app/model-command-service');
@@ -193,17 +200,6 @@ function buildAuditContentMeta(text) {
   };
 }
 
-function parseSessionEventPayload(text) {
-  const src = String(text || '').trim();
-  if (!src) return null;
-  try {
-    const parsed = JSON.parse(src);
-    return parsed && typeof parsed === 'object' ? parsed : null;
-  } catch (_err) {
-    return null;
-  }
-}
-
 function shouldTraceSessionDiagnostic(...sessionCandidates) {
   if (!TRACE_RUNVIEW_DIAGNOSTICS) return false;
   if (!TRACE_SESSION_ID) return true;
@@ -243,6 +239,7 @@ const {
   safeSend,
   sendHtml,
   sendMarkdownAsHtml,
+  editText,
   editHtml,
   safeDeleteMessage,
   safeSendPhoto,
@@ -1399,52 +1396,14 @@ function formatRawEventPreview(raw) {
     const preview = summarizeAuditText(parsed.text);
     return { show: !!preview, preview, category: 'plain_text', sample: preview };
   }
-
-  const evt = parsed.json;
-  const type = String(evt.type || '').trim();
-  const props = evt.properties && typeof evt.properties === 'object' ? evt.properties : {};
-
-  if (type === 'tui.toast.show') {
-    const title = String(props.title || '').replace(/[\u25cf\u25cb\u25cc\u25e6\u2022\u00b7]/g, '').trim();
-    const message = String(props.message || '').trim();
-    const merged = [title, message].filter(Boolean).join(' - ');
-    const preview = summarizeAuditText(merged ? `toast: ${merged}` : 'toast event');
-    return { show: !!preview, preview, category: 'toast', sample: summarizeAuditText(parsed.text) };
+  const info = formatPayloadPreview(parsed.json, {
+    rawText: parsed.text,
+    summarizeText: summarizeAuditText,
+  });
+  if (info.category === 'json') {
+    return { ...info, category: 'json_other' };
   }
-
-  if (type === 'session.updated') {
-    const info = props.info && typeof props.info === 'object' ? props.info : {};
-    const sid = String(info.id || '').trim();
-    const dir = String(info.directory || '').trim();
-    const preview = summarizeAuditText(`session updated${sid ? `: ${sid.slice(0, 16)}` : ''}${dir ? ` (${dir})` : ''}`);
-    return { show: !!preview, preview, category: 'session', sample: summarizeAuditText(parsed.text) };
-  }
-
-  if (type === 'message.part.delta') {
-    const delta = String(props.delta || '').trim();
-    const field = String(props.field || '').trim();
-    const body = delta || field || 'delta';
-    const preview = summarizeAuditText(`stream delta: ${body}`);
-    return { show: !!preview, preview, category: 'message_delta', sample: summarizeAuditText(parsed.text) };
-  }
-
-  if (type === 'server.connected') {
-    return { show: true, preview: 'event stream connected', category: 'server', sample: summarizeAuditText(parsed.text) };
-  }
-
-  if (type === 'session.diff') {
-    return { show: true, preview: 'session diff updated', category: 'session_diff', sample: summarizeAuditText(parsed.text) };
-  }
-
-  if (type === 'message.updated') {
-    const info = props.info && typeof props.info === 'object' ? props.info : {};
-    const role = String(info.role || '').trim();
-    const preview = summarizeAuditText(`message updated${role ? `: ${role}` : ''}`);
-    return { show: !!preview, preview, category: 'message', sample: summarizeAuditText(parsed.text) };
-  }
-
-  const fallback = summarizeAuditText(`${type || 'json'} event`);
-  return { show: !!fallback, preview: fallback, category: 'json_other', sample: summarizeAuditText(parsed.text) };
+  return info;
 }
 
 function resolveRawDeliveryPlan(rawInfo, verbose) {
@@ -2435,11 +2394,8 @@ async function upsertQuestionPromptMessage(bot, chatId, state) {
 
   if (flow.messageId) {
     try {
-      await bot.editMessageText(text, {
-        chat_id: chatId,
-        message_id: flow.messageId,
-        ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
-      });
+      const edited = await editText(bot, chatId, flow.messageId, text, replyMarkup ? { reply_markup: replyMarkup } : undefined);
+      if (!edited || edited.applied === false) throw new Error('question_prompt_edit_failed');
       state.questionFlow.renderSignature = signature;
       return;
     } catch (err) {
@@ -2466,10 +2422,8 @@ async function closeQuestionPromptMessage(bot, chatId, state, text) {
   state.questionFlow = null;
   if (messageId > 0) {
     try {
-      await bot.editMessageText(String(text || '').trim() || 'Question flow closed.', {
-        chat_id: chatId,
-        message_id: messageId,
-      });
+      const edited = await editText(bot, chatId, messageId, String(text || '').trim() || 'Question flow closed.');
+      if (!edited || edited.applied === false) throw new Error('question_prompt_close_failed');
       return;
     } catch (_err) {
     }
@@ -2491,11 +2445,8 @@ async function upsertPermissionPromptMessage(bot, chatId, state) {
 
   if (flow.messageId) {
     try {
-      await bot.editMessageText(text, {
-        chat_id: chatId,
-        message_id: flow.messageId,
-        ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
-      });
+      const edited = await editText(bot, chatId, flow.messageId, text, replyMarkup ? { reply_markup: replyMarkup } : undefined);
+      if (!edited || edited.applied === false) throw new Error('permission_prompt_edit_failed');
       state.permissionFlow.renderSignature = signature;
       return;
     } catch (err) {
@@ -2522,10 +2473,8 @@ async function closePermissionPromptMessage(bot, chatId, state, text) {
   state.permissionFlow = null;
   if (messageId > 0) {
     try {
-      await bot.editMessageText(String(text || '').trim() || 'Permission flow closed.', {
-        chat_id: chatId,
-        message_id: messageId,
-      });
+      const edited = await editText(bot, chatId, messageId, String(text || '').trim() || 'Permission flow closed.');
+      if (!edited || edited.applied === false) throw new Error('permission_prompt_close_failed');
       return;
     } catch (_err) {
     }
@@ -3253,7 +3202,7 @@ async function startPromptRun(bot, repo, state, runItem) {
   });
 
   const RAW_EVENT_PASSTHROUGH = true;
-  const sendRawTelegram = async () => {};
+  const sendRawDelivery = async () => {};
 
   let renderSeq = Number(state.sessionRenderSeq || 0) || 0;
   const applyRunViewSnapshot = async (nextTexts, options) => {
@@ -3487,20 +3436,7 @@ async function startPromptRun(bot, repo, state, runItem) {
   };
 
   const sessionApplyProcessors = new Map();
-  const payloadThrottleRank = (payload) => {
-    const raw = String(payload || '').trim();
-    if (!raw) return 0;
-    try {
-      const parsed = JSON.parse(raw);
-      const type = String(parsed && parsed.type ? parsed.type : '');
-      if (type === 'message.part.delta' || type === 'message.part.updated') return 4;
-      if (type === 'message.updated') return 3;
-      if (type === 'session.status' || type === 'session.idle' || type === 'session.diff') return 1;
-      return 2;
-    } catch (_err) {
-      return 2;
-    }
-  };
+  const payloadThrottleRank = (payload) => rankPayloadPriority(payload);
   const getSessionApplyProcessor = (sid) => {
     const key = String(sid || '').trim();
     if (!key) return null;
@@ -3572,10 +3508,10 @@ async function startPromptRun(bot, repo, state, runItem) {
             queueLength: Array.isArray(state.queue) ? state.queue.length : 0,
           });
         }
-        const next = snapshotState && snapshotState.renderState ? snapshotState.renderState : null;
+        const nextView = inspectRunViewSnapshotState(snapshotState);
         state.sessionRenderStates.set(key, snapshotState);
         state.latestSessionRenderState = snapshotState;
-        syncTypingIndicator(!!(next && next.render && next.render.busy), 'session_snapshot');
+        syncTypingIndicator(!!nextView.busy, 'session_snapshot');
         auditRun('run.session_event.apply.begin', {
           sid: key,
           renderSeq,
@@ -3585,25 +3521,16 @@ async function startPromptRun(bot, repo, state, runItem) {
         auditRun('run.session_event.apply.end', {
           sid: key,
           renderSeq,
-          messageCount: Array.isArray(next && next.messages && next.messages.order) ? next.messages.order.length : 0,
-          latestAssistantMessageId: next && next.render && next.render.latestAssistantMessageId
-            ? next.render.latestAssistantMessageId
-            : '',
-          latestAssistantTextLength: String(next && next.render && next.render.latestAssistantText || '').length,
+          messageCount: nextView.messageCount,
+          latestAssistantMessageId: nextView.latestAssistantMessageId,
+          latestAssistantTextLength: nextView.latestAssistantTextLength,
         });
 
         // Update lastFinalMessageRef for revert functionality
-        if (next && next.render && next.render.latestAssistantMessageId) {
-          lastFinalMessageRef.messageId = next.render.latestAssistantMessageId;
-          // Try to get partId from the latest assistant message if available
-          const messages = next.messages && next.messages.byId ? next.messages.byId : {};
-          const latestId = next.render.latestAssistantMessageId;
-          const latestMessage = messages[latestId];
-          if (latestMessage && latestMessage.parts && latestMessage.parts.length > 0) {
-            const lastPart = latestMessage.parts[latestMessage.parts.length - 1];
-            if (lastPart && lastPart.id) {
-              lastFinalMessageRef.partId = lastPart.id;
-            }
+        if (nextView.latestAssistantMessageId) {
+          lastFinalMessageRef.messageId = nextView.latestAssistantMessageId;
+          if (nextView.latestAssistantPartId) {
+            lastFinalMessageRef.partId = nextView.latestAssistantPartId;
           }
         }
 
@@ -3622,21 +3549,28 @@ async function startPromptRun(bot, repo, state, runItem) {
           });
           return;
         }
-        const snapshot = snapshotState && snapshotState.snapshot ? snapshotState.snapshot : null;
-        const snapshotMessages = snapshot && Array.isArray(snapshot.messages) ? snapshot.messages : [];
-        const tailMaterializeHint = snapshot && snapshot.tailMaterializeHint && typeof snapshot.tailMaterializeHint === 'object'
-          ? snapshot.tailMaterializeHint
-          : null;
+        const snapshotMessages = nextView.snapshotMessages;
+        const tailMaterializeHint = nextView.tailMaterializeHint;
         await reconcileRunView(
           snapshotMessages,
           { isFinalState: false, tailMaterializeHint }
         );
-        const activeQuestion = next && next.session && next.session.question && typeof next.session.question === 'object'
-          ? next.session.question
-          : null;
-        const activePermission = next && next.session && next.session.permission && typeof next.session.permission === 'object'
-          ? next.session.permission
-          : null;
+        if (nextView.latestAssistantMessageId && activeSessionId) {
+          const persistedMessageIds = state.runView && Array.isArray(state.runView.messageIds)
+            ? state.runView.messageIds
+            : [];
+          for (const persistedMessageId of persistedMessageIds) {
+            if (!persistedMessageId) continue;
+            registerRevertTargetFromSentMessage(chatId, { message_id: persistedMessageId }, {
+              repoName: repo.name,
+              sessionId: activeSessionId,
+              messageId: lastFinalMessageRef.messageId,
+              partId: lastFinalMessageRef.partId,
+            });
+          }
+        }
+        const activeQuestion = nextView.activeQuestion;
+        const activePermission = nextView.activePermission;
         if (activeQuestion) {
           const previousFlow = state.questionFlow && typeof state.questionFlow === 'object'
             ? state.questionFlow
@@ -3727,7 +3661,7 @@ async function startPromptRun(bot, repo, state, runItem) {
     });
   };
   const handleSessionEvent = createSessionEventHandler({
-    sendRawTelegram,
+    sendRawDelivery,
     onDeliver: onDeliverSessionEvent,
   });
 
@@ -3856,41 +3790,37 @@ async function startPromptRun(bot, repo, state, runItem) {
         ...buildAuditContentMeta(evt.content || ''),
       });
       const upstreamBusySignal = readBusySignalFromSessionPayload(evt.content || '');
-      const rawPayload = evt.type === 'raw' ? parseSessionEventPayload(evt.content || '') : null;
-      const rawType = rawPayload && rawPayload.type ? String(rawPayload.type) : '';
+      const rawPayloadMeta = evt.type === 'raw' ? parsePayloadMeta(evt.content || '') : null;
+      const rawType = rawPayloadMeta && rawPayloadMeta.payloadType ? String(rawPayloadMeta.payloadType) : '';
+      const assistantSignal = evt.type === 'raw' ? readAssistantLifecycleEvent(evt.content || '') : null;
       if (rawType && firstUpstreamSessionTypes.length < 8) {
         firstUpstreamSessionTypes.push(rawType);
       }
-      if (rawType === 'message.updated') {
-        const info = rawPayload && rawPayload.properties ? rawPayload.properties.info || {} : {};
-        const role = String(info.role || '').toLowerCase();
-        const messageId = String(info.id || '').trim();
-        if (role === 'assistant' && messageId) {
-          assistantMessageIdsSeen.add(messageId);
-          if (!sawAssistantSessionMessage) {
-            sawAssistantSessionMessage = true;
-            auditRun('run.assistant.first_message_event', {
-              messageId,
-              parentId: String(info.parentID || '').trim(),
-              rawType,
-            });
-          }
-        }
-      }
-      if (rawType === 'message.part.updated' || rawType === 'message.part.delta') {
-        const part = rawPayload && rawPayload.properties
-          ? (rawPayload.properties.part || rawPayload.properties)
-          : {};
-        const assistantMessageId = String(part.messageID || '').trim();
-        if (assistantMessageId && assistantMessageIdsSeen.has(assistantMessageId) && !sawAssistantSessionText) {
-          sawAssistantSessionText = true;
-          auditRun('run.assistant.first_text_event', {
-            messageId: assistantMessageId,
-            partId: String(part.partID || part.id || '').trim(),
+      if (assistantSignal && assistantSignal.kind === 'assistant_message' && assistantSignal.messageId) {
+        assistantMessageIdsSeen.add(assistantSignal.messageId);
+        if (!sawAssistantSessionMessage) {
+          sawAssistantSessionMessage = true;
+          auditRun('run.assistant.first_message_event', {
+            messageId: assistantSignal.messageId,
+            parentId: assistantSignal.parentId,
             rawType,
-            field: String(part.field || '').trim(),
           });
         }
+      }
+      if (
+        assistantSignal
+        && assistantSignal.kind === 'assistant_text'
+        && assistantSignal.messageId
+        && assistantMessageIdsSeen.has(assistantSignal.messageId)
+        && !sawAssistantSessionText
+      ) {
+        sawAssistantSessionText = true;
+        auditRun('run.assistant.first_text_event', {
+          messageId: assistantSignal.messageId,
+          partId: assistantSignal.partId,
+          rawType,
+          field: assistantSignal.field,
+        });
       }
       if (upstreamBusySignal !== null) {
         syncTypingIndicator(upstreamBusySignal, upstreamBusySignal ? 'upstream_session_status' : 'upstream_session_idle');
@@ -3903,12 +3833,15 @@ async function startPromptRun(bot, repo, state, runItem) {
       runMetrics.upstreamLastEventAtMs = eventAtMs;
 
       if (RAW_EVENT_PASSTHROUGH) {
+        const payloadSessionId = rawPayloadMeta && rawPayloadMeta.payloadSessionId
+          ? String(rawPayloadMeta.payloadSessionId).trim()
+          : '';
         const eventSessionId = evt.sessionId && String(evt.sessionId).trim()
           ? String(evt.sessionId).trim()
-          : '';
+          : payloadSessionId;
         const hadSessionDelivery = hasAttachedSessionDelivery(eventSessionId || activeSessionId);
-        if (evt.sessionId && String(evt.sessionId).trim() && String(evt.sessionId).trim() !== activeSessionId) {
-          activeSessionId = String(evt.sessionId).trim();
+        if (eventSessionId && eventSessionId !== activeSessionId) {
+          activeSessionId = eventSessionId;
           state.activeSessionId = activeSessionId;
           if (state.runView && typeof state.runView === 'object') {
             state.runView.sessionId = String(activeSessionId || '').trim();
@@ -3925,6 +3858,7 @@ async function startPromptRun(bot, repo, state, runItem) {
         }
         const eventForRouter = {
           ...(evt && typeof evt === 'object' ? evt : {}),
+          ...(eventSessionId && !(evt && evt.sessionId) ? { sessionId: eventSessionId } : {}),
           _gatewaySource: 'run_callback',
         };
         if (shouldTraceSessionDiagnostic(

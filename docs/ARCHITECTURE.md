@@ -18,6 +18,7 @@ Current refactor target:
 
 - `src/gateway.js` is the composition root and orchestration shell.
 - `src/gateway.js` MUST NOT keep accumulating Telegram transport internals or OpenCode raw-payload interpretation.
+- provider resolution in `src/providers/*` MUST yield explicit adapter contracts rather than raw provider module bags.
 - Telegram-specific delivery behavior belongs under `src/providers/downstream/telegram/*`.
 - OpenCode-specific payload parsing, normalization, and projection belong under `src/providers/upstream/opencode/*`.
 - Generic-looking compatibility shims such as `src/lib/runner.js` MUST stay compatibility-only until they are removed.
@@ -79,6 +80,8 @@ Current module mapping:
 - Upstream event state projection: `src/providers/upstream/opencode/render-state.js`
 - Snapshot text building: `src/providers/upstream/opencode/view-builder.js`
 - Downstream reconcile execution: `src/providers/downstream/telegram/view-reconciler.js`
+- Upstream adapter contract wrapper: `src/providers/upstream/opencode/adapter.js`
+- Downstream adapter contract wrapper: `src/providers/downstream/telegram/adapter.js`
 
 Boundary rule:
 

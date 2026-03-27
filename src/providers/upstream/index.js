@@ -1,7 +1,7 @@
 'use strict';
 
 const upstreamStrategies = Object.freeze({
-  opencode: () => require('./opencode'),
+  opencode: () => require('./opencode').createUpstreamAdapter(),
 });
 
 function resolveUpstreamProvider(id) {
