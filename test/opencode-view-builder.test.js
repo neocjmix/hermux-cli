@@ -215,6 +215,87 @@ test('opencode view builder filters older assistant body while keeping status pa
   assert.doesNotMatch(String(view[0]), /old answer should be hidden/);
 });
 
+test('opencode view builder shows continuity warning for reused session runs', () => {
+  let state = createRenderState('ses-reuse');
+
+  state = applyEvent(state, {
+    type: 'session.status',
+    properties: { sessionID: 'ses-reuse', status: { type: 'busy' } },
+  }, 1);
+
+  const view = buildRunViewFromRenderState(state, {
+    repoName: 'demo',
+    continuityWarning: {
+      kind: 'reused_session',
+      priorSessionId: 'ses-reuse',
+      sessionId: 'ses-reuse',
+    },
+  });
+
+  const statusLines = String(view[0]).split('\n');
+  assert.equal(statusLines[2], '⚠️ resumed session: model context may include earlier turns hidden from this run view');
+});
+
+test('opencode view builder shows compaction warning from render state', () => {
+  let state = createRenderState('ses-compact');
+
+  state = applyEvent(state, {
+    type: 'session.status',
+    properties: { sessionID: 'ses-compact', status: { type: 'busy' } },
+  }, 1);
+  state = applyEvent(state, {
+    type: 'session.compacted',
+    properties: { sessionID: 'ses-compact' },
+  }, 2);
+
+  const view = buildRunViewFromRenderState(state, {
+    repoName: 'demo',
+  });
+
+  const statusLines = String(view[0]).split('\n');
+  assert.equal(statusLines[2], '⚠️ session compacted: model context may no longer match visible chat history exactly');
+});
+
+test('opencode view builder shows busy status while delegated tool work remains active', () => {
+  let state = createRenderState('ses-tool-busy');
+
+  state = applyEvent(state, {
+    type: 'session.idle',
+    properties: { sessionID: 'ses-tool-busy' },
+  }, 1);
+  state = applyEvent(state, {
+    type: 'message.updated',
+    properties: {
+      info: {
+        id: 'msg-tool-busy',
+        sessionID: 'ses-tool-busy',
+        role: 'assistant',
+        time: { created: 2 },
+      },
+    },
+  }, 2);
+  state = applyEvent(state, {
+    type: 'message.part.updated',
+    properties: {
+      part: {
+        id: 'prt-tool-busy',
+        sessionID: 'ses-tool-busy',
+        messageID: 'msg-tool-busy',
+        type: 'tool',
+        tool: 'task',
+        state: { status: 'running' },
+      },
+    },
+  }, 3);
+
+  const view = buildRunViewFromRenderState(state, {
+    repoName: 'demo',
+  });
+
+  const statusLines = String(view[0]).split('\n');
+  assert.match(statusLines[0], /📂\s+demo\s+🔴\s+busy/);
+});
+
 test('opencode view builder verbose mode shows detailed status', () => {
   let state = createRenderState('ses-a');
 

@@ -2091,7 +2091,10 @@ function buildRuntimeStatusHtml({ repo, state, chatId }) {
   const shortSid = sid ? sid.slice(0, 24) : '(none)';
   const queueLen = Array.isArray(state.queue) ? state.queue.length : 0;
   const waiting = state.waitingInfo ? 'yes' : 'no';
-  const lifecycle = state.running ? (state.waitingInfo ? 'waiting' : 'running') : 'ready';
+  const latestSnapshot = state && state.latestSessionRenderState ? inspectRunViewSnapshotState(state.latestSessionRenderState) : null;
+  const sessionBusy = !!(latestSnapshot && latestSnapshot.busy);
+  const busy = !!state.running || sessionBusy;
+  const lifecycle = busy ? (state.waitingInfo ? 'waiting' : (state.running ? 'running' : 'session-active')) : 'ready';
   const waitDetail = state.waitingInfo && state.waitingInfo.status === 'retry'
     ? `retry${state.waitingInfo.retryAfterSeconds ? ` (${state.waitingInfo.retryAfterSeconds}s)` : ''}`
     : '-';
@@ -2103,7 +2106,7 @@ function buildRuntimeStatusHtml({ repo, state, chatId }) {
     `<code>chat: ${escapeHtml(chatId)}</code>`,
     `<code>workdir: ${escapeHtml(repo.workdir)}</code>`,
     '',
-    `<code>state: ${lifecycle} | busy: ${state.running ? 'yes' : 'no'} | waiting: ${waiting} | queue: ${queueLen}</code>`,
+    `<code>state: ${lifecycle} | busy: ${busy ? 'yes' : 'no'} | waiting: ${waiting} | queue: ${queueLen}</code>`,
     `<code>runtime: ${runtimeState} | transport: ${runtimeTransport} | runs: ${Number(runtimeStatus.activeRuns || 0)}</code>`,
     `<code>verbose: ${state.verbose ? 'on' : 'off'}</code>`,
     `<code>session: ${escapeHtml(shortSid)}</code>`,
@@ -2993,11 +2996,19 @@ async function startPromptRun(bot, repo, state, runItem) {
   const runStartedAt = Date.now();
   const runId = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
   const runStartedAtMs = Date.now();
+  const initialSessionId = String(activeSessionId || '').trim();
   state.currentRunContext = {
     runId,
     chatId: String(chatId),
     startedAtMs: runStartedAtMs,
-    sessionId: String(activeSessionId || '').trim(),
+    sessionId: initialSessionId,
+    continuityWarning: initialSessionId
+      ? {
+          kind: 'reused_session',
+          priorSessionId: initialSessionId,
+          sessionId: initialSessionId,
+        }
+      : null,
   };
   state.typingIndicator.runId = runId;
   state.typingIndicator.chatId = String(chatId);
@@ -3506,6 +3517,7 @@ async function startPromptRun(bot, repo, state, runItem) {
             viewMode: state.verbose ? 'verbose' : 'normal',
             repoName: repo.name,
             queueLength: Array.isArray(state.queue) ? state.queue.length : 0,
+            continuityWarning: currentContext && currentContext.continuityWarning,
           });
         }
         const nextView = inspectRunViewSnapshotState(snapshotState);
@@ -3841,6 +3853,7 @@ async function startPromptRun(bot, repo, state, runItem) {
           : payloadSessionId;
         const hadSessionDelivery = hasAttachedSessionDelivery(eventSessionId || activeSessionId);
         if (eventSessionId && eventSessionId !== activeSessionId) {
+          const previousSessionId = String(activeSessionId || '').trim();
           activeSessionId = eventSessionId;
           state.activeSessionId = activeSessionId;
           if (state.runView && typeof state.runView === 'object') {
@@ -3853,6 +3866,11 @@ async function startPromptRun(bot, repo, state, runItem) {
           );
           if (state.currentRunContext && typeof state.currentRunContext === 'object') {
             state.currentRunContext.sessionId = activeSessionId;
+            state.currentRunContext.continuityWarning = {
+              kind: previousSessionId ? 'forked_session' : 'reused_session',
+              priorSessionId: previousSessionId,
+              sessionId: activeSessionId,
+            };
           }
           await ensureSessionDelivery(activeSessionId);
         }

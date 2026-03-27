@@ -225,6 +225,84 @@ test('opencode render state preserves repeated identical deltas for same part', 
   assert.equal(state.messages.byId['msg-repeat'].renderText, '하하');
 });
 
+test('opencode render state stays busy while delegated task tool is still running', () => {
+  let state = createRenderState('ses-task');
+
+  state = applyPayload(state, JSON.stringify({
+    type: 'message.updated',
+    properties: {
+      info: {
+        id: 'msg-task',
+        sessionID: 'ses-task',
+        role: 'assistant',
+        time: { created: 10 },
+      },
+    },
+  }), 1);
+
+  state = applyPayload(state, JSON.stringify({
+    type: 'session.idle',
+    properties: { sessionID: 'ses-task' },
+  }), 2);
+
+  state = applyPayload(state, JSON.stringify({
+    type: 'message.part.updated',
+    properties: {
+      part: {
+        id: 'prt-task',
+        sessionID: 'ses-task',
+        messageID: 'msg-task',
+        type: 'tool',
+        tool: 'task',
+        state: {
+          status: 'running',
+          input: { description: 'delegated task' },
+        },
+      },
+    },
+  }), 3);
+
+  assert.equal(state.session.status, 'idle');
+  assert.equal(state.render.busy, true);
+
+  state = applyPayload(state, JSON.stringify({
+    type: 'message.part.updated',
+    properties: {
+      part: {
+        id: 'prt-task',
+        sessionID: 'ses-task',
+        messageID: 'msg-task',
+        type: 'tool',
+        tool: 'task',
+        state: {
+          status: 'starting',
+        },
+      },
+    },
+  }), 4);
+
+  assert.equal(state.render.busy, true);
+
+  state = applyPayload(state, JSON.stringify({
+    type: 'message.part.updated',
+    properties: {
+      part: {
+        id: 'prt-task',
+        sessionID: 'ses-task',
+        messageID: 'msg-task',
+        type: 'tool',
+        tool: 'task',
+        state: {
+          status: 'completed',
+          output: 'done',
+        },
+      },
+    },
+  }), 5);
+
+  assert.equal(state.render.busy, false);
+});
+
 test('opencode render state tracks latest reasoning text for status pane', () => {
   let state = createRenderState('ses-r');
 

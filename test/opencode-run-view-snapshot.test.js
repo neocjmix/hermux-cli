@@ -133,6 +133,31 @@ test('run view snapshot materializer includes queued prompt count in status pane
   assert.equal(queueLines[1], '`ses-q`');
 });
 
+test('run view snapshot materializer passes continuity warning into status pane', () => {
+  let state = createRunViewSnapshotState('ses-warn');
+
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'session.status',
+    properties: {
+      sessionID: 'ses-warn',
+      status: { type: 'busy' },
+    },
+  }), 1, {
+    runId: 'run-warn',
+    minMessageTimeMs: 0,
+    isFinal: false,
+    repoName: 'repo-warn',
+    continuityWarning: {
+      kind: 'forked_session',
+      priorSessionId: 'ses-old',
+      sessionId: 'ses-warn',
+    },
+  });
+
+  const statusLines = String(state.snapshot.messages[0]).split('\n');
+  assert.equal(statusLines[2], '⚠️ forked session: model context may include earlier turns hidden from this run view');
+});
+
 test('run view snapshot materializer keeps logical blocks even when maxLen is smaller than content', () => {
   let state = createRunViewSnapshotState('ses-long');
 

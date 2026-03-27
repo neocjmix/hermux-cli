@@ -65,10 +65,50 @@ function appendPermissionLines(lines, renderState, options) {
   if (always.length > 0) lines.push(`always: ${always.join(', ')}`);
 }
 
+function appendContinuityWarningLines(lines, renderState, options) {
+  const viewMode = toText(options && options.viewMode).trim().toLowerCase();
+  const continuity = options && options.continuityWarning && typeof options.continuityWarning === 'object'
+    ? options.continuityWarning
+    : null;
+  const compactedAt = Number(renderState && renderState.session && renderState.session.compactedAt) || 0;
+
+  if (continuity) {
+    const kind = toText(continuity.kind).trim().toLowerCase();
+    const resumedText = kind === 'forked_session'
+      ? 'forked session: model context may include earlier turns hidden from this run view'
+      : 'resumed session: model context may include earlier turns hidden from this run view';
+    if (viewMode === 'verbose') {
+      const priorSessionId = toText(continuity.priorSessionId).trim();
+      const sessionId = toText(continuity.sessionId).trim();
+      const meta = [kind || 'reused_session', priorSessionId, sessionId].filter(Boolean).join(' -> ');
+      lines.push(`warning: ${formatInlineCode(resumedText)}`);
+      if (meta) lines.push(`warning_meta: ${formatInlineCode(meta)}`);
+    } else {
+      lines.push(`⚠️ ${resumedText}`);
+    }
+  }
+
+  if (compactedAt > 0) {
+    const compactedText = 'session compacted: model context may no longer match visible chat history exactly';
+    if (viewMode === 'verbose') {
+      lines.push(`warning: ${formatInlineCode(compactedText)}`);
+    } else {
+      lines.push(`⚠️ ${compactedText}`);
+    }
+  }
+}
+
+function getEffectiveSessionStatus(renderState) {
+  const rawStatus = toText(renderState && renderState.session && renderState.session.status).trim().toLowerCase();
+  const renderBusy = !!(renderState && renderState.render && renderState.render.busy);
+  if (renderBusy) return 'busy';
+  return rawStatus || 'idle';
+}
+
 function formatStatusPaneVerbose(renderState, _maxLen, options) {
   const sessionId = toText(renderState.sessionId || (renderState.session && renderState.session.id)).trim();
-  const status = toText(renderState.session && renderState.session.status).trim() || 'unknown';
-  const isIdle = !!(renderState.session && renderState.session.isIdle);
+  const status = getEffectiveSessionStatus(renderState) || 'unknown';
+  const isIdle = status === 'idle';
   const runId = toText(options && options.runId).trim();
   const latestAssistantMessageId = toText(
     renderState.render && renderState.render.latestAssistantMessageId
@@ -82,6 +122,7 @@ function formatStatusPaneVerbose(renderState, _maxLen, options) {
   ];
   if (queueLength > 0) lines.push(`🔜 ${formatInlineCode(String(queueLength))}`);
   if (latestAssistantMessageId) lines.push(`assistant_message: ${formatInlineCode(latestAssistantMessageId)}`);
+  appendContinuityWarningLines(lines, renderState, options);
   appendReasoningLine(lines, renderState, options);
   appendPermissionLines(lines, renderState, options);
   appendQuestionLines(lines, renderState, options);
@@ -90,7 +131,7 @@ function formatStatusPaneVerbose(renderState, _maxLen, options) {
 
 function formatStatusPaneNormal(renderState, _maxLen, options) {
   const sessionId = toText(renderState.sessionId || (renderState.session && renderState.session.id)).trim();
-  const status = toText(renderState.session && renderState.session.status).trim() || 'idle';
+  const status = getEffectiveSessionStatus(renderState) || 'idle';
   const repoName = toText(options && options.repoName).trim() || 'repo';
   const stepCount = Number(renderState.session && renderState.session.stepCount) || 0;
   const toolCount = Number(renderState.session && renderState.session.toolCount) || 0;
@@ -102,6 +143,7 @@ function formatStatusPaneNormal(renderState, _maxLen, options) {
     `${formatInlineCode(sessionId || '-')}`,
   ];
 
+  appendContinuityWarningLines(lines, renderState, options);
   appendReasoningLine(lines, renderState, options);
   appendPermissionLines(lines, renderState, options);
   appendQuestionLines(lines, renderState, options);

@@ -86,6 +86,10 @@ Lifecycle semantics:
 - unresolved button-only question prompts MUST NOT swallow later plain-text Telegram prompts; only explicit custom-input capture mode may treat free text as a question answer
 - removed message and part events MUST retract deleted content from future Telegram run-view reconciliation instead of leaving stale assistant text visible
 - session compaction and deletion MUST update projected state without breaking same-session event acceptance or leaving stale question/permission prompts open
+- when a run starts with existing session continuity, the status pane MUST warn that model context may include earlier turns hidden from the current run view
+- when upstream reports session compaction, the status pane MUST warn that model context may no longer match the visible chat history exactly
+- delegated subagent/task work that remains active inside the same session MUST keep the status surfaces visibly busy until the delegated work reaches a terminal state
+- `/interrupt` MUST remain available while same-session delegated work is still active; it may only fall back to "no running task" after delegated work actually becomes non-interruptible under the session lifecycle rules
 - `<system-reminder>` content is rendered at the bottom of the live status panel and MUST appear as a code block
 
 ## Failure Semantics

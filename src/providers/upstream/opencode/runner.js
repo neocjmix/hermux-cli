@@ -723,6 +723,7 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
   const partMap = new Map();
   const assistantMessageIds = new Set();
   const processedDeltas = new Set(); // Track processed deltas to prevent text duplication
+  const pendingToolParts = new Set();
   let partSeq = 0;
   let abortSession = null;
   let detachObserver = null;
@@ -772,6 +773,39 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
     }
   }
 
+  function shouldKeepRunOpenForPendingDelegation() {
+    return pendingToolParts.size > 0;
+  }
+
+  function updatePendingDelegationState(evt) {
+    const type = String((evt && evt.type) || '');
+    const props = (evt && evt.properties) || {};
+    if (type === 'message.part.removed') {
+      const partId = String(props.partID || '').trim();
+      if (partId) pendingToolParts.delete(partId);
+      return;
+    }
+    if (type !== 'message.part.updated') return;
+    const part = props.part || {};
+    const partId = String(part.id || '').trim();
+    if (!partId || String(part.type || '').trim() !== 'tool') return;
+    const toolState = part.state && typeof part.state === 'object' ? part.state : {};
+    const status = String(toolState.status || '').trim().toLowerCase();
+    if (
+      status === 'running'
+      || status === 'pending'
+      || status === 'in_progress'
+      || status === 'queued'
+      || status === 'starting'
+    ) {
+      pendingToolParts.add(partId);
+      return;
+    }
+    if (status) {
+      pendingToolParts.delete(partId);
+    }
+  }
+
   function closeRunObserver(reason) {
     if (state.done) return;
     state.done = true;
@@ -803,8 +837,16 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
 
   function schedulePostCompleteFinalize() {
     clearPostCompleteTimer();
+    const delayMs = Math.max(0, Number(SDK_POST_COMPLETE_LINGER_MS) || 0);
     postCompleteTimer = setTimeout(async () => {
       if (state.done || state.completed) return;
+      if (shouldKeepRunOpenForPendingDelegation()) {
+        trace('post_complete.finalize.deferred_for_pending_tool', {
+          pendingToolCount: pendingToolParts.size,
+        });
+        schedulePostCompleteFinalize();
+        return;
+      }
       state.finalText = sortedFinalText();
       trace('post_complete.finalize.firing', {
         lingerMs: Math.max(0, SDK_POST_COMPLETE_LINGER_MS),
@@ -820,7 +862,7 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
         return;
       }
       finish(0, null);
-    }, Math.max(0, SDK_POST_COMPLETE_LINGER_MS));
+    }, shouldKeepRunOpenForPendingDelegation() ? Math.max(delayMs, 250) : delayMs);
   }
 
   function scheduleIdleFinalize() {
@@ -830,8 +872,16 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
       delayMs: Math.max(0, SDK_IDLE_DRAIN_MS),
       currentFinalLength: String(state.finalText || '').length,
     });
+    const delayMs = Math.max(0, Number(SDK_IDLE_DRAIN_MS) || 0);
     idleFinalizeTimer = setTimeout(async () => {
       if (state.done || state.completed) return;
+      if (shouldKeepRunOpenForPendingDelegation()) {
+        trace('idle.finalize.deferred_for_pending_tool', {
+          pendingToolCount: pendingToolParts.size,
+        });
+        scheduleIdleFinalize();
+        return;
+      }
       state.finalText = sortedFinalText();
       trace('idle.finalize.firing', {
         finalTextLength: state.finalText.length,
@@ -846,7 +896,7 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
         return;
       }
       schedulePostCompleteFinalize();
-    }, Math.max(0, SDK_IDLE_DRAIN_MS));
+    }, shouldKeepRunOpenForPendingDelegation() ? Math.max(delayMs, 250) : delayMs);
   }
 
   function sortedFinalText() {
@@ -995,6 +1045,7 @@ function runViaSdk(instance, prompt, { onEvent, onDone, onError, sessionId }) {
     const resolved = framed && framed.resolved ? framed.resolved : resolveSessionIdentity(evt);
     const type = String((resolved && resolved.type) || evt.type || '');
     const props = (evt && evt.properties) || {};
+    updatePendingDelegationState(evt);
     if (type && state.firstRawTypes.length < 8) {
       state.firstRawTypes.push(type);
     }

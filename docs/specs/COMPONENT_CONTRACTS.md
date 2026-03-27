@@ -148,10 +148,14 @@ Contract rules:
 - Telegram callback routing MUST support approval actions for active permission requests and translate them into `permission.reply` SDK calls without bypassing session-owned render state.
 - Upstream `message.removed`, `message.part.removed`, `session.compacted`, `session.created`, and `session.deleted` events MUST be reduced in `render-state` before downstream reconciliation; Telegram delete/edit behavior is derived only from resulting snapshot changes.
 - Additional v2 part subtypes (`subtask`, `agent`, `retry`, `compaction`, `snapshot`, `patch`) MUST be preserved in reducer state and surfaced through snapshot text/status semantics rather than dropped on ingest.
+- Run-view status rendering MUST accept an explicit continuity-warning signal for reused/forked session continuity and render it as visible warning text rather than hiding it in audit-only state.
+- Run-view status rendering MUST derive a compaction warning from reduced session state when `session.compacted` has been observed, so downstream users are told that visible chat history may diverge from upstream model context.
+- Run-view status rendering MUST treat same-session delegated tool/task parts with active running state as busy authority even when no fresh `session.status busy` event arrives, and it MUST return to idle only after those delegated parts reach terminal state.
 - When a new run starts in the same session, downstream reconciliation MUST preserve prior-run chat history and start a fresh status-panel message for the new run instead of reusing prior-run body or status slots.
 - Run-start handoff MUST materialize any non-empty prior Telegram draft preview before `state.runView` is reset for the next run; empty draft previews are ignored.
 - Active-run Telegram reconciliation SHOULD treat `tailMaterializeHint.reason === "text_part_updated_after_delta"` as a strong boundary for immediate tail materialization while preserving weaker hints for fallback-only behavior.
 - Gateway runtime SHOULD renew Telegram `typing` chat actions while the active session snapshot reports `render.busy === true`, and stop renewing when the session goes idle or the run exits.
+- Gateway runtime command status and interrupt eligibility MUST NOT drop to idle solely because the outer run observer becomes quiet while a same-session delegated tool/task is still running.
 - `RunViewSnapshot` delivery is the only supported render contract between upstream and downstream modules; downstream behavior changes MUST be expressed through snapshot semantics or downstream-local policy, not through upstream raw event knowledge in gateway.
 
 Current implementation anchors:

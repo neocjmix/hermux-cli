@@ -38,6 +38,9 @@ function applyPayloadToRunViewSnapshot(state, payload, renderSeq, options) {
   const viewMode = toText(safeOptions.viewMode).trim().toLowerCase() || 'normal';
   const repoName = toText(safeOptions.repoName).trim();
   const queueLength = Number(safeOptions.queueLength || 0) || 0;
+  const continuityWarning = safeOptions.continuityWarning && typeof safeOptions.continuityWarning === 'object'
+    ? { ...safeOptions.continuityWarning }
+    : null;
 
   const messages = buildRunViewFromRenderState(nextRenderState, {
     runId,
@@ -45,6 +48,7 @@ function applyPayloadToRunViewSnapshot(state, payload, renderSeq, options) {
     viewMode,
     repoName,
     queueLength,
+    continuityWarning,
   });
 
   return {

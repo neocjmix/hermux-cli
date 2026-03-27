@@ -287,6 +287,18 @@ function mergePermissionResolved(state, event) {
 }
 
 function updateGlobalRender(state) {
+  const isBusyToolPart = (part) => {
+    if (!part || typeof part !== 'object') return false;
+    if (toText(part.type).trim() !== 'tool') return false;
+    const toolState = part.state && typeof part.state === 'object' ? part.state : {};
+    const status = toText(toolState.status).trim().toLowerCase();
+    return status === 'running'
+      || status === 'pending'
+      || status === 'in_progress'
+      || status === 'queued'
+      || status === 'starting';
+  };
+
   const isBetterMessage = (candidate, best, candidateIndex, bestIndex) => {
     const candidateHasText = String(candidate && candidate.renderText || '').trim().length > 0 ? 1 : 0;
     const bestHasText = String(best && best.renderText || '').trim().length > 0 ? 1 : 0;
@@ -339,10 +351,20 @@ function updateGlobalRender(state) {
   let bestIndex = -1;
   let bestReasoning = null;
   let bestReasoningIndex = -1;
+  let hasRunningTool = false;
   for (let i = 0; i < state.messages.order.length; i += 1) {
     const mid = state.messages.order[i];
     const msg = state.messages.byId[mid];
     if (!msg || msg.role !== 'assistant') continue;
+    if (!hasRunningTool && msg.parts && Array.isArray(msg.parts.order) && msg.parts.byId) {
+      for (let p = 0; p < msg.parts.order.length; p += 1) {
+        const pid = msg.parts.order[p];
+        if (isBusyToolPart(msg.parts.byId[pid])) {
+          hasRunningTool = true;
+          break;
+        }
+      }
+    }
     if (!bestReasoning) {
       bestReasoning = msg;
       bestReasoningIndex = i;
@@ -384,7 +406,7 @@ function updateGlobalRender(state) {
       break;
     }
   }
-  state.render.busy = state.session.status === 'busy';
+  state.render.busy = state.session.status === 'busy' || hasRunningTool;
 }
 
 function mergeMessageUpdated(state, event, seq) {

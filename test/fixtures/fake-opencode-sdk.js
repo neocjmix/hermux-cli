@@ -181,6 +181,71 @@ async function createOpencode() {
             return { data: undefined, error: undefined };
           }
 
+          if (promptText === 'subagent-handoff') {
+            queue.push({
+              type: 'session.status',
+              properties: {
+                sessionID: id,
+                status: { type: 'busy' },
+              },
+            });
+            queue.push({
+              type: 'message.part.updated',
+              properties: {
+                part: {
+                  id: 'tool-subagent',
+                  sessionID: id,
+                  messageID: 'msg-subagent',
+                  type: 'tool',
+                  tool: 'task',
+                  state: {
+                    status: 'running',
+                    input: { description: 'delegated work' },
+                  },
+                  index: 0,
+                },
+              },
+            });
+            setTimeout(() => {
+              queue.push({
+                type: 'message.part.updated',
+                properties: {
+                  part: {
+                    id: 'tool-subagent',
+                    sessionID: id,
+                    messageID: 'msg-subagent',
+                    type: 'tool',
+                    tool: 'task',
+                    state: {
+                      status: 'completed',
+                      input: { description: 'delegated work' },
+                      output: 'done',
+                    },
+                    index: 0,
+                  },
+                },
+              });
+              queue.push({
+                type: 'message.part.updated',
+                properties: {
+                  part: {
+                    id: 'text-subagent',
+                    sessionID: id,
+                    messageID: 'msg-subagent',
+                    type: 'text',
+                    text: 'subagent-finished',
+                    index: 1,
+                  },
+                },
+              });
+              queue.push({
+                type: 'session.idle',
+                properties: { sessionID: id },
+              });
+            }, 3200);
+            return { data: undefined, error: undefined };
+          }
+
           queue.push({
             type: 'session.status',
             properties: {

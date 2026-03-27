@@ -194,6 +194,76 @@ test('runOpencode sdk mode should keep accepting late session events after compl
   assert.equal(seenRaw.some((evt) => evt.at > doneAt), true);
 });
 
+test('runOpencode sdk mode stays interruptible while delegated task is still running', async () => {
+  const { runOpencode } = loadRunnerWithEnv({
+    HERMUX_MAX_PROCESS_SECONDS: 10,
+    HERMUX_EXECUTION_TRANSPORT: 'sdk',
+    HERMUX_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
+    HERMUX_SDK_IDLE_DRAIN_MS: 0,
+    HERMUX_SDK_POST_COMPLETE_LINGER_MS: 0,
+  });
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runner-sdk-subagent-interrupt-'));
+  const startedAt = Date.now();
+  const done = await new Promise((resolve, reject) => {
+    const handle = runOpencode(
+      {
+        opencodeCommand: 'opencode sdk',
+        workdir: process.cwd(),
+        logFile: path.join(tmpDir, 'runner-sdk-subagent-interrupt.log'),
+      },
+      'subagent-handoff',
+      {
+        onEvent: () => {},
+        onDone: (exitCode, timeoutMsg, meta) => resolve({ exitCode, timeoutMsg, meta, elapsedMs: Date.now() - startedAt }),
+        onError: reject,
+        sessionId: '',
+      }
+    );
+
+    setTimeout(() => {
+      handle.kill('SIGTERM');
+    }, 700);
+  });
+
+  assert.equal(done.exitCode, 143);
+  assert.equal(done.timeoutMsg, null);
+  assert.equal(done.elapsedMs < 2200, true);
+});
+
+test('runOpencode sdk mode does not auto-complete while delegated task is still running', async () => {
+  const { runOpencode } = loadRunnerWithEnv({
+    HERMUX_MAX_PROCESS_SECONDS: 10,
+    HERMUX_EXECUTION_TRANSPORT: 'sdk',
+    HERMUX_OPENCODE_SDK_SHIM: path.join(process.cwd(), 'test/fixtures/fake-opencode-sdk.js'),
+    HERMUX_SDK_IDLE_DRAIN_MS: 0,
+    HERMUX_SDK_POST_COMPLETE_LINGER_MS: 0,
+  });
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermux-runner-sdk-subagent-wait-'));
+  const startedAt = Date.now();
+  const done = await new Promise((resolve, reject) => {
+    runOpencode(
+      {
+        opencodeCommand: 'opencode sdk',
+        workdir: process.cwd(),
+        logFile: path.join(tmpDir, 'runner-sdk-subagent-wait.log'),
+      },
+      'subagent-handoff',
+      {
+        onEvent: () => {},
+        onDone: (exitCode, timeoutMsg, meta) => resolve({ exitCode, timeoutMsg, meta, elapsedMs: Date.now() - startedAt }),
+        onError: reject,
+        sessionId: '',
+      }
+    );
+  });
+
+  assert.equal(done.exitCode, 0);
+  assert.equal(done.timeoutMsg, null);
+  assert.equal(done.elapsedMs >= 3000, true);
+});
+
 test('runOpencode sdk mode should stop accepting late session events after explicit session end', async () => {
   const { runOpencode, endSessionLifecycle } = loadRunnerWithEnv({
     HERMUX_MAX_PROCESS_SECONDS: 10,
