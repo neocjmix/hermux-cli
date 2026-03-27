@@ -256,7 +256,7 @@ test('opencode view builder shows compaction warning from render state', () => {
   assert.equal(statusLines[2], '⚠️ session compacted: model context may no longer match visible chat history exactly');
 });
 
-test('opencode view builder shows busy status while delegated tool work remains active', () => {
+test('opencode view builder shows processing status while delegated tool work remains active', () => {
   let state = createRenderState('ses-tool-busy');
 
   state = applyEvent(state, {
@@ -293,7 +293,8 @@ test('opencode view builder shows busy status while delegated tool work remains 
   });
 
   const statusLines = String(view[0]).split('\n');
-  assert.match(statusLines[0], /📂\s+demo\s+🔴\s+busy/);
+  assert.match(statusLines[0], /📂\s+demo\s+🟡\s+processing/);
+  assert.match(statusLines[0], /🧩 1/);
 });
 
 test('opencode view builder verbose mode shows detailed status', () => {

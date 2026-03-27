@@ -270,7 +270,7 @@ test('clearRunRenderStateForAttachedSession clears newly attached session once',
   assert.equal(state.latestSessionRenderState, null);
 });
 
-test('buildRuntimeStatusHtml reports session-active when delegated session work remains busy', () => {
+test('buildRuntimeStatusHtml reports processing when delegated session work remains busy', () => {
   const html = _internal.buildRuntimeStatusHtml({
     repo: {
       name: 'demo',
@@ -285,7 +285,24 @@ test('buildRuntimeStatusHtml reports session-active when delegated session work 
         renderState: {
           render: { busy: true },
           session: {},
-          messages: { order: [], byId: {} },
+          messages: {
+            order: ['msg-1'],
+            byId: {
+              'msg-1': {
+                id: 'msg-1',
+                parts: {
+                  order: ['prt-1'],
+                  byId: {
+                    'prt-1': {
+                      id: 'prt-1',
+                      type: 'tool',
+                      state: { status: 'running' },
+                    },
+                  },
+                },
+              },
+            },
+          },
         },
         snapshot: { messages: [] },
       },
@@ -293,7 +310,8 @@ test('buildRuntimeStatusHtml reports session-active when delegated session work 
     chatId: '100',
   });
 
-  assert.match(html, /state: session-active \| busy: yes/);
+  assert.match(html, /state: processing \| busy: yes/);
+  assert.match(html, /background: attached \(1\) \| interruptible: no/);
 });
 
 test('shouldRenewTypingIndicator respects interval threshold', () => {

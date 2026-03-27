@@ -30,6 +30,11 @@ function makeDeps(overrides = {}) {
     sendRepoList: async () => {},
     handleVerboseAction: async () => {},
     requestInterrupt: () => ({ ok: true, alreadyRequested: false }),
+    inspectInterruptState: (state) => (!state.running || !state.currentProc)
+      ? { kind: 'idle' }
+      : { kind: 'interruptible' },
+    buildInterruptFallbackKeyboard: () => ({ inline_keyboard: [[{ text: 'Continue', callback_data: 'interrupt:continue' }]] }),
+    buildInterruptFallbackMessage: () => 'fallback message',
     buildPromptFromMessage: async (_bot, _repo, msg) => ({ prompt: String(msg.text || '').trim() }),
     resolveRevertReplyTarget: () => null,
     createRevertConfirmation: async () => ({ text: 'confirm', opts: { reply_markup: { inline_keyboard: [] } } }),
@@ -67,6 +72,25 @@ test('repo handler keeps /interrupt invariant when idle', async () => {
 
   assert.equal(sent.length, 1);
   assert.match(sent[0].text, /No running task to interrupt/);
+});
+
+test('repo handler shows fallback controls when session is busy but not interruptible', async () => {
+  const { deps, sent } = makeDeps({
+    inspectInterruptState: () => ({ kind: 'busy_noninterruptible' }),
+    buildInterruptFallbackMessage: () => 'Session still processing background work.',
+    buildInterruptFallbackKeyboard: () => ({ inline_keyboard: [[{ text: 'Continue', callback_data: 'interrupt:continue' }]] }),
+  });
+  const handler = createRepoMessageHandler(deps);
+
+  await handler({}, { name: 'demo', workdir: '/tmp/demo' }, { running: false, currentProc: null, queue: [] }, {
+    chat: { id: '100' },
+    text: '/interrupt',
+  });
+
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].text, /background work/);
+  assert.equal(sent[0].opts.parse_mode, 'HTML');
+  assert.equal(sent[0].opts.reply_markup.inline_keyboard[0][0].callback_data, 'interrupt:continue');
 });
 
 test('repo handler enqueues prompt while running and refreshes panel', async () => {

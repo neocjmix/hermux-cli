@@ -16,6 +16,13 @@ function createCallbackQueryHandler(deps) {
     handleConnectCommand,
     handleVerboseAction,
     requestInterrupt,
+    inspectInterruptState,
+    buildInterruptFallbackKeyboard,
+    buildInterruptFallbackMessage,
+    buildInterruptStopPromptRunItem,
+    handleRestartCommand,
+    startPromptRun,
+    dispatchPreparedPromptRunItem,
     modelControlService,
     handleRevertConfirmCallback,
     handleRevertCancelCallback,
@@ -152,10 +159,23 @@ function createCallbackQueryHandler(deps) {
           return;
         }
         const state = states.get(repo.name);
-        if (!state.running || !state.currentProc) {
+        const interruptState = typeof inspectInterruptState === 'function'
+          ? inspectInterruptState(state)
+          : { kind: (!state.running || !state.currentProc) ? 'idle' : 'interruptible' };
+        if (interruptState.kind === 'idle') {
           await safeSend(bot, chatId, 'No running task to interrupt.');
           if (query.id) {
             await bot.answerCallbackQuery(query.id, { text: 'idle' }).catch(() => {});
+          }
+          return;
+        }
+        if (interruptState.kind === 'busy_noninterruptible') {
+          await safeSend(bot, chatId, buildInterruptFallbackMessage(repo), {
+            parse_mode: 'HTML',
+            reply_markup: buildInterruptFallbackKeyboard(),
+          });
+          if (query.id) {
+            await bot.answerCallbackQuery(query.id, { text: 'options' }).catch(() => {});
           }
           return;
         }
@@ -168,6 +188,87 @@ function createCallbackQueryHandler(deps) {
         }
         if (query.id) {
           await bot.answerCallbackQuery(query.id, { text: 'interrupt' }).catch(() => {});
+        }
+        return;
+      }
+
+      if (data === 'interrupt:continue') {
+        if (query.id) {
+          await bot.answerCallbackQuery(query.id, { text: 'continuing' }).catch(() => {});
+        }
+        return;
+      }
+
+      if (data === 'interrupt:restart') {
+        const repo = chatRouter.get(chatId);
+        if (!repo) {
+          await safeSend(bot, chatId, 'This chat is not mapped to a repo. Run /repos then /connect <repo>.');
+          if (query.id) {
+            await bot.answerCallbackQuery(query.id, { text: 'not mapped' }).catch(() => {});
+          }
+          return;
+        }
+        const state = states.get(repo.name);
+        await handleRestartCommand(bot, chatId, repo, state);
+        if (query.id) {
+          await bot.answerCallbackQuery(query.id, { text: 'restart' }).catch(() => {});
+        }
+        return;
+      }
+
+      if (data === 'interrupt:stop_prompt') {
+        const repo = chatRouter.get(chatId);
+        if (!repo) {
+          await safeSend(bot, chatId, 'This chat is not mapped to a repo. Run /repos then /connect <repo>.');
+          if (query.id) {
+            await bot.answerCallbackQuery(query.id, { text: 'not mapped' }).catch(() => {});
+          }
+          return;
+        }
+        const state = states.get(repo.name);
+        const interruptState = typeof inspectInterruptState === 'function'
+          ? inspectInterruptState(state)
+          : { kind: (!state || !state.running || !state.currentProc) ? 'idle' : 'interruptible' };
+        if (interruptState.kind === 'idle') {
+          await safeSend(bot, chatId, 'No active background session to send a stop prompt to.');
+          if (query.id) {
+            await bot.answerCallbackQuery(query.id, { text: 'idle' }).catch(() => {});
+          }
+          return;
+        }
+        if (interruptState.kind === 'interruptible') {
+          await safeSend(bot, chatId, 'Current task is interruptible now. Use Interrupt to stop it directly.');
+          if (query.id) {
+            await bot.answerCallbackQuery(query.id, { text: 'use interrupt' }).catch(() => {});
+          }
+          return;
+        }
+        if (!state || typeof dispatchPreparedPromptRunItem !== 'function' || typeof startPromptRun !== 'function') {
+          await safeSend(bot, chatId, 'Stop prompt is not available in this runtime mode.');
+          if (query.id) {
+            await bot.answerCallbackQuery(query.id, { text: 'unavailable' }).catch(() => {});
+          }
+          return;
+        }
+        const runItem = buildInterruptStopPromptRunItem(chatId);
+        const result = await dispatchPreparedPromptRunItem({
+          bot,
+          repo,
+          state,
+          queuedItem: runItem,
+          safeSend,
+          startPromptRun,
+          audit,
+          maxPendingQueue: 40,
+          auditMeta: { reason: 'interrupt_stop_prompt' },
+        });
+        if (result && result.queued) {
+          await safeSend(bot, chatId, 'Stop prompt queued for the active session.');
+        } else if (!(result && result.dropped)) {
+          await safeSend(bot, chatId, 'Stop prompt sent to the active session.');
+        }
+        if (query.id) {
+          await bot.answerCallbackQuery(query.id, { text: 'stop prompt sent' }).catch(() => {});
         }
         return;
       }

@@ -12,6 +12,63 @@ function summarizeText(text) {
   return value.length > 240 ? `${value.slice(0, 240)}...(truncated)` : value;
 }
 
+async function dispatchPreparedPromptRunItem({
+  bot,
+  repo,
+  state,
+  queuedItem,
+  safeSend,
+  startPromptRun,
+  audit,
+  auditMeta,
+  maxPendingQueue,
+}) {
+  if (!Array.isArray(state.queue)) state.queue = [];
+  const chatId = String(queuedItem && queuedItem.chatId ? queuedItem.chatId : '');
+
+  if (state.running) {
+    if (state.queue.length >= maxPendingQueue) {
+      if (typeof audit === 'function') {
+        audit('repo.message.queue.dropped', {
+          repo: repo.name,
+          chatId,
+          queueLength: state.queue.length,
+          maxQueueLength: maxPendingQueue,
+          reason: 'queue_overflow',
+          ...(auditMeta && typeof auditMeta === 'object' ? auditMeta : {}),
+        });
+      }
+      await safeSend(bot, chatId, `System is busy right now. Queue is full (${maxPendingQueue}). Please retry in a moment.`);
+      return { queued: false, started: false, dropped: true };
+    }
+    state.queue.push(queuedItem);
+    if (typeof audit === 'function') {
+      audit('repo.message.queue.enqueued', {
+        repo: repo.name,
+        chatId,
+        queueLength: state.queue.length,
+        reason: 'already_running',
+        ...(auditMeta && typeof auditMeta === 'object' ? auditMeta : {}),
+      });
+    }
+    if (typeof state.panelRefresh === 'function') {
+      await state.panelRefresh(true);
+    }
+    return { queued: true, started: false, dropped: false };
+  }
+
+  if (typeof audit === 'function') {
+    audit('repo.message.run.dispatch', {
+      repo: repo.name,
+      chatId,
+      queueLength: Array.isArray(state.queue) ? state.queue.length : 0,
+      ...(auditMeta && typeof auditMeta === 'object' ? auditMeta : {}),
+    });
+  }
+  await startPromptRun(bot, repo, state, queuedItem);
+  return { queued: false, started: true, dropped: false };
+}
+
 function createRepoMessageHandler(deps) {
   const {
     parseCommand,
@@ -30,6 +87,9 @@ function createRepoMessageHandler(deps) {
     sendRepoList,
     handleVerboseAction,
     requestInterrupt,
+    inspectInterruptState,
+    buildInterruptFallbackKeyboard,
+    buildInterruptFallbackMessage,
     buildPromptFromMessage,
     startPromptRun,
     resolveRevertReplyTarget,
@@ -181,8 +241,18 @@ function createRepoMessageHandler(deps) {
     }
 
     if (command === '/interrupt') {
-      if (!state.running || !state.currentProc) {
+      const interruptState = typeof inspectInterruptState === 'function'
+        ? inspectInterruptState(state)
+        : { kind: (!state.running || !state.currentProc) ? 'idle' : 'interruptible' };
+      if (interruptState.kind === 'idle') {
         await safeSend(bot, chatId, 'No running task to interrupt.');
+        return;
+      }
+      if (interruptState.kind === 'busy_noninterruptible') {
+        await safeSend(bot, chatId, buildInterruptFallbackMessage(repo), {
+          parse_mode: 'HTML',
+          reply_markup: buildInterruptFallbackKeyboard(),
+        });
         return;
       }
       const req = requestInterrupt(state, { forceAfterMs: 5000 });
@@ -290,46 +360,20 @@ function createRepoMessageHandler(deps) {
       });
     }
 
-    if (state.running) {
-      if (state.queue.length >= MAX_PENDING_QUEUE) {
-        if (typeof audit === 'function') {
-          audit('repo.message.queue.dropped', {
-            repo: repo.name,
-            chatId,
-            queueLength: state.queue.length,
-            maxQueueLength: MAX_PENDING_QUEUE,
-            reason: 'queue_overflow',
-          });
-        }
-        await safeSend(bot, chatId, `System is busy right now. Queue is full (${MAX_PENDING_QUEUE}). Please retry in a moment.`);
-        return;
-      }
-      state.queue.push(queuedItem);
-      if (typeof audit === 'function') {
-        audit('repo.message.queue.enqueued', {
-          repo: repo.name,
-          chatId,
-          queueLength: state.queue.length,
-          reason: 'already_running',
-        });
-      }
-      if (typeof state.panelRefresh === 'function') {
-        await state.panelRefresh(true);
-      }
-      return;
-    }
-
-    if (typeof audit === 'function') {
-      audit('repo.message.run.dispatch', {
-        repo: repo.name,
-        chatId,
-        queueLength: Array.isArray(state.queue) ? state.queue.length : 0,
-      });
-    }
-    await startPromptRun(bot, repo, state, queuedItem);
+    await dispatchPreparedPromptRunItem({
+      bot,
+      repo,
+      state,
+      queuedItem,
+      safeSend,
+      startPromptRun,
+      audit,
+      maxPendingQueue: MAX_PENDING_QUEUE,
+    });
   };
 }
 
 module.exports = {
   createRepoMessageHandler,
+  dispatchPreparedPromptRunItem,
 };

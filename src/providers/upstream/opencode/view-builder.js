@@ -98,9 +98,36 @@ function appendContinuityWarningLines(lines, renderState, options) {
   }
 }
 
+function isActiveBackgroundToolPart(part) {
+  if (!part || typeof part !== 'object') return false;
+  if (toText(part.type).trim() !== 'tool') return false;
+  const toolState = part.state && typeof part.state === 'object' ? part.state : {};
+  const status = toText(toolState.status).trim().toLowerCase();
+  return status === 'running'
+    || status === 'pending'
+    || status === 'in_progress'
+    || status === 'queued'
+    || status === 'starting';
+}
+
+function countActiveBackgroundToolParts(renderState) {
+  const messages = renderState && renderState.messages && renderState.messages.byId && typeof renderState.messages.byId === 'object'
+    ? Object.values(renderState.messages.byId)
+    : [];
+  let count = 0;
+  for (const message of messages) {
+    if (!message || !message.parts || !Array.isArray(message.parts.order) || !message.parts.byId) continue;
+    for (const pid of message.parts.order) {
+      if (isActiveBackgroundToolPart(message.parts.byId[pid])) count += 1;
+    }
+  }
+  return count;
+}
+
 function getEffectiveSessionStatus(renderState) {
   const rawStatus = toText(renderState && renderState.session && renderState.session.status).trim().toLowerCase();
   const renderBusy = !!(renderState && renderState.render && renderState.render.busy);
+  if (renderBusy && rawStatus !== 'busy') return 'processing';
   if (renderBusy) return 'busy';
   return rawStatus || 'idle';
 }
@@ -114,6 +141,7 @@ function formatStatusPaneVerbose(renderState, _maxLen, options) {
     renderState.render && renderState.render.latestAssistantMessageId
   ).trim();
   const queueLength = Number(options && options.queueLength) || 0;
+  const backgroundTaskCount = countActiveBackgroundToolParts(renderState);
   const lines = [
     `run_id: ${formatInlineCode(runId || '-')}`,
     `session: ${formatInlineCode(sessionId || '-')}`,
@@ -121,6 +149,7 @@ function formatStatusPaneVerbose(renderState, _maxLen, options) {
     `idle: ${formatInlineCode(isIdle ? 'yes' : 'no')}`,
   ];
   if (queueLength > 0) lines.push(`🔜 ${formatInlineCode(String(queueLength))}`);
+  if (backgroundTaskCount > 0) lines.push(`background: ${formatInlineCode(String(backgroundTaskCount))}`);
   if (latestAssistantMessageId) lines.push(`assistant_message: ${formatInlineCode(latestAssistantMessageId)}`);
   appendContinuityWarningLines(lines, renderState, options);
   appendReasoningLine(lines, renderState, options);
@@ -136,10 +165,12 @@ function formatStatusPaneNormal(renderState, _maxLen, options) {
   const stepCount = Number(renderState.session && renderState.session.stepCount) || 0;
   const toolCount = Number(renderState.session && renderState.session.toolCount) || 0;
   const queueLength = Number(options && options.queueLength) || 0;
+  const backgroundTaskCount = countActiveBackgroundToolParts(renderState);
 
-  const statusEmoji = status === 'busy' ? '🔴' : status === 'idle' ? '🟢' : '⚪';
+  const statusEmoji = status === 'busy' ? '🔴' : status === 'processing' ? '🟡' : status === 'idle' ? '🟢' : '⚪';
+  const backgroundBadge = backgroundTaskCount > 0 ? ` 🧩 ${backgroundTaskCount}` : '';
   const lines = [
-    `📂 ${repoName} ${statusEmoji} ${status} 👣 ${stepCount} 🛠️ ${toolCount}${queueLength > 0 ? ` 🔜 ${queueLength}` : ''}`,
+    `📂 ${repoName} ${statusEmoji} ${status} 👣 ${stepCount} 🛠️ ${toolCount}${queueLength > 0 ? ` 🔜 ${queueLength}` : ''}${backgroundBadge}`,
     `${formatInlineCode(sessionId || '-')}`,
   ];
 

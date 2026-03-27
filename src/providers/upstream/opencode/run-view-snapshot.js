@@ -22,6 +22,32 @@ function createRunViewSnapshotState(sessionId) {
   };
 }
 
+function isActiveBackgroundToolPart(part) {
+  if (!part || typeof part !== 'object') return false;
+  if (toText(part.type).trim() !== 'tool') return false;
+  const toolState = part.state && typeof part.state === 'object' ? part.state : {};
+  const status = toText(toolState.status).trim().toLowerCase();
+  return status === 'running'
+    || status === 'pending'
+    || status === 'in_progress'
+    || status === 'queued'
+    || status === 'starting';
+}
+
+function countActiveBackgroundToolParts(renderState) {
+  const messages = renderState && renderState.messages && renderState.messages.byId && typeof renderState.messages.byId === 'object'
+    ? Object.values(renderState.messages.byId)
+    : [];
+  let count = 0;
+  for (const message of messages) {
+    if (!message || !message.parts || !Array.isArray(message.parts.order) || !message.parts.byId) continue;
+    for (const pid of message.parts.order) {
+      if (isActiveBackgroundToolPart(message.parts.byId[pid])) count += 1;
+    }
+  }
+  return count;
+}
+
 function applyPayloadToRunViewSnapshot(state, payload, renderSeq, options) {
   const current = state && typeof state === 'object'
     ? state
@@ -96,8 +122,11 @@ function inspectRunViewSnapshotState(state) {
       .filter(Boolean)
     : [];
   const lastPart = latestAssistantParts.length > 0 ? latestAssistantParts[latestAssistantParts.length - 1] : null;
+  const activeBackgroundCount = countActiveBackgroundToolParts(renderState);
   return {
     busy: !!render.busy,
+    backgroundAttached: activeBackgroundCount > 0,
+    backgroundTaskCount: activeBackgroundCount,
     messageCount: Array.isArray(renderState && renderState.messages && renderState.messages.order)
       ? renderState.messages.order.length
       : 0,

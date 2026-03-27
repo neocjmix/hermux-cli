@@ -41,6 +41,23 @@ function makeHarness(overrides = {}) {
       requestInterruptCalls.push({ state, opts });
       return { ok: true, alreadyRequested: false };
     },
+    inspectInterruptState: (state) => (!state.running || !state.currentProc)
+      ? { kind: 'idle' }
+      : { kind: 'interruptible' },
+    buildInterruptFallbackKeyboard: () => ({ inline_keyboard: [[{ text: 'Continue', callback_data: 'interrupt:continue' }]] }),
+    buildInterruptFallbackMessage: () => 'fallback message',
+    buildInterruptStopPromptRunItem: (chatId) => ({ chatId, promptText: 'stop prompt', isVersionPrompt: false }),
+    handleRestartCommand: async (_bot, chatId, repo, state) => {
+      verboseCalls.push({ chatId, action: `restart:${repo.name}:${!!state}` });
+    },
+    startPromptRun: async (_bot, repo, state, runItem) => {
+      writes.push({ kind: 'startPromptRun', repo: repo.name, state, runItem });
+    },
+    dispatchPreparedPromptRunItem: async ({ bot, repo, state, queuedItem, startPromptRun }) => {
+      writes.push({ kind: 'dispatchPreparedPromptRunItem', repo: repo.name, state, runItem: queuedItem, bot: !!bot });
+      await startPromptRun(bot, repo, state, queuedItem);
+      return { queued: false, started: true, dropped: false };
+    },
     buildModelsSummaryHtml: () => ({ html: '<b>models</b>' }),
     buildModelsRootKeyboard: () => ({ inline_keyboard: [] }),
     getProviderModelChoices: () => [{ providerId: 'openai', models: ['openai/gpt-5.3-codex'] }],
@@ -152,6 +169,67 @@ test('callback handler keeps interrupt idle invariant for mapped repo', async ()
   assert.equal(h.requestInterruptCalls.length, 0);
   assert.equal(h.safeSendCalls.length, 1);
   assert.match(h.safeSendCalls[0].text, /No running task to interrupt/);
+  assert.equal(h.answerCalls[0].payload.text, 'idle');
+});
+
+test('callback handler shows interrupt fallback controls when session is busy but not interruptible', async () => {
+  const h = makeHarness({
+    inspectInterruptState: () => ({ kind: 'busy_noninterruptible' }),
+    buildInterruptFallbackMessage: () => 'Session still processing background work.',
+    buildInterruptFallbackKeyboard: () => ({ inline_keyboard: [[{ text: 'Continue', callback_data: 'interrupt:continue' }]] }),
+  });
+  h.chatRouter.set('100', { name: 'demo', workdir: '/tmp/demo' });
+  h.states.set('demo', { running: false, currentProc: null });
+
+  await h.handler({
+    id: 'q3b',
+    data: 'interrupt:now',
+    message: { chat: { id: '100' } },
+  });
+
+  assert.equal(h.requestInterruptCalls.length, 0);
+  assert.match(h.safeSendCalls[0].text, /background work/);
+  assert.equal(h.safeSendCalls[0].opts.reply_markup.inline_keyboard[0][0].callback_data, 'interrupt:continue');
+  assert.equal(h.answerCalls[0].payload.text, 'options');
+});
+
+test('callback handler routes interrupt restart action', async () => {
+  const h = makeHarness();
+  h.chatRouter.set('100', { name: 'demo', workdir: '/tmp/demo' });
+  h.states.set('demo', { running: false, currentProc: null });
+
+  await h.handler({ id: 'q3c', data: 'interrupt:restart', message: { chat: { id: '100' } } });
+
+  assert.equal(h.answerCalls[0].payload.text, 'restart');
+  assert.equal(h.verboseCalls[0].action, 'restart:demo:true');
+});
+
+test('callback handler routes interrupt stop prompt action through normal run path', async () => {
+  const h = makeHarness({
+    inspectInterruptState: () => ({ kind: 'busy_noninterruptible' }),
+  });
+  h.chatRouter.set('100', { name: 'demo', workdir: '/tmp/demo' });
+  h.states.set('demo', { running: false, currentProc: null, queue: [] });
+
+  await h.handler({ id: 'q3d', data: 'interrupt:stop_prompt', message: { chat: { id: '100' } } });
+
+  assert.equal(h.writes[0].kind, 'dispatchPreparedPromptRunItem');
+  assert.equal(h.writes[0].runItem.promptText, 'stop prompt');
+  assert.match(h.safeSendCalls[0].text, /Stop prompt sent/);
+  assert.equal(h.answerCalls[0].payload.text, 'stop prompt sent');
+});
+
+test('callback handler does not send stale stop prompt when interrupt fallback is already idle', async () => {
+  const h = makeHarness({
+    inspectInterruptState: () => ({ kind: 'idle' }),
+  });
+  h.chatRouter.set('100', { name: 'demo', workdir: '/tmp/demo' });
+  h.states.set('demo', { running: false, currentProc: null, queue: [] });
+
+  await h.handler({ id: 'q3e', data: 'interrupt:stop_prompt', message: { chat: { id: '100' } } });
+
+  assert.equal(h.writes.length, 0);
+  assert.match(h.safeSendCalls[0].text, /No active background session/);
   assert.equal(h.answerCalls[0].payload.text, 'idle');
 });
 

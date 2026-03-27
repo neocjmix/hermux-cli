@@ -58,6 +58,7 @@ const {
 const {
   TelegramBot,
   createRepoMessageHandler,
+  dispatchPreparedPromptRunItem,
   createMessageHandler,
   createCallbackQueryHandler,
   reconcileRunViewForTelegram,
@@ -2085,16 +2086,95 @@ function buildStatusKeyboard() {
   };
 }
 
+function inspectInterruptState(state) {
+  const stateRunning = !!(state && state.running);
+  const hasRunningProc = !!(state && state.running && state.currentProc);
+  const latestSnapshot = state && state.latestSessionRenderState
+    ? inspectRunViewSnapshotState(state.latestSessionRenderState)
+    : null;
+  const sessionBusy = !!(latestSnapshot && latestSnapshot.busy);
+  const backgroundTaskCount = Number(latestSnapshot && latestSnapshot.backgroundTaskCount) || 0;
+  const backgroundAttached = !!(latestSnapshot && latestSnapshot.backgroundAttached) || sessionBusy;
+  if (hasRunningProc) {
+    return {
+      kind: 'interruptible',
+      hasRunningProc: true,
+      sessionBusy,
+      backgroundAttached,
+      backgroundTaskCount,
+      busy: true,
+    };
+  }
+  if (sessionBusy || stateRunning) {
+    return {
+      kind: 'busy_noninterruptible',
+      hasRunningProc: false,
+      sessionBusy: sessionBusy || stateRunning,
+      backgroundAttached,
+      backgroundTaskCount,
+      busy: true,
+    };
+  }
+  return {
+    kind: 'idle',
+    hasRunningProc: false,
+    sessionBusy: false,
+    backgroundAttached,
+    backgroundTaskCount,
+    busy: false,
+  };
+}
+
+function buildInterruptFallbackKeyboard() {
+  return {
+    inline_keyboard: [[
+      { text: 'Continue', callback_data: 'interrupt:continue' },
+      { text: 'Restart', callback_data: 'interrupt:restart' },
+      { text: 'Stop Prompt', callback_data: 'interrupt:stop_prompt' },
+    ]],
+  };
+}
+
+function buildInterruptFallbackMessage(repo) {
+  const repoName = escapeHtml(String((repo && repo.name) || 'repo'));
+  return [
+    `Current session work for <b>${repoName}</b> still looks busy, but there is no interruptible local run right now.`,
+    '',
+    'Choose one:',
+    '- Continue waiting for session updates',
+    '- Restart the daemon/runtime',
+    '- Send a stop prompt into the active session',
+  ].join('\n');
+}
+
+function buildInterruptStopPromptRunItem(chatId) {
+  return {
+    chatId: String(chatId || ''),
+    promptText: [
+      'Stop any background, delegated, or follow-up work still running for this same session.',
+      'Do not restart it.',
+      'Reply briefly with whether anything was stopped.',
+    ].join('\n'),
+    isVersionPrompt: false,
+  };
+}
+
 function buildRuntimeStatusHtml({ repo, state, chatId }) {
   const info = getSessionInfo(repo.name, chatId);
   const sid = info && info.sessionId ? String(info.sessionId) : '';
   const shortSid = sid ? sid.slice(0, 24) : '(none)';
   const queueLen = Array.isArray(state.queue) ? state.queue.length : 0;
   const waiting = state.waitingInfo ? 'yes' : 'no';
-  const latestSnapshot = state && state.latestSessionRenderState ? inspectRunViewSnapshotState(state.latestSessionRenderState) : null;
-  const sessionBusy = !!(latestSnapshot && latestSnapshot.busy);
-  const busy = !!state.running || sessionBusy;
-  const lifecycle = busy ? (state.waitingInfo ? 'waiting' : (state.running ? 'running' : 'session-active')) : 'ready';
+  const interruptState = inspectInterruptState(state);
+  const busy = interruptState.busy;
+  const lifecycle = busy
+    ? (state.waitingInfo ? 'waiting' : (state.running ? 'running' : 'processing'))
+    : 'ready';
+  const showBackgroundAttached = interruptState.backgroundTaskCount > 0
+    || (!interruptState.hasRunningProc && interruptState.backgroundAttached);
+  const backgroundState = showBackgroundAttached
+    ? `attached${interruptState.backgroundTaskCount > 0 ? ` (${interruptState.backgroundTaskCount})` : ''}`
+    : 'none';
   const waitDetail = state.waitingInfo && state.waitingInfo.status === 'retry'
     ? `retry${state.waitingInfo.retryAfterSeconds ? ` (${state.waitingInfo.retryAfterSeconds}s)` : ''}`
     : '-';
@@ -2107,6 +2187,7 @@ function buildRuntimeStatusHtml({ repo, state, chatId }) {
     `<code>workdir: ${escapeHtml(repo.workdir)}</code>`,
     '',
     `<code>state: ${lifecycle} | busy: ${busy ? 'yes' : 'no'} | waiting: ${waiting} | queue: ${queueLen}</code>`,
+    `<code>background: ${backgroundState} | interruptible: ${interruptState.hasRunningProc ? 'yes' : 'no'}</code>`,
     `<code>runtime: ${runtimeState} | transport: ${runtimeTransport} | runs: ${Number(runtimeStatus.activeRuns || 0)}</code>`,
     `<code>verbose: ${state.verbose ? 'on' : 'off'}</code>`,
     `<code>session: ${escapeHtml(shortSid)}</code>`,
@@ -4138,6 +4219,9 @@ const handleRepoMessage = createRepoMessageHandler({
   sendRepoList,
   handleVerboseAction,
   requestInterrupt,
+  inspectInterruptState,
+  buildInterruptFallbackKeyboard,
+  buildInterruptFallbackMessage,
   buildPromptFromMessage,
   startPromptRun,
   resolveRevertReplyTarget,
@@ -4252,16 +4336,23 @@ function main() {
   const handleCallbackQuery = createCallbackQueryHandler({
     bot,
     chatRouter,
-    states,
-    modelUiState,
-    modelControlService,
+  states,
+  modelUiState,
+  modelControlService,
     safeSend,
     handleConnectCommand,
     handleVerboseAction,
     requestInterrupt,
-    handleRevertConfirmCallback,
-    handleRevertCancelCallback,
-    handlePermissionCallback,
+    inspectInterruptState,
+    buildInterruptFallbackKeyboard,
+    buildInterruptFallbackMessage,
+    buildInterruptStopPromptRunItem,
+    handleRestartCommand,
+    startPromptRun,
+    dispatchPreparedPromptRunItem,
+  handleRevertConfirmCallback,
+  handleRevertCancelCallback,
+  handlePermissionCallback,
     handleQuestionCallback,
     withStateDispatchLock,
   });
@@ -4421,6 +4512,10 @@ module.exports = {
     buildProviderPickerKeyboard,
     buildModelPickerKeyboard,
     buildStatusKeyboard,
+    inspectInterruptState,
+    buildInterruptFallbackKeyboard,
+    buildInterruptFallbackMessage,
+    buildInterruptStopPromptRunItem,
     buildRuntimeStatusHtml,
     buildModelsSummaryHtml,
     getReplyContext,

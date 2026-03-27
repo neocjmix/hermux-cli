@@ -733,3 +733,41 @@ test('run view snapshot inspector exposes provider-agnostic metadata for gateway
   assert.equal(meta.activePermission.permission, 'bash');
   assert.deepEqual(meta.snapshotMessages, state.snapshot.messages);
 });
+
+test('run view snapshot inspector counts active background tool parts', () => {
+  let state = createRunViewSnapshotState('ses-bg');
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'message.updated',
+    properties: { info: { id: 'msg-bg', sessionID: 'ses-bg', role: 'assistant', time: { created: 1 } } },
+  }), 1, { runId: 'run-bg', minMessageTimeMs: 0, isFinal: false, repoName: 'repo-bg' });
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'message.part.updated',
+    properties: {
+      part: {
+        id: 'prt-bg-1',
+        sessionID: 'ses-bg',
+        messageID: 'msg-bg',
+        type: 'tool',
+        tool: 'task',
+        state: { status: 'running' },
+      },
+    },
+  }), 2, { runId: 'run-bg', minMessageTimeMs: 0, isFinal: false, repoName: 'repo-bg' });
+  state = applyPayloadToRunViewSnapshot(state, JSON.stringify({
+    type: 'message.part.updated',
+    properties: {
+      part: {
+        id: 'prt-bg-2',
+        sessionID: 'ses-bg',
+        messageID: 'msg-bg',
+        type: 'tool',
+        tool: 'task',
+        state: { status: 'queued' },
+      },
+    },
+  }), 3, { runId: 'run-bg', minMessageTimeMs: 0, isFinal: false, repoName: 'repo-bg' });
+
+  const meta = inspectRunViewSnapshotState(state);
+  assert.equal(meta.backgroundAttached, true);
+  assert.equal(meta.backgroundTaskCount, 2);
+});
