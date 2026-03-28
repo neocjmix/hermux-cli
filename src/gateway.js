@@ -15,7 +15,16 @@ const {
 } = require('./providers');
 const { load, getEnabledRepos, addChatIdToRepo, moveChatIdToRepo, addOrUpdateRepo, setGlobalBotToken, resetConfig, CONFIG_PATH } = require('./lib/config');
 const { md2html, escapeHtml } = require('./lib/md2html');
-const { getSessionId, setSessionId, clearSessionId, getSessionInfo, clearAllSessions, SESSION_MAP_PATH } = require('./lib/session-map');
+const {
+  getSessionId,
+  setSessionId,
+  clearSessionId,
+  getSessionInfo,
+  hasShownContinuityWarning,
+  markContinuityWarningShown,
+  clearAllSessions,
+  SESSION_MAP_PATH,
+} = require('./lib/session-map');
 const { makeAuditLogger } = require('./lib/audit-log');
 const {
   splitByOmoInitiatorMarker,
@@ -2088,6 +2097,7 @@ function buildStatusKeyboard() {
 
 function inspectInterruptState(state) {
   const stateRunning = !!(state && state.running);
+  const completionHandled = !!(state && state.completionHandled);
   const hasRunningProc = !!(state && state.running && state.currentProc);
   const latestSnapshot = state && state.latestSessionRenderState
     ? inspectRunViewSnapshotState(state.latestSessionRenderState)
@@ -2105,11 +2115,11 @@ function inspectInterruptState(state) {
       busy: true,
     };
   }
-  if (sessionBusy || stateRunning) {
+  if (sessionBusy && (!completionHandled || backgroundTaskCount > 0)) {
     return {
       kind: 'busy_noninterruptible',
       hasRunningProc: false,
-      sessionBusy: sessionBusy || stateRunning,
+      sessionBusy: true,
       backgroundAttached,
       backgroundTaskCount,
       busy: true,
@@ -2166,7 +2176,7 @@ function buildRuntimeStatusHtml({ repo, state, chatId }) {
   const queueLen = Array.isArray(state.queue) ? state.queue.length : 0;
   const waiting = state.waitingInfo ? 'yes' : 'no';
   const interruptState = inspectInterruptState(state);
-  const busy = interruptState.busy;
+  const busy = interruptState.busy || !!state.running || !!state.waitingInfo;
   const lifecycle = busy
     ? (state.waitingInfo ? 'waiting' : (state.running ? 'running' : 'processing'))
     : 'ready';
@@ -3038,7 +3048,10 @@ async function startPromptRun(bot, repo, state, runItem) {
   const toolNames = [];
   const rawSamples = [];
   let lastStepReason = null;
-  let activeSessionId = getSessionId(repo.name, chatId);
+  const initialSessionInfo = getSessionInfo(repo.name, chatId);
+  let activeSessionId = initialSessionInfo && initialSessionInfo.sessionId
+    ? String(initialSessionInfo.sessionId).trim()
+    : getSessionId(repo.name, chatId);
   state.activeSessionId = activeSessionId;
   await maybeMaterializeRunStartDraftPreview(bot, previousRunView, {
     repo: repo.name,
@@ -3059,6 +3072,7 @@ async function startPromptRun(bot, repo, state, runItem) {
   let waitInfo = null;
   let heartbeatTimer = null;
   let completionHandled = false;
+  state.completionHandled = false;
   let mermaidAttachmentDelivered = false;
   let lastRawPreviewSent = '';
   let lastRawPreviewSentAt = 0;
@@ -3078,18 +3092,22 @@ async function startPromptRun(bot, repo, state, runItem) {
   const runId = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
   const runStartedAtMs = Date.now();
   const initialSessionId = String(activeSessionId || '').trim();
+  const initialContinuityWarningNeeded = !!(
+    initialSessionId && !hasShownContinuityWarning(repo.name, chatId, initialSessionId)
+  );
   state.currentRunContext = {
     runId,
     chatId: String(chatId),
     startedAtMs: runStartedAtMs,
     sessionId: initialSessionId,
-    continuityWarning: initialSessionId
+    continuityWarning: initialContinuityWarningNeeded
       ? {
           kind: 'reused_session',
           priorSessionId: initialSessionId,
           sessionId: initialSessionId,
         }
       : null,
+    continuityWarningShown: !initialContinuityWarningNeeded,
   };
   state.typingIndicator.runId = runId;
   state.typingIndicator.chatId = String(chatId);
@@ -3581,12 +3599,24 @@ async function startPromptRun(bot, repo, state, runItem) {
           oldestPendingAgeMs,
           throttleIntervalMs: APPLY_PAYLOAD_THROTTLE_MS,
         });
+        let continuityWarningUsed = false;
+        let continuityWarningSessionId = '';
         for (const payload of payloads) {
           renderSeq += 1;
           state.sessionRenderSeq = renderSeq;
           const currentContext = state.currentRunContext && typeof state.currentRunContext === 'object'
             ? state.currentRunContext
             : null;
+          const continuityWarning = !continuityWarningUsed
+            && currentContext
+            && currentContext.continuityWarning
+            && !currentContext.continuityWarningShown
+            ? currentContext.continuityWarning
+            : null;
+          if (continuityWarning) {
+            continuityWarningUsed = true;
+            continuityWarningSessionId = String(continuityWarning.sessionId || currentContext.sessionId || '').trim();
+          }
           const runViewRunId = state.runView && state.runView.runId ? String(state.runView.runId) : String(runId);
           const minMessageTimeMs = Number(currentContext && currentContext.startedAtMs ? currentContext.startedAtMs : 0) || 0;
           snapshotState = applyPayloadToRunViewSnapshot(snapshotState, payload, renderSeq, {
@@ -3598,8 +3628,21 @@ async function startPromptRun(bot, repo, state, runItem) {
             viewMode: state.verbose ? 'verbose' : 'normal',
             repoName: repo.name,
             queueLength: Array.isArray(state.queue) ? state.queue.length : 0,
-            continuityWarning: currentContext && currentContext.continuityWarning,
+            continuityWarning,
           });
+        }
+        if (continuityWarningUsed) {
+          const currentContext = state.currentRunContext && typeof state.currentRunContext === 'object'
+            ? state.currentRunContext
+            : null;
+          if (currentContext) currentContext.continuityWarningShown = true;
+          if (continuityWarningSessionId) {
+            try {
+              markContinuityWarningShown(repo.name, chatId, continuityWarningSessionId);
+            } catch (e) {
+              console.error(`[${repo.name}] failed to persist continuity warning state:`, e.message);
+            }
+          }
         }
         const nextView = inspectRunViewSnapshotState(snapshotState);
         state.sessionRenderStates.set(key, snapshotState);
@@ -3952,6 +3995,7 @@ async function startPromptRun(bot, repo, state, runItem) {
               priorSessionId: previousSessionId,
               sessionId: activeSessionId,
             };
+            state.currentRunContext.continuityWarningShown = false;
           }
           await ensureSessionDelivery(activeSessionId);
         }
@@ -4016,6 +4060,7 @@ async function startPromptRun(bot, repo, state, runItem) {
       }
       if (completionHandled) return;
       completionHandled = true;
+      state.completionHandled = true;
       auditRun('run.completion.begin', {
         pendingReminder: true,
         pendingReasoning: true,
@@ -4175,6 +4220,7 @@ async function startPromptRun(bot, repo, state, runItem) {
       }
       if (completionHandled) return;
       completionHandled = true;
+      state.completionHandled = true;
       state.running = false;
       if (state.typingIndicator) state.typingIndicator.busy = false;
       clearTypingIndicatorTimer(state);
