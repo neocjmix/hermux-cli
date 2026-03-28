@@ -86,8 +86,8 @@ Lifecycle semantics:
 - unresolved button-only question prompts MUST NOT swallow later plain-text Telegram prompts; only explicit custom-input capture mode may treat free text as a question answer
 - removed message and part events MUST retract deleted content from future Telegram run-view reconciliation instead of leaving stale assistant text visible
 - session compaction and deletion MUST update projected state without breaking same-session event acceptance or leaving stale question/permission prompts open
-- when a run starts with existing session continuity, the status pane MUST warn that model context may include earlier turns hidden from the current run view
-- when upstream reports session compaction, the status pane MUST warn that model context may no longer match the visible chat history exactly
+- when a run starts with existing session continuity, the status pane MUST warn that the model is still carrying forward earlier context that is not shown in the current run view and that answers may rely on that hidden context, but it SHOULD suppress repeated identical resumed-session warnings for the same stored session until session identity changes or the user resets continuity
+- when upstream reports session compaction, the status pane MUST warn that earlier turns were compacted into model-visible summary context and that the exact original wording may no longer be visible in the chat history
 - delegated subagent/task work that remains active inside the same session MUST keep the status surfaces visibly busy until the delegated work reaches a terminal state
 - `/interrupt` MUST remain available while same-session delegated work is still active; it may only fall back to "no running task" after delegated work actually becomes non-interruptible under the session lifecycle rules
 - when same-session work is still visible as busy but no interruptible local run exists, `/interrupt` MUST present explicit fallback controls instead of pretending the work can be killed directly; the controls MAY offer continue, restart, and sending a stop prompt into the active session

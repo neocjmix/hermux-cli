@@ -155,7 +155,7 @@ test('run view snapshot materializer passes continuity warning into status pane'
   });
 
   const statusLines = String(state.snapshot.messages[0]).split('\n');
-  assert.equal(statusLines[2], '⚠️ forked session: model context may include earlier turns hidden from this run view');
+  assert.equal(statusLines[2], '⚠️ started from an earlier session: hidden prior context may still affect this answer');
 });
 
 test('run view snapshot materializer keeps logical blocks even when maxLen is smaller than content', () => {

@@ -75,8 +75,8 @@ function appendContinuityWarningLines(lines, renderState, options) {
   if (continuity) {
     const kind = toText(continuity.kind).trim().toLowerCase();
     const resumedText = kind === 'forked_session'
-      ? 'forked session: model context may include earlier turns hidden from this run view'
-      : 'resumed session: model context may include earlier turns hidden from this run view';
+      ? 'started from an earlier session: hidden prior context may still affect this answer'
+      : 'continuing an earlier session: hidden prior context may still affect this answer';
     if (viewMode === 'verbose') {
       const priorSessionId = toText(continuity.priorSessionId).trim();
       const sessionId = toText(continuity.sessionId).trim();
@@ -89,7 +89,7 @@ function appendContinuityWarningLines(lines, renderState, options) {
   }
 
   if (compactedAt > 0) {
-    const compactedText = 'session compacted: model context may no longer match visible chat history exactly';
+    const compactedText = 'earlier turns were compacted: the model may remember a summary that is not shown verbatim here';
     if (viewMode === 'verbose') {
       lines.push(`warning: ${formatInlineCode(compactedText)}`);
     } else {

@@ -233,7 +233,7 @@ test('opencode view builder shows continuity warning for reused session runs', (
   });
 
   const statusLines = String(view[0]).split('\n');
-  assert.equal(statusLines[2], '⚠️ resumed session: model context may include earlier turns hidden from this run view');
+  assert.equal(statusLines[2], '⚠️ continuing an earlier session: hidden prior context may still affect this answer');
 });
 
 test('opencode view builder shows compaction warning from render state', () => {
@@ -253,7 +253,7 @@ test('opencode view builder shows compaction warning from render state', () => {
   });
 
   const statusLines = String(view[0]).split('\n');
-  assert.equal(statusLines[2], '⚠️ session compacted: model context may no longer match visible chat history exactly');
+  assert.equal(statusLines[2], '⚠️ earlier turns were compacted: the model may remember a summary that is not shown verbatim here');
 });
 
 test('opencode view builder shows processing status while delegated tool work remains active', () => {
