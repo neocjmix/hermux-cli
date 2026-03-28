@@ -49,11 +49,20 @@ function getSessionId(repoName, chatId) {
 function setSessionId(repoName, chatId, sessionId) {
   const key = makeSessionKey(repoName, chatId);
   const map = loadSessionMap();
+  const sid = String(sessionId || '').trim();
+  const current = map.sessions[key] && typeof map.sessions[key] === 'object'
+    ? map.sessions[key]
+    : null;
+  const currentWarnedSessionId = String((current && current.continuityWarningSessionId) || '').trim();
   map.sessions[key] = {
-    sessionId: String(sessionId || '').trim(),
+    sessionId: sid,
     updatedAt: new Date().toISOString(),
     repoName: String(repoName || '').trim(),
     chatId: String(chatId || '').trim(),
+    continuityWarningSessionId: currentWarnedSessionId === sid ? sid : '',
+    continuityWarningShownAt: currentWarnedSessionId === sid
+      ? String((current && current.continuityWarningShownAt) || '').trim()
+      : '',
   };
   saveSessionMap(map);
   return map.sessions[key];
@@ -76,6 +85,34 @@ function getSessionInfo(repoName, chatId) {
   return map.sessions[key] || null;
 }
 
+function hasShownContinuityWarning(repoName, chatId, sessionId) {
+  const info = getSessionInfo(repoName, chatId);
+  const sid = String(sessionId || '').trim();
+  if (!info || !sid) return false;
+  return String(info.continuityWarningSessionId || '').trim() === sid;
+}
+
+function markContinuityWarningShown(repoName, chatId, sessionId) {
+  const sid = String(sessionId || '').trim();
+  if (!sid) return null;
+  const key = makeSessionKey(repoName, chatId);
+  const map = loadSessionMap();
+  const current = map.sessions[key] && typeof map.sessions[key] === 'object'
+    ? map.sessions[key]
+    : {};
+  map.sessions[key] = {
+    ...current,
+    sessionId: String(current.sessionId || '').trim() || sid,
+    updatedAt: new Date().toISOString(),
+    repoName: String(repoName || '').trim(),
+    chatId: String(chatId || '').trim(),
+    continuityWarningSessionId: sid,
+    continuityWarningShownAt: new Date().toISOString(),
+  };
+  saveSessionMap(map);
+  return map.sessions[key];
+}
+
 function clearAllSessions() {
   const current = loadSessionMap();
   const count = Object.keys(current.sessions || {}).length;
@@ -92,5 +129,7 @@ module.exports = {
   setSessionId,
   clearSessionId,
   getSessionInfo,
+  hasShownContinuityWarning,
+  markContinuityWarningShown,
   clearAllSessions,
 };

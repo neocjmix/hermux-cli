@@ -1,75 +1,53 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
 
 require('./helpers/test-profile');
 
-const sessions = require('../src/lib/session-map');
+const {
+  clearAllSessions,
+  getSessionInfo,
+  hasShownContinuityWarning,
+  markContinuityWarningShown,
+  setSessionId,
+} = require('../src/lib/session-map');
 
-const SNAPSHOT = Symbol('session-snapshot');
+test('session map records continuity warning visibility per session id', () => {
+  clearAllSessions();
 
-function backupFile(filePath) {
-  if (fs.existsSync(filePath)) {
-    return fs.readFileSync(filePath, 'utf8');
-  }
-  return SNAPSHOT;
-}
+  setSessionId('demo', '100', 'ses-a');
+  assert.equal(hasShownContinuityWarning('demo', '100', 'ses-a'), false);
 
-function restoreFile(filePath, snapshot) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  if (snapshot === SNAPSHOT) {
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-    return;
-  }
-  fs.writeFileSync(filePath, snapshot, 'utf8');
-}
+  markContinuityWarningShown('demo', '100', 'ses-a');
 
-test('session map set/get/clear lifecycle', () => {
-  const snapshot = backupFile(sessions.SESSION_MAP_PATH);
-  try {
-    sessions.saveSessionMap({ sessions: {} });
-    const row = sessions.setSessionId('repo-a', '100', 'sess-1');
-    assert.equal(row.sessionId, 'sess-1');
-    assert.equal(sessions.getSessionId('repo-a', '100'), 'sess-1');
-
-    const info = sessions.getSessionInfo('repo-a', '100');
-    assert.equal(info.repoName, 'repo-a');
-    assert.equal(info.chatId, '100');
-
-    assert.equal(sessions.clearSessionId('repo-a', '100'), true);
-    assert.equal(sessions.getSessionId('repo-a', '100'), '');
-  } finally {
-    restoreFile(sessions.SESSION_MAP_PATH, snapshot);
-  }
+  assert.equal(hasShownContinuityWarning('demo', '100', 'ses-a'), true);
+  assert.equal(hasShownContinuityWarning('demo', '100', 'ses-b'), false);
 });
 
-test('session map clearSessionId is idempotent for missing key', () => {
-  const snapshot = backupFile(sessions.SESSION_MAP_PATH);
-  try {
-    sessions.saveSessionMap({ sessions: {} });
+test('session map preserves warning marker for unchanged session and clears it for a new session', () => {
+  clearAllSessions();
 
-    assert.equal(sessions.clearSessionId('repo-missing', '404'), false);
-    assert.equal(sessions.getSessionId('repo-missing', '404'), '');
-  } finally {
-    restoreFile(sessions.SESSION_MAP_PATH, snapshot);
-  }
+  setSessionId('demo', '100', 'ses-a');
+  markContinuityWarningShown('demo', '100', 'ses-a');
+
+  setSessionId('demo', '100', 'ses-a');
+  assert.equal(hasShownContinuityWarning('demo', '100', 'ses-a'), true);
+
+  setSessionId('demo', '100', 'ses-b');
+  assert.equal(hasShownContinuityWarning('demo', '100', 'ses-b'), false);
 });
 
-test('session map clearAllSessions returns count and keeps empty map stable', () => {
-  const snapshot = backupFile(sessions.SESSION_MAP_PATH);
-  try {
-    sessions.saveSessionMap({ sessions: {} });
-    assert.equal(sessions.clearAllSessions(), 0);
+test('session map can stage warning visibility for a handoff session without replacing stored session id early', () => {
+  clearAllSessions();
 
-    sessions.setSessionId('repo-a', '100', 'sess-1');
-    sessions.setSessionId('repo-b', '200', 'sess-2');
-    assert.equal(sessions.clearAllSessions(), 2);
-    assert.equal(sessions.getSessionId('repo-a', '100'), '');
-    assert.equal(sessions.getSessionId('repo-b', '200'), '');
+  setSessionId('demo', '100', 'ses-a');
+  markContinuityWarningShown('demo', '100', 'ses-b');
 
-    assert.equal(sessions.clearAllSessions(), 0);
-  } finally {
-    restoreFile(sessions.SESSION_MAP_PATH, snapshot);
-  }
+  const staged = getSessionInfo('demo', '100');
+  assert.equal(staged.sessionId, 'ses-a');
+  assert.equal(staged.continuityWarningSessionId, 'ses-b');
+
+  setSessionId('demo', '100', 'ses-b');
+  const committed = getSessionInfo('demo', '100');
+  assert.equal(committed.sessionId, 'ses-b');
+  assert.equal(hasShownContinuityWarning('demo', '100', 'ses-b'), true);
 });
