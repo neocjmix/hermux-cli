@@ -91,6 +91,10 @@ Lifecycle semantics:
 - delegated subagent/task work that remains active inside the same session MUST keep the status surfaces visibly busy until the delegated work reaches a terminal state
 - `/interrupt` MUST remain available while same-session delegated work is still active; it may only fall back to "no running task" after delegated work actually becomes non-interruptible under the session lifecycle rules
 - when same-session work is still visible as busy but no interruptible local run exists, `/interrupt` MUST present explicit fallback controls instead of pretending the work can be killed directly; the controls MAY offer continue, restart, and sending a stop prompt into the active session
+- `/tunnel auth <token>` MUST be completable from Telegram without local CLI access; when auth is missing, the bot MUST explain that an ngrok authtoken is required, provide the direct token link, and tell the user the exact next Telegram command to send
+- `/tunnel auth <token>` MUST only accept secrets in a private chat with the bot; group chats MUST be refused with guidance to switch to private chat
+- `/tunnel open <port>`, `/tunnel status`, and `/tunnel close` MUST be completable from Telegram in a mapped repo chat and MUST show the current public URL, local port, and tunnel lifecycle state in plain language
+- `/tunnel open <port>` MUST validate the requested port and tell the user when localhost is not reachable on that port instead of silently opening a broken tunnel
 - when stop-prompt fallback is used, the system MUST describe it as a prompt/request sent into the active session, not as a confirmed interrupt or kill
 - status surfaces SHOULD distinguish non-interruptible same-session background processing from normal busy execution with a simple third state, and SHOULD show a background count only when that count is derived from a trustworthy active-work signal
 - `<system-reminder>` content is rendered at the bottom of the live status panel and MUST appear as a code block

@@ -153,6 +153,9 @@ Contract rules:
 - Run-view status rendering MUST derive a compaction warning from reduced session state when `session.compacted` has been observed, so downstream users are told that visible chat history may diverge from upstream model context.
 - Run-view status rendering MUST treat same-session delegated tool/task parts with active running state as busy authority even when no fresh `session.status busy` event arrives, and it MUST return to idle only after those delegated parts reach terminal state.
 - Run-view snapshot inspection MAY derive an active background-tool count by scanning reduced tool parts with the same active-status predicate used for busy authority; cumulative counters like `toolCount` and `stepCount` MUST NOT be repurposed as active background counts.
+- Config storage MUST support a global ngrok authtoken separate from repo mappings so Telegram-driven tunnel auth can be completed once and reused across repo chats.
+- Telegram message routing MUST allow a private-chat `/tunnel auth` flow before repo mapping, while repo-bound `/tunnel open|status|close` handling remains in the mapped repo command path.
+- Tunnel runtime state MUST remain ephemeral/in-memory at process scope and support open, replace, status, and close operations per repo scope without requiring a gateway restart.
 - When a new run starts in the same session, downstream reconciliation MUST preserve prior-run chat history and start a fresh status-panel message for the new run instead of reusing prior-run body or status slots.
 - Run-start handoff MUST materialize any non-empty prior Telegram draft preview before `state.runView` is reset for the next run; empty draft previews are ignored.
 - Active-run Telegram reconciliation SHOULD treat `tailMaterializeHint.reason === "text_part_updated_after_delta"` as a strong boundary for immediate tail materialization while preserving weaker hints for fallback-only behavior.
