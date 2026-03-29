@@ -7,7 +7,11 @@ const MAX_PENDING_QUEUE = Number.isFinite(parsedMaxPendingQueue) && parsedMaxPen
   : DEFAULT_MAX_PENDING_QUEUE;
 
 function summarizeText(text) {
-  const value = String(text || '').replace(/\s+/g, ' ').trim();
+  const raw = String(text || '').trim();
+  const redacted = /^(\/tunnel(?:@[^\s]+)?\s+auth)(?:\s+.+)?$/i.test(raw)
+    ? raw.replace(/^(\/tunnel(?:@[^\s]+)?\s+auth)(?:\s+.+)?$/i, (_m, head) => `${head} [REDACTED]`)
+    : raw;
+  const value = redacted.replace(/\s+/g, ' ').trim();
   if (!value) return '';
   return value.length > 240 ? `${value.slice(0, 240)}...(truncated)` : value;
 }
@@ -95,6 +99,8 @@ function createRepoMessageHandler(deps) {
     resolveRevertReplyTarget,
     createRevertConfirmation,
     executeSessionUnrevert,
+    handleTunnelCommand,
+    handleTunnelAuthCommand,
     audit,
   } = deps;
 
@@ -124,7 +130,7 @@ function createRepoMessageHandler(deps) {
           `workdir: ${repo.workdir}`,
           '',
           `mode: ${state.verbose ? 'verbose (stream events)' : 'compact (final output only)'}`,
-          'commands: /repos, /status, /models, /session, /version, /revert, /unrevert, /test, /interrupt, /restart, /reset, /init, /verbose on, /verbose off, /whereami',
+          'commands: /repos, /status, /models, /session, /tunnel, /version, /revert, /unrevert, /test, /interrupt, /restart, /reset, /init, /verbose on, /verbose off, /whereami',
           '',
           'Send any prompt to run opencode.',
         ].join('\n')
@@ -159,6 +165,18 @@ function createRepoMessageHandler(deps) {
         `repo: ${repo.name}\nchat_id: ${chatId}\nsession_id: ${info.sessionId}\nupdated_at: ${info.updatedAt || 'unknown'}\nstate_file: ${SESSION_MAP_PATH}`
       );
       return;
+    }
+
+    if (command === '/tunnel') {
+      const action = String(parsed && parsed.args && parsed.args[0] || '').trim().toLowerCase();
+      if (action === 'auth' && typeof handleTunnelAuthCommand === 'function') {
+        await handleTunnelAuthCommand(bot, msg, parsed);
+        return;
+      }
+      if (typeof handleTunnelCommand === 'function') {
+        await handleTunnelCommand(bot, repo, state, msg, parsed);
+        return;
+      }
     }
 
     if (command === '/reset') {

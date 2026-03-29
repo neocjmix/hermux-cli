@@ -39,6 +39,12 @@ function makeDeps(overrides = {}) {
     resolveRevertReplyTarget: () => null,
     createRevertConfirmation: async () => ({ text: 'confirm', opts: { reply_markup: { inline_keyboard: [] } } }),
     executeSessionUnrevert: async () => ({ text: 'unrevert ok' }),
+    handleTunnelCommand: async (_bot, repo, _state, _msg, parsed) => {
+      sent.push({ chatId: '100', text: `tunnel:${repo.name}:${String(parsed && parsed.args && parsed.args[0] || '')}` });
+    },
+    handleTunnelAuthCommand: async () => {
+      sent.push({ chatId: '100', text: 'tunnel auth handled' });
+    },
     startPromptRun: async (_bot, repo, _state, queuedItem) => {
       started.push({ repo: repo.name, queuedItem });
     },
@@ -253,6 +259,30 @@ test('repo handler maps /verbose on and /verbose off actions', async () => {
   await handler({}, { name: 'demo', workdir: '/tmp/demo' }, { running: false, queue: [] }, { chat: { id: '100' }, text: '/verbose off' });
 
   assert.deepEqual(verboseActions, ['on', 'off']);
+});
+
+test('repo handler routes /tunnel open to tunnel command handler', async () => {
+  const { deps, sent } = makeDeps();
+  const handler = createRepoMessageHandler(deps);
+
+  await handler({}, { name: 'demo', workdir: '/tmp/demo' }, { running: false, queue: [] }, {
+    chat: { id: '100', type: 'private' },
+    text: '/tunnel open 3000',
+  });
+
+  assert.equal(sent[0].text, 'tunnel:demo:open');
+});
+
+test('repo handler routes /tunnel auth through dedicated auth handler', async () => {
+  const { deps, sent } = makeDeps();
+  const handler = createRepoMessageHandler(deps);
+
+  await handler({}, { name: 'demo', workdir: '/tmp/demo' }, { running: false, queue: [] }, {
+    chat: { id: '100', type: 'private' },
+    text: '/tunnel auth secret-token',
+  });
+
+  assert.equal(sent[0].text, 'tunnel auth handled');
 });
 
 test('repo handler handles interrupt failure path', async () => {
