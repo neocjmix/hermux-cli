@@ -198,3 +198,21 @@ test('config resetConfig respects keepToken option', () => {
     restoreFile(config.CONFIG_PATH, snapshot);
   }
 });
+
+test('config stores and reloads global ngrok authtoken', () => {
+  const snapshot = backupFile(config.CONFIG_PATH);
+  try {
+    config.save({
+      global: { telegramBotToken: '1:abc', ngrokAuthtoken: '' },
+      repos: [],
+    });
+
+    config.setGlobalNgrokAuthtoken('ngrok-secret-token');
+
+    const loaded = config.load();
+    assert.equal(loaded.global.ngrokAuthtoken, 'ngrok-secret-token');
+    assert.equal(loaded.global.telegramBotToken, '1:abc');
+  } finally {
+    restoreFile(config.CONFIG_PATH, snapshot);
+  }
+});

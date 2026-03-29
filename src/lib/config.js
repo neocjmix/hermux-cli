@@ -66,6 +66,7 @@ function normalizeFromLegacy(raw) {
   return {
     global: {
       telegramBotToken: legacyToken,
+      ngrokAuthtoken: '',
     },
     repos,
   };
@@ -73,16 +74,22 @@ function normalizeFromLegacy(raw) {
 
 function normalize(raw) {
   if (!raw || typeof raw !== 'object') {
-    return { global: { telegramBotToken: '' }, repos: [] };
+    return { global: { telegramBotToken: '', ngrokAuthtoken: '' }, repos: [] };
   }
 
   if (Array.isArray(raw.repos)) {
     const globalToken = raw.global && typeof raw.global === 'object'
       ? String(raw.global.telegramBotToken || '').trim()
       : '';
+    const ngrokAuthtoken = raw.global && typeof raw.global === 'object'
+      ? String(raw.global.ngrokAuthtoken || '').trim()
+      : '';
     const repos = raw.repos.map(normalizeRepo).filter(repo => repo.name);
     return {
-      global: { telegramBotToken: globalToken },
+      global: {
+        telegramBotToken: globalToken,
+        ngrokAuthtoken,
+      },
       repos,
     };
   }
@@ -92,7 +99,7 @@ function normalize(raw) {
 
 function load() {
   if (!fs.existsSync(CONFIG_PATH)) {
-    return { global: { telegramBotToken: '' }, repos: [] };
+    return { global: { telegramBotToken: '', ngrokAuthtoken: '' }, repos: [] };
   }
   const raw = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
   return normalize(raw);
@@ -109,6 +116,13 @@ function save(config) {
 function setGlobalBotToken(token) {
   const config = load();
   config.global.telegramBotToken = String(token || '').trim();
+  save(config);
+  return config;
+}
+
+function setGlobalNgrokAuthtoken(token) {
+  const config = load();
+  config.global.ngrokAuthtoken = String(token || '').trim();
   save(config);
   return config;
 }
@@ -246,6 +260,7 @@ function resetConfig(options) {
   const next = {
     global: {
       telegramBotToken: keepToken ? String((current.global || {}).telegramBotToken || '').trim() : '',
+      ngrokAuthtoken: String((current.global || {}).ngrokAuthtoken || '').trim(),
     },
     repos: [],
   };
@@ -261,6 +276,7 @@ module.exports = {
   load,
   save,
   setGlobalBotToken,
+  setGlobalNgrokAuthtoken,
   addOrUpdateRepo,
   addChatIdToRepo,
   moveChatIdToRepo,
