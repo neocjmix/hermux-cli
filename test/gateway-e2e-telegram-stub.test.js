@@ -21,6 +21,7 @@ const EXPECTED_BOT_COMMANDS = [
   'status',
   'models',
   'session',
+  'tunnel',
   'version',
   'revert',
   'unrevert',

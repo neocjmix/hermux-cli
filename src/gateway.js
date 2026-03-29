@@ -13,7 +13,17 @@ const {
   resolveUpstreamProvider,
   resolveDownstreamProvider,
 } = require('./providers');
-const { load, getEnabledRepos, addChatIdToRepo, moveChatIdToRepo, addOrUpdateRepo, setGlobalBotToken, resetConfig, CONFIG_PATH } = require('./lib/config');
+const {
+  load,
+  getEnabledRepos,
+  addChatIdToRepo,
+  moveChatIdToRepo,
+  addOrUpdateRepo,
+  setGlobalBotToken,
+  setGlobalNgrokAuthtoken,
+  resetConfig,
+  CONFIG_PATH,
+} = require('./lib/config');
 const { md2html, escapeHtml } = require('./lib/md2html');
 const {
   getSessionId,
@@ -26,6 +36,7 @@ const {
   SESSION_MAP_PATH,
 } = require('./lib/session-map');
 const { makeAuditLogger } = require('./lib/audit-log');
+const { openTunnel, closeTunnel, getTunnelStatus, closeAllTunnels } = require('./lib/ngrok-manager');
 const {
   splitByOmoInitiatorMarker,
   extractLatestSystemReminder,
@@ -126,6 +137,10 @@ const APPLY_PAYLOAD_THROTTLE_MS = parseInt(process.env.HERMUX_APPLY_PAYLOAD_THRO
 const RUN_VIEW_RETRY_AFTER_DEFER_MS = parseInt(process.env.HERMUX_RUN_VIEW_RETRY_AFTER_DEFER_MS || '5000', 10);
 const TRACE_RUNVIEW_DIAGNOSTICS = true;
 const TRACE_SESSION_ID = String(process.env.HERMUX_TRACE_SESSION_ID || '').trim();
+const NGROK_AUTHTOKEN_URL = 'https://dashboard.ngrok.com/get-started/your-authtoken';
+const NGROK_GETTING_STARTED_URL = 'https://ngrok.com/docs/getting-started/';
+const NGROK_DOMAINS_URL = 'https://dashboard.ngrok.com/domains';
+const NGROK_ERR_15013_URL = 'https://ngrok.com/docs/errors/err_ngrok_15013/';
 const auditLogger = makeAuditLogger(RUNTIME_DIR);
 let connectMutationQueue = Promise.resolve();
 let restartMutationQueue = Promise.resolve();
@@ -193,9 +208,16 @@ function persistRevertTargets() {
 }
 
 function summarizeAuditText(text) {
-  const value = String(text || '').replace(/\s+/g, ' ').trim();
+  const value = sanitizeSensitiveCommandText(text).replace(/\s+/g, ' ').trim();
   if (!value) return '';
   return value.length > 500 ? `${value.slice(0, 500)}...(truncated)` : value;
+}
+
+function sanitizeSensitiveCommandText(text) {
+  const value = String(text || '').trim();
+  const match = value.match(/^(\/tunnel(?:@[^\s]+)?\s+auth)(?:\s+.+)?$/i);
+  if (!match) return value;
+  return value === match[1] ? match[1] : `${match[1]} [REDACTED]`;
 }
 
 function buildAuditContentMeta(text) {
@@ -438,6 +460,7 @@ function getHelpText() {
     '/status - show runtime state',
     '/models - show/update opencode vs oh-my-opencode model layers',
     '/session - show current opencode session id',
+    '/tunnel - manage ngrok auth and tunnel lifecycle',
     '/version - show opencode output + hermux version',
     '/revert - reply to output and request revert (with confirm)',
     '/unrevert - restore from current revert state if still available',
@@ -461,8 +484,233 @@ function getHelpText() {
     '4) In that group, run /connect <repo>',
     'Tip: /connect and /verbose support button selections too.',
     '',
+    'Tunnel quick flow:',
+    `1) In private chat, run /tunnel auth <token> (token: ${NGROK_AUTHTOKEN_URL})`,
+    '2) In a mapped repo chat, run /tunnel open <port>',
+    '3) Use /tunnel status or /tunnel close as needed',
+    '',
     'Note: if group messages are not visible, check Telegram bot privacy mode.',
   ].join('\n');
+}
+
+function isPrivateChatMessage(msg) {
+  const chat = msg && msg.chat && typeof msg.chat === 'object' ? msg.chat : {};
+  const type = String(chat.type || '').trim().toLowerCase();
+  if (type) return type === 'private';
+  return !String(chat.id || '').trim().startsWith('-');
+}
+
+function getConfiguredNgrokAuthtoken() {
+  const config = load();
+  return String(config && config.global && config.global.ngrokAuthtoken || '').trim();
+}
+
+function getTunnelScopeKey(repo) {
+  return `${String(repo && repo.name || '').trim()}::${String(repo && repo.workdir || '').trim()}`;
+}
+
+function maskSecretSuffix(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '(missing)';
+  if (raw.length <= 4) return raw;
+  return `...${raw.slice(-4)}`;
+}
+
+function buildTunnelUsageText() {
+  return [
+    'Tunnel commands:',
+    '/tunnel auth',
+    '/tunnel auth <token>',
+    '/tunnel open <port>',
+    '/tunnel status',
+    '/tunnel close',
+  ].join('\n');
+}
+
+function buildTunnelAuthStatusText(msg, hasToken) {
+  const privateChat = isPrivateChatMessage(msg);
+  const lines = [
+    hasToken
+      ? `ngrok auth is configured (${maskSecretSuffix(getConfiguredNgrokAuthtoken())}).`
+      : 'ngrok auth token is not configured.',
+  ];
+  if (!hasToken) {
+    lines.push('');
+    lines.push('Get your authtoken here:');
+    lines.push(NGROK_AUTHTOKEN_URL);
+    lines.push('Docs:');
+    lines.push(NGROK_GETTING_STARTED_URL);
+  }
+  lines.push('');
+  if (privateChat) {
+    lines.push('Next Telegram step: /tunnel auth <your-token>');
+  } else {
+    lines.push('For security, auth setup is allowed only in a private chat with this bot.');
+    lines.push('Open a private chat and send: /tunnel auth <your-token>');
+  }
+  return lines.join('\n');
+}
+
+async function handleTunnelAuthCommand(bot, msg, parsed) {
+  const chatId = String(msg && msg.chat && msg.chat.id ? msg.chat.id : '');
+  const args = parsed && Array.isArray(parsed.args) ? parsed.args : [];
+  const token = String(args.slice(1).join(' ') || '').trim();
+  const hasToken = !!getConfiguredNgrokAuthtoken();
+  if (!token) {
+    await safeSend(bot, chatId, buildTunnelAuthStatusText(msg, hasToken));
+    return;
+  }
+  if (!isPrivateChatMessage(msg)) {
+    await safeSend(bot, chatId, buildTunnelAuthStatusText(msg, hasToken));
+    return;
+  }
+  setGlobalNgrokAuthtoken(token);
+  await safeSend(bot, chatId, [
+    `ngrok auth token saved (${maskSecretSuffix(token)}).`,
+    `Token source: ${NGROK_AUTHTOKEN_URL}`,
+    'Next Telegram step: /tunnel open <port> in a mapped repo chat.',
+  ].join('\n'));
+}
+
+function buildTunnelMissingAuthText(msg) {
+  return [
+    'ngrok auth token is not configured.',
+    '',
+    'Get your authtoken here:',
+    NGROK_AUTHTOKEN_URL,
+    'Docs:',
+    NGROK_GETTING_STARTED_URL,
+    '',
+    isPrivateChatMessage(msg)
+      ? 'Next Telegram step: /tunnel auth <your-token>'
+      : 'Next Telegram step: open a private chat with this bot and send /tunnel auth <your-token>',
+  ].join('\n');
+}
+
+function buildTunnelOpenErrorText(code, port) {
+  const normalizedCode = String(code || '').trim();
+  if (normalizedCode === 'ERR_NGROK_15013' || normalizedCode.includes('ERR_NGROK_15013')) {
+    return [
+      'Tunnel open failed because ngrok is requesting a dev domain that your account does not have.',
+      '',
+      `Local port was: ${port}`,
+      'What to do:',
+      `1. Open ${NGROK_DOMAINS_URL}`,
+      '2. Request or verify a dev domain for this ngrok account',
+      `3. Retry: /tunnel open ${port}`,
+      '',
+      `Error reference: ${NGROK_ERR_15013_URL}`,
+    ].join('\n');
+  }
+  return `Tunnel open failed: ${normalizedCode || 'unknown_error'}`;
+}
+
+async function handleTunnelCommand(bot, repo, _state, msg, parsed) {
+  const chatId = String(msg && msg.chat && msg.chat.id ? msg.chat.id : '');
+  const args = parsed && Array.isArray(parsed.args) ? parsed.args : [];
+  const action = String(args[0] || '').trim().toLowerCase();
+  const scopeKey = getTunnelScopeKey(repo);
+  const hasToken = !!getConfiguredNgrokAuthtoken();
+
+  if (!action || action === 'help') {
+    const active = getTunnelStatus(scopeKey);
+    await safeSend(bot, chatId, [
+      buildTunnelUsageText(),
+      '',
+      `repo: ${repo.name}`,
+      `auth: ${hasToken ? 'configured' : 'missing'}`,
+      `active_tunnel: ${active ? 'yes' : 'no'}`,
+      ...(active ? [`public_url: ${active.url}`, `local_port: ${active.port}`] : []),
+    ].join('\n'));
+    return;
+  }
+
+  if (action === 'auth') {
+    await handleTunnelAuthCommand(bot, msg, parsed);
+    return;
+  }
+
+  if (action === 'status') {
+    const active = getTunnelStatus(scopeKey);
+    if (!active) {
+      await safeSend(bot, chatId, [
+        `repo: ${repo.name}`,
+        `auth: ${hasToken ? 'configured' : 'missing'}`,
+        'active_tunnel: no',
+        hasToken ? 'Open one with: /tunnel open <port>' : buildTunnelMissingAuthText(msg),
+      ].join('\n\n'));
+      return;
+    }
+    await safeSend(bot, chatId, [
+      'Tunnel is live.',
+      `repo: ${repo.name}`,
+      `local: http://127.0.0.1:${active.port}`,
+      `public: ${active.url}`,
+      `started_at: ${active.startedAt}`,
+      'Close it with: /tunnel close',
+    ].join('\n'));
+    return;
+  }
+
+  if (action === 'open') {
+    const port = Number(args[1]);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      await safeSend(bot, chatId, ['Invalid or missing port.', 'Usage: /tunnel open <port>'].join('\n'));
+      return;
+    }
+    if (!hasToken) {
+      await safeSend(bot, chatId, buildTunnelMissingAuthText(msg));
+      return;
+    }
+    try {
+      const result = await openTunnel({
+        scopeKey,
+        port,
+        authtoken: getConfiguredNgrokAuthtoken(),
+      });
+      const active = result.tunnel;
+      await safeSend(bot, chatId, [
+        result.reused ? 'Tunnel already active.' : 'Tunnel is live.',
+        `repo: ${repo.name}`,
+        `local: http://127.0.0.1:${active.port}`,
+        `public: ${active.url}`,
+        'Warning: this port is now reachable from the internet.',
+        'Use /tunnel status to view it again or /tunnel close to stop it.',
+      ].join('\n'));
+      return;
+    } catch (err) {
+      const code = String(err && err.message ? err.message : err || '').trim();
+      if (code === 'local_port_unreachable' || code === 'local_port_timeout') {
+        await safeSend(bot, chatId, [
+          `Could not reach localhost:${port}.`,
+          'Start the local service first, then retry: /tunnel open <port>',
+        ].join('\n'));
+        return;
+      }
+      await safeSend(bot, chatId, buildTunnelOpenErrorText(code, port));
+      return;
+    }
+  }
+
+  if (action === 'close') {
+    const result = await closeTunnel(scopeKey);
+    if (!result.closed || !result.tunnel) {
+      await safeSend(bot, chatId, `No active tunnel for repo ${repo.name}.`);
+      return;
+    }
+    await safeSend(bot, chatId, [
+      'Tunnel closed.',
+      `repo: ${repo.name}`,
+      `public: ${result.tunnel.url}`,
+      `local_port: ${result.tunnel.port}`,
+    ].join('\n'));
+    return;
+  }
+
+  await safeSend(bot, chatId, [
+    `Unknown /tunnel action: ${action}`,
+    buildTunnelUsageText(),
+  ].join('\n\n'));
 }
 
 function buildTelegramFormattingShowcase() {
@@ -4273,6 +4521,8 @@ const handleRepoMessage = createRepoMessageHandler({
   resolveRevertReplyTarget,
   createRevertConfirmation,
   executeSessionUnrevert,
+  handleTunnelCommand,
+  handleTunnelAuthCommand,
 });
 
 function main() {
@@ -4375,6 +4625,7 @@ function main() {
     sendTelegramFormattingShowcase,
     sendRepoList,
     handleConnectCommand,
+    handleTunnelAuthCommand,
     withStateDispatchLock,
     handleRepoMessage,
     handleQuestionTextInput,
@@ -4414,6 +4665,7 @@ function main() {
     { command: 'status', description: 'Show current runtime status' },
     { command: 'models', description: 'Manage opencode/omo model layers' },
     { command: 'session', description: 'Show current opencode session' },
+    { command: 'tunnel', description: 'Manage ngrok auth and tunnels' },
     { command: 'version', description: 'Show opencode and hermux version' },
     { command: 'revert', description: 'Reply to output and revert (confirm)' },
     { command: 'unrevert', description: 'Undo latest revert if still available' },
@@ -4500,6 +4752,11 @@ function main() {
     try {
       await bot.stopPolling();
     } catch (_err) {
+    }
+    try {
+      await closeAllTunnels();
+    } catch (err) {
+      console.error('[shutdown] failed to close ngrok tunnels:', err.message);
     }
     try {
       await stopAllRuntimeExecutors();
