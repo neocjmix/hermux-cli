@@ -1,7 +1,11 @@
 'use strict';
 
 function summarizeText(text) {
-  const value = String(text || '').replace(/\s+/g, ' ').trim();
+  const raw = String(text || '').trim();
+  const redacted = /^(\/tunnel(?:@[^\s]+)?\s+auth)(?:\s+.+)?$/i.test(raw)
+    ? raw.replace(/^(\/tunnel(?:@[^\s]+)?\s+auth)(?:\s+.+)?$/i, (_m, head) => `${head} [REDACTED]`)
+    : raw;
+  const value = redacted.replace(/\s+/g, ' ').trim();
   if (!value) return '';
   return value.length > 240 ? `${value.slice(0, 240)}...(truncated)` : value;
 }
@@ -30,6 +34,7 @@ function createMessageHandler(deps) {
     sendTelegramFormattingShowcase,
     sendRepoList,
     handleConnectCommand,
+    handleTunnelAuthCommand,
     withStateDispatchLock,
     handleRepoMessage,
     handleQuestionTextInput,
@@ -100,6 +105,12 @@ function createMessageHandler(deps) {
       return;
     }
 
+    if (command === '/tunnel' && parsed && String(parsed.args[0] || '').trim().toLowerCase() === 'auth') {
+      if (typeof audit === 'function') audit('router.message.route', { chatId, target: 'tunnel_auth', command });
+      await handleTunnelAuthCommand(bot, msg, parsed);
+      return;
+    }
+
     const repo = chatRouter.get(chatId);
 
     if (!repo) {
@@ -139,6 +150,7 @@ function createMessageHandler(deps) {
         && command !== '/whereami'
         && command !== '/restart'
         && command !== '/interrupt'
+        && command !== '/tunnel'
       ) {
         await safeSend(
           bot,
@@ -147,6 +159,19 @@ function createMessageHandler(deps) {
             `chat_id: ${chatId}`,
             'This chat is not mapped yet.',
             'Start setup with /onboard, then run /repos and /connect <repo>.',
+          ].join('\n')
+        );
+      }
+
+      if (command === '/tunnel') {
+        await safeSend(
+          bot,
+          chatId,
+          [
+            `chat_id: ${chatId}`,
+            'This chat is not mapped yet, so tunnel open/status/close are unavailable here.',
+            'Start setup with /onboard, then run /repos and /connect <repo>.',
+            'You can still configure ngrok auth in a private chat with: /tunnel auth <your-token>',
           ].join('\n')
         );
       }

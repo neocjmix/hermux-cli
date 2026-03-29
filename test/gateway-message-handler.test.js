@@ -14,6 +14,7 @@ function makeHarness(overrides = {}) {
     testShowcase: 0,
     repos: 0,
     connect: 0,
+    tunnelAuth: 0,
   };
 
   const bot = {};
@@ -55,6 +56,9 @@ function makeHarness(overrides = {}) {
     },
     handleConnectCommand: async () => {
       calls.connect += 1;
+    },
+    handleTunnelAuthCommand: async () => {
+      calls.tunnelAuth += 1;
     },
     withStateDispatchLock: async (_state, task) => {
       calls.withStateDispatchLock += 1;
@@ -109,6 +113,27 @@ test('message handler returns setup guidance for unmapped /status command', asyn
   assert.equal(calls.safeSend.length, 1);
   assert.match(calls.safeSend[0].text, /This chat is not mapped yet/);
   assert.match(calls.safeSend[0].text, /\/onboard/);
+});
+
+test('message handler routes /tunnel auth before repo mapping', async () => {
+  const { calls, deps } = makeHarness();
+  const handler = createMessageHandler(deps);
+
+  await handler({ chat: { id: '100', type: 'private' }, text: '/tunnel auth secret-token' });
+
+  assert.equal(calls.tunnelAuth, 1);
+  assert.equal(calls.safeSend.length, 0);
+});
+
+test('message handler returns tunnel mapping guidance for unmapped /tunnel open', async () => {
+  const { calls, deps } = makeHarness();
+  const handler = createMessageHandler(deps);
+
+  await handler({ chat: { id: '100', type: 'private' }, text: '/tunnel open 3000' });
+
+  assert.equal(calls.safeSend.length, 1);
+  assert.match(calls.safeSend[0].text, /not mapped yet/);
+  assert.match(calls.safeSend[0].text, /\/tunnel auth/);
 });
 
 test('message handler dispatches mapped chat through state lock and repo handler', async () => {
