@@ -3,6 +3,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const fsp = require('fs/promises');
 const dns = require('dns');
 const { pipeline } = require('stream/promises');
@@ -126,7 +127,7 @@ const PID_PATH = path.join(RUNTIME_DIR, 'gateway.pid');
 const LOG_PATH = path.join(RUNTIME_DIR, 'gateway.log');
 const RESTART_NOTICE_PATH = path.join(RUNTIME_DIR, 'restart-notice.json');
 const REVERT_TARGETS_PATH = path.join(RUNTIME_DIR, 'revert-targets.json');
-const MERMAID_RENDER_DIR = '.hermux/mermaid';
+const MERMAID_RENDER_TMP_ROOT = 'hermux-mermaid';
 const STREAM_HEARTBEAT_MS = 1500;
 const REVERT_CONFIRM_TTL_MS = 10 * 60 * 1000;
 const REVERT_TARGET_LIMIT_PER_CHAT = 240;
@@ -486,7 +487,7 @@ function getHelpText() {
     '',
     'Tunnel quick flow:',
     `1) In private chat, run /tunnel auth <token> (token: ${NGROK_AUTHTOKEN_URL})`,
-    '2) In a mapped repo chat, run /tunnel open <port>',
+    '2) In a mapped repo chat, run /tunnel open <port> (app must listen on 127.0.0.1 or 0.0.0.0)',
     '3) Use /tunnel status or /tunnel close as needed',
     '',
     'Note: if group messages are not visible, check Telegram bot privacy mode.',
@@ -524,6 +525,8 @@ function buildTunnelUsageText() {
     '/tunnel open <port>',
     '/tunnel status',
     '/tunnel close',
+    '',
+    'Note: the local service must listen on 127.0.0.1 or 0.0.0.0.',
   ].join('\n');
 }
 
@@ -568,7 +571,7 @@ async function handleTunnelAuthCommand(bot, msg, parsed) {
   await safeSend(bot, chatId, [
     `ngrok auth token saved (${maskSecretSuffix(token)}).`,
     `Token source: ${NGROK_AUTHTOKEN_URL}`,
-    'Next Telegram step: /tunnel open <port> in a mapped repo chat.',
+    'Next Telegram step: /tunnel open <port> in a mapped repo chat (service on 127.0.0.1 or 0.0.0.0).',
   ].join('\n'));
 }
 
@@ -637,7 +640,7 @@ async function handleTunnelCommand(bot, repo, _state, msg, parsed) {
         `repo: ${repo.name}`,
         `auth: ${hasToken ? 'configured' : 'missing'}`,
         'active_tunnel: no',
-        hasToken ? 'Open one with: /tunnel open <port>' : buildTunnelMissingAuthText(msg),
+        hasToken ? 'Open one with: /tunnel open <port> (service on 127.0.0.1 or 0.0.0.0)' : buildTunnelMissingAuthText(msg),
       ].join('\n\n'));
       return;
     }
@@ -682,8 +685,8 @@ async function handleTunnelCommand(bot, repo, _state, msg, parsed) {
       const code = String(err && err.message ? err.message : err || '').trim();
       if (code === 'local_port_unreachable' || code === 'local_port_timeout') {
         await safeSend(bot, chatId, [
-          `Could not reach localhost:${port}.`,
-          'Start the local service first, then retry: /tunnel open <port>',
+          `Could not reach http://127.0.0.1:${port}.`,
+          'If your dev server is bound to localhost or ::1 only, bind it to 127.0.0.1 or 0.0.0.0 and retry: /tunnel open <port>',
         ].join('\n'));
         return;
       }
@@ -1487,31 +1490,42 @@ function hasMermaidRenderer() {
   }
 }
 
+function normalizeMermaidSource(src) {
+  const normalized = String(src || '').replace(/\r\n/g, '\n');
+  const lines = normalized.split('\n').map((line) => line.replace(/\s+$/g, ''));
+  const merged = [];
+  for (const line of lines) {
+    if (!line) {
+      merged.push('');
+      continue;
+    }
+    const splitByInlineEdge = line.replace(/([\]\)\}])\s{2,}(?=[A-Za-z0-9_]+\s*(?:-->|==>|-.->))/g, '$1\n');
+    merged.push(...splitByInlineEdge.split('\n'));
+  }
+  return merged.join('\n').trim() + '\n';
+}
+
+async function sendTelegramMermaidPhoto(bot, chatId, filePath, caption, auditMeta) {
+  return safeSendPhoto(bot, chatId, fs, filePath, caption, auditMeta);
+}
+
+async function sendTelegramMermaidDocument(bot, chatId, filePath, caption, auditMeta) {
+  return safeSendDocument(bot, chatId, fs, filePath, caption, auditMeta);
+}
+
+function getMermaidRenderDir(instance) {
+  const repoScope = createHash('sha1')
+    .update(String(instance && instance.workdir ? instance.workdir : ''))
+    .digest('hex')
+    .slice(0, 12);
+  return path.join(os.tmpdir(), MERMAID_RENDER_TMP_ROOT, repoScope);
+}
+
 function renderMermaidArtifacts(instance, chatId, blocks) {
   const capped = blocks.slice(0, 3);
   const artifacts = [];
-  const dir = path.resolve(instance.workdir, MERMAID_RENDER_DIR);
+  const dir = getMermaidRenderDir(instance);
   fs.mkdirSync(dir, { recursive: true });
-
-  function normalizeMermaidSource(src) {
-    const normalized = String(src || '').replace(/\r\n/g, '\n');
-    const lines = normalized.split('\n').map((line) => line.replace(/\s+$/g, ''));
-    const merged = [];
-    for (const line of lines) {
-      if (!line) {
-        merged.push('');
-        continue;
-      }
-      const semiSplit = line.split(';').map((x) => x.trim()).filter(Boolean);
-      if (semiSplit.length > 1) {
-        merged.push(...semiSplit);
-        continue;
-      }
-      const splitByInlineEdge = line.replace(/([\]\)\}])\s{2,}(?=[A-Za-z0-9_]+\s*(?:-->|==>|-.->))/g, '$1\n');
-      merged.push(...splitByInlineEdge.split('\n'));
-    }
-    return merged.join('\n').trim() + '\n';
-  }
 
   for (let i = 0; i < capped.length; i++) {
     const now = new Date().toISOString().replace(/[.:]/g, '-');
@@ -1568,7 +1582,7 @@ async function sendMermaidArtifactsForRun({ bot, repo, chatId, textSegments, run
   if (mermaidBlocks.length === 0) return false;
 
   if (!hasMermaidRenderer()) {
-    await safeSend(
+    const sent = await safeSend(
       bot,
       chatId,
       'Mermaid blocks detected, but renderer is unavailable. Install mermaid-cli (`mmdc`) to receive rendered diagrams.',
@@ -1579,36 +1593,40 @@ async function sendMermaidArtifactsForRun({ bot, repo, chatId, textSegments, run
         reason: 'renderer_unavailable',
       }
     );
-    return true;
+    return !!sent;
   }
 
   const artifacts = renderMermaidArtifacts(repo, chatId, mermaidBlocks);
+  let delivered = false;
   for (let i = 0; i < artifacts.length; i += 1) {
     const artifact = artifacts[i];
     const caption = artifacts.length > 1 ? `Mermaid diagram ${i + 1}/${artifacts.length}` : 'Mermaid diagram';
     if (artifact.kind === 'svg') {
-      const sent = await safeSendDocument(bot, chatId, artifact.path, caption, {
+      const sent = await sendTelegramMermaidDocument(bot, chatId, artifact.path, caption, {
         ...(runAuditMeta || {}),
         channel: 'mermaid',
       });
+      delivered = delivered || !!sent;
       registerRevertTargetFromSentMessage(chatId, sent, revertTarget);
       continue;
     }
     if (artifact.kind === 'png') {
-      const sent = await safeSendPhoto(bot, chatId, artifact.path, caption, {
+      const sent = await sendTelegramMermaidPhoto(bot, chatId, artifact.path, caption, {
         ...(runAuditMeta || {}),
         channel: 'mermaid',
       });
+      delivered = delivered || !!sent;
       registerRevertTargetFromSentMessage(chatId, sent, revertTarget);
       continue;
     }
     if (artifact.kind === 'mmd') {
-      const sent = await safeSendDocument(bot, chatId, artifact.path, `${caption} (source, render failed)`, {
+      const sent = await sendTelegramMermaidDocument(bot, chatId, artifact.path, `${caption} (source, render failed)`, {
         ...(runAuditMeta || {}),
         channel: 'mermaid',
       });
+      delivered = delivered || !!sent;
       registerRevertTargetFromSentMessage(chatId, sent, revertTarget);
-      await safeSend(
+      const notice = await safeSend(
         bot,
         chatId,
         `Mermaid render failed; sent source file instead.\nreason: ${String(artifact.error || '').slice(0, 300)}`,
@@ -1619,9 +1637,10 @@ async function sendMermaidArtifactsForRun({ bot, repo, chatId, textSegments, run
           reason: 'render_failed',
         }
       );
+      delivered = delivered || !!notice;
     }
   }
-  return true;
+  return delivered;
 }
 
 function formatToolBrief(evt) {
@@ -4797,6 +4816,10 @@ module.exports = {
     buildStreamingStatusHtml,
     buildLiveStatusPanelHtml,
     extractMermaidBlocks,
+    normalizeMermaidSource,
+    sendTelegramMermaidPhoto,
+    sendTelegramMermaidDocument,
+    getMermaidRenderDir,
     collectMermaidBlocksFromTextSegments,
     withRestartMutationLock,
     withStateDispatchLock,
@@ -4808,6 +4831,7 @@ module.exports = {
     isValidModelRef,
     buildModelApplyMessage,
     buildTelegramFormattingShowcase,
+    getHelpText,
     buildConnectKeyboard,
     buildVerboseKeyboard,
     buildModelsRootKeyboard,
@@ -4826,6 +4850,7 @@ module.exports = {
     getImagePayloadFromMessage,
     formatRepoList,
     handleConnectCommand,
+    handleTunnelCommand,
     registerRevertTargetFromSentMessage,
     resolveRevertReplyTarget,
     resetRevertTargetStoreForTest,

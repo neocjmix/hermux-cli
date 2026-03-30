@@ -54,6 +54,9 @@ Runtime contract:
 - chat routes to repo by mapping table
 - per-repo lock allows one active run
 - queued prompts maintain FIFO order
+- Mermaid source normalization before `mmdc` MUST preserve valid diagram text (including semicolons inside labels/task titles) and MUST NOT rewrite fenced Mermaid in ways that invalidate renderer-supported syntax
+- Successful Mermaid artifact delivery MUST pass the rendered file path through Telegram document/photo transport with a valid filesystem handle so rendered SVG/PNG attachments are actually uploaded, not dropped by mis-bound helper arguments
+- Mermaid render scratch files MUST be created under system temporary storage, never inside the target repo worktree, so diagram rendering does not dirty user repos with `.hermux` artifacts
 - `src/gateway.js` acts as composition/orchestration root and MUST prefer provider/application facades over direct provider-private logic
 - provider resolution in `src/providers/*` MUST return explicit adapter contracts (`runtime`, `render`, `transport`) instead of raw provider module bags
 - non-final run-view latest-assistant preview MAY use Bot API `sendMessageDraft` in eligible private-chat flows, while committed status/older messages remain regular Telegram messages

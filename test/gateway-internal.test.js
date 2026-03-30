@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 require('./helpers/test-profile');
@@ -165,6 +166,80 @@ test('handleConnectCommand includes privacy hint when connecting a group chat', 
   } finally {
     restoreFile(config.CONFIG_PATH, configSnapshot);
     restoreFile(sessions.SESSION_MAP_PATH, sessionSnapshot);
+  }
+});
+
+test('handleTunnelCommand explains 127.0.0.1 binding guidance when local port is unreachable', async () => {
+  const configSnapshot = backupFile(config.CONFIG_PATH);
+  try {
+    config.save({
+      global: { telegramBotToken: '1:abc', ngrokAuthtoken: 'secret-token' },
+      repos: [
+        { name: 'demo', enabled: true, workdir: '/tmp/demo', chatIds: ['100'], logFile: './logs/demo.log' },
+      ],
+    });
+
+    const sent = [];
+    const bot = {
+      sendMessage: async (_chatId, text) => {
+        sent.push(String(text));
+        return { message_id: sent.length };
+      },
+    };
+
+    await _internal.handleTunnelCommand(
+      bot,
+      { name: 'demo', workdir: '/tmp/demo' },
+      { running: false, queue: [] },
+      { chat: { id: '100', type: 'private' }, text: '/tunnel open 65534' },
+      { args: ['open', '65534'] }
+    );
+
+    const text = sent[sent.length - 1] || '';
+    assert.match(text, /Could not reach http:\/\/127\.0\.0\.1:65534\./);
+    assert.match(text, /bind it to 127\.0\.0\.1 or 0\.0\.0\.0/i);
+    assert.match(text, /retry: \/tunnel open <port>/);
+  } finally {
+    restoreFile(config.CONFIG_PATH, configSnapshot);
+  }
+});
+
+test('getHelpText makes the local tunnel bind requirement explicit', () => {
+  const text = _internal.getHelpText();
+  assert.match(text, /\/tunnel open <port> \(app must listen on 127\.0\.0\.1 or 0\.0\.0\.0\)/);
+});
+
+test('handleTunnelCommand status guidance includes the local bind requirement when no tunnel is active', async () => {
+  const configSnapshot = backupFile(config.CONFIG_PATH);
+  try {
+    config.save({
+      global: { telegramBotToken: '1:abc', ngrokAuthtoken: 'secret-token' },
+      repos: [
+        { name: 'demo', enabled: true, workdir: '/tmp/demo', chatIds: ['100'], logFile: './logs/demo.log' },
+      ],
+    });
+
+    const sent = [];
+    const bot = {
+      sendMessage: async (_chatId, text) => {
+        sent.push(String(text));
+        return { message_id: sent.length };
+      },
+    };
+
+    await _internal.handleTunnelCommand(
+      bot,
+      { name: 'demo', workdir: '/tmp/demo' },
+      { running: false, queue: [] },
+      { chat: { id: '100', type: 'private' }, text: '/tunnel status' },
+      { args: ['status'] }
+    );
+
+    const text = sent[sent.length - 1] || '';
+    assert.match(text, /active_tunnel: no/);
+    assert.match(text, /Open one with: \/tunnel open <port> \(service on 127\.0\.0\.1 or 0\.0\.0\.0\)/);
+  } finally {
+    restoreFile(config.CONFIG_PATH, configSnapshot);
   }
 });
 
@@ -716,6 +791,113 @@ test('extractMermaidBlocks parses fenced mermaid blocks', () => {
   assert.equal(blocks.length, 2);
   assert.match(blocks[0], /graph TD/);
   assert.match(blocks[1], /sequenceDiagram/);
+});
+
+test('normalizeMermaidSource preserves inline semicolons in valid labels and task titles', () => {
+  const labelDiagram = _internal.normalizeMermaidSource([
+    'flowchart TD',
+    '  A["one; two"] --> B[done]',
+  ].join('\n'));
+  assert.match(labelDiagram, /one; two/);
+
+  const ganttDiagram = _internal.normalizeMermaidSource([
+    'gantt',
+    '  title Release Plan',
+    '  section Build',
+    '  A task; still title :a1, 2014-01-01, 30d',
+  ].join('\n'));
+  assert.match(ganttDiagram, /A task; still title/);
+});
+
+test('normalizeMermaidSource still separates inline edge heuristics without touching semicolons', () => {
+  const normalized = _internal.normalizeMermaidSource('flowchart TD\nA[Start]  B-->C; C-->D');
+  assert.match(normalized, /A\[Start\]\nB-->C; C-->D/);
+});
+
+test('sendTelegramMermaidDocument binds fs handle and file path for Telegram document sends', async () => {
+  const tempDir = fs.mkdtempSync(path.join(process.cwd(), '.tmp', 'mermaid-send-doc-'));
+  const filePath = path.join(tempDir, 'diagram.svg');
+  fs.writeFileSync(filePath, '<svg/>', 'utf8');
+
+  try {
+    let streamSeen = false;
+    let captionSeen = '';
+    const bot = {
+      sendDocument: async (_chatId, stream, opts) => {
+        streamSeen = !!(stream && typeof stream.pipe === 'function');
+        captionSeen = opts && opts.caption ? String(opts.caption) : '';
+        await new Promise((resolve) => {
+          let settled = false;
+          const finish = () => {
+            if (settled) return;
+            settled = true;
+            resolve();
+          };
+          stream.on('open', () => {
+            stream.destroy();
+            finish();
+          });
+          stream.on('close', finish);
+          stream.on('error', finish);
+        });
+        return { message_id: 42 };
+      },
+    };
+
+    const sent = await _internal.sendTelegramMermaidDocument(bot, '100', filePath, 'Mermaid diagram', { channel: 'mermaid' });
+    assert.equal(streamSeen, true);
+    assert.equal(captionSeen, 'Mermaid diagram');
+    assert.equal(sent.message_id, 42);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('sendTelegramMermaidPhoto binds fs handle and file path for Telegram photo sends', async () => {
+  const tempDir = fs.mkdtempSync(path.join(process.cwd(), '.tmp', 'mermaid-send-photo-'));
+  const filePath = path.join(tempDir, 'diagram.png');
+  fs.writeFileSync(filePath, 'png', 'utf8');
+
+  try {
+    let streamSeen = false;
+    let captionSeen = '';
+    const bot = {
+      sendPhoto: async (_chatId, stream, opts) => {
+        streamSeen = !!(stream && typeof stream.pipe === 'function');
+        captionSeen = opts && opts.caption ? String(opts.caption) : '';
+        await new Promise((resolve) => {
+          let settled = false;
+          const finish = () => {
+            if (settled) return;
+            settled = true;
+            resolve();
+          };
+          stream.on('open', () => {
+            stream.destroy();
+            finish();
+          });
+          stream.on('close', finish);
+          stream.on('error', finish);
+        });
+        return { message_id: 43 };
+      },
+    };
+
+    const sent = await _internal.sendTelegramMermaidPhoto(bot, '100', filePath, 'Mermaid diagram', { channel: 'mermaid' });
+    assert.equal(streamSeen, true);
+    assert.equal(captionSeen, 'Mermaid diagram');
+    assert.equal(sent.message_id, 43);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('getMermaidRenderDir uses system temp instead of the target repo', () => {
+  const repoDir = path.join(process.cwd(), 'fixtures', 'demo-repo');
+  const renderDir = _internal.getMermaidRenderDir({ workdir: repoDir });
+  assert.equal(renderDir.startsWith(os.tmpdir()), true);
+  assert.equal(renderDir.startsWith(repoDir), false);
+  assert.match(renderDir, /hermux-mermaid/);
 });
 
 test('collectMermaidBlocksFromTextSegments merges segments and extracts mermaid fences', () => {
