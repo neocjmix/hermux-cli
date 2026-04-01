@@ -1240,7 +1240,7 @@ test('buildModelApplyMessage includes restart and session semantics', () => {
   assert.match(text, /scheduled_after_current_run/);
 });
 
-test('sanitizeFinalOutputText currently behaves as pass-through trim', () => {
+test('sanitizeFinalOutputText strips system reminders from final output', () => {
   const prompt = 'Analyze this system';
   const raw = [
     '<system-reminder>ignore me</system-reminder>',
@@ -1250,7 +1250,7 @@ test('sanitizeFinalOutputText currently behaves as pass-through trim', () => {
   ].join('\n');
 
   const cleaned = _internal.sanitizeFinalOutputText(raw, prompt);
-  assert.equal(cleaned, raw);
+  assert.equal(cleaned, `${prompt}\n\nFinal **answer** block`);
 });
 
 test('sanitizeFinalOutputText keeps prompt/context content intact', () => {
@@ -1286,7 +1286,7 @@ test('sanitizeFinalOutputText preserves legacy wrapper text', () => {
   assert.match(cleaned, /Canonical final answer body/);
 });
 
-test('sanitizeFinalOutputText preserves OMO initiator markers', () => {
+test('sanitizeFinalOutputText strips OMO initiator markers', () => {
   const prompt = 'diag';
   const raw = [
     prompt,
@@ -1298,7 +1298,7 @@ test('sanitizeFinalOutputText preserves OMO initiator markers', () => {
     'gamma',
   ].join('\n');
   const cleaned = _internal.sanitizeFinalOutputText(raw, prompt);
-  assert.equal(/OMO_INTERNAL_INITIATOR/.test(cleaned), true);
+  assert.equal(/OMO_INTERNAL_INITIATOR/.test(cleaned), false);
   assert.match(cleaned, /alpha/);
   assert.match(cleaned, /beta/);
   assert.match(cleaned, /gamma/);
@@ -1369,7 +1369,7 @@ test('reconcileOutputSnapshot applies stream and final text in one shared flow',
   assert.match(snapshot.finalCandidate, /final answer/);
 });
 
-test('reconcileOutputSnapshot does not extract reminder under pass-through sanitizer', () => {
+test('reconcileOutputSnapshot strips reminder wrappers from visible stream text', () => {
   const snapshot = _internal.createOutputSnapshot();
   const out = _internal.reconcileOutputSnapshot(snapshot, {
     rawText: '<system-reminder>keep queueing</system-reminder>\n\nbody text',
@@ -1379,7 +1379,7 @@ test('reconcileOutputSnapshot does not extract reminder under pass-through sanit
   });
 
   assert.equal(out.reminderText, '');
-  assert.match(out.cleaned, /<system-reminder>keep queueing<\/system-reminder>/);
+  assert.equal(out.cleaned, 'body text');
   assert.match(snapshot.streamText, /body text/);
 });
 
@@ -1492,7 +1492,7 @@ test('resolveFinalizationOutput does not need recovery when sanitizer is pass-th
   assert.match(resolved.outgoingText, /Final answer body/);
 });
 
-test('resolveFinalizationOutput forwards control-only payload under pass-through sanitizer', () => {
+test('resolveFinalizationOutput suppresses control-only payload after sanitization', () => {
   const resolved = _internal.resolveFinalizationOutput({
     metaFinalText: '<system-reminder>internal only</system-reminder>',
     streamFinalText: '',
@@ -1501,8 +1501,8 @@ test('resolveFinalizationOutput forwards control-only payload under pass-through
     hermuxVersion: '0.0.0',
   });
 
-  assert.equal(resolved.shouldSendFinal, true);
-  assert.equal(resolved.emptyReason, 'no_raw_output');
+  assert.equal(resolved.shouldSendFinal, false);
+  assert.equal(resolved.emptyReason, 'sanitized_control_only');
 });
 
 test('resolveFinalizationOutput keeps prompt suffix under pass-through sanitizer', () => {
