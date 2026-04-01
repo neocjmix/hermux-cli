@@ -992,7 +992,7 @@ test('gateway e2e keeps pass-through final output behavior', async () => {
     ));
     assert.equal(finalOutputs.length > 0, true);
     const leakedMarker = finalOutputs.some((r) => /OMO_INTERNAL_INITIATOR/.test(String(r.payload && r.payload.textPreview || '')));
-    assert.equal(typeof leakedMarker, 'boolean');
+    assert.equal(leakedMarker, false);
   } finally {
     await stopGateway(runtime, { controlUrl: started.controlUrl });
     await telegram.stop();

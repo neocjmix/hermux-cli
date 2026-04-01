@@ -256,6 +256,51 @@ test('opencode view builder shows compaction warning from render state', () => {
   assert.equal(statusLines[2], '⚠️ earlier turns were compacted: the model may remember a summary that is not shown verbatim here');
 });
 
+test('opencode view builder strips internal orchestration artifacts from assistant transcript blocks', () => {
+  let state = createRenderState('ses-internal');
+
+  state = applyEvent(state, {
+    type: 'message.updated',
+    properties: {
+      info: {
+        id: 'msg-internal',
+        sessionID: 'ses-internal',
+        role: 'assistant',
+        time: { created: 10 },
+      },
+    },
+  }, 1);
+
+  state = applyEvent(state, {
+    type: 'message.part.updated',
+    properties: {
+      part: {
+        id: 'prt-internal',
+        sessionID: 'ses-internal',
+        messageID: 'msg-internal',
+        type: 'text',
+        text: [
+          '<!-- OMO_INTERNAL_INITIATOR -->',
+          '',
+          '[BACKGROUND TASK COMPLETED]',
+          '',
+          'The current immediate goal at the time of compaction was to fix the chart.',
+          '',
+          '## Discoveries',
+          '- first',
+          '',
+          'next agent should check git status',
+        ].join('\n'),
+      },
+    },
+  }, 2);
+
+  const view = buildRunViewFromRenderState(state, { repoName: 'demo' });
+  assert.equal(view.length, 1);
+  assert.equal(String(view[0]).includes('BACKGROUND TASK COMPLETED'), false);
+  assert.equal(String(view[0]).includes('The current immediate goal at the time of compaction'), false);
+});
+
 test('opencode view builder shows processing status while delegated tool work remains active', () => {
   let state = createRenderState('ses-tool-busy');
 

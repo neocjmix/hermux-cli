@@ -1,5 +1,7 @@
 'use strict';
 
+const { sanitizeDisplayOutputText } = require('../../../lib/output-sanitizer');
+
 function toText(value) {
   return String(value == null ? '' : value);
 }
@@ -229,7 +231,7 @@ function collectAssistantMessages(renderState, options) {
   for (let i = 0; i < order.length; i += 1) {
     const message = messages[order[i]];
     if (!message || message.role !== 'assistant') continue;
-    const text = toText(message.renderText).trim();
+    const text = sanitizeDisplayOutputText(message.renderText);
     if (!text) continue;
     const msgTimeMs = messageTimeMs(message);
     const allowUntimedLatest = latestId && message.id === latestId && msgTimeMs === 0;
@@ -248,14 +250,14 @@ function buildRunViewFromRenderState(renderState, options) {
   if (messages.length === 0) {
     const latestOnly = pickLatestAssistantMessage(renderState, options);
     if (!latestOnly) return out;
-    const text = toText(latestOnly.renderText).trim();
+    const text = sanitizeDisplayOutputText(latestOnly.renderText);
     if (!text) return out;
     out.push(text);
     return out;
   }
 
   for (let m = 0; m < messages.length; m += 1) {
-    const text = toText(messages[m].renderText).trim();
+    const text = sanitizeDisplayOutputText(messages[m].renderText);
     if (!text) continue;
     out.push(text);
   }
