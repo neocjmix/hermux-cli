@@ -119,26 +119,8 @@ function summarizePart(part) {
   if (!part || typeof part !== 'object') return '';
   const type = toText(part.type).trim();
   const inline = (value) => `\`${toText(value).replace(/`/g, '\\`').trim()}\``;
-  if (type === 'subtask') {
-    const desc = toText(part.description).trim() || toText(part.prompt).trim();
-    const agent = toText(part.agent).trim();
-    const model = part.model && typeof part.model === 'object'
-      ? [toText(part.model.providerID).trim(), toText(part.model.modelID).trim()].filter(Boolean).join('/')
-      : '';
-    const command = toText(part.command).trim();
-    const base = agent ? `🧩 Subtask: ${desc} · ${inline(agent)}`.trim() : `🧩 Subtask: ${desc}`.trim();
-    const extras = [model ? inline(model) : '', command ? inline(command) : ''].filter(Boolean).join(' · ');
-    return extras ? `${base} — ${extras}` : base;
-  }
-  if (type === 'agent') {
-    const name = toText(part.name).trim();
-    const source = part.source && typeof part.source === 'object'
-      ? [toText(part.source.value).trim(), Number(part.source.start || 0), Number(part.source.end || 0)]
-      : null;
-    const range = source && source[0]
-      ? `${inline(source[0])} [${source[1]}:${source[2]}]`
-      : '';
-    return range ? `🤖 Agent: ${inline(name)} — ${range}`.trim() : `🤖 Agent: ${inline(name)}`.trim();
+  if (type === 'subtask' || type === 'agent' || type === 'compaction' || type === 'snapshot') {
+    return '';
   }
   if (type === 'retry') {
     const attempt = Number(part.attempt || 0) || 0;
@@ -149,13 +131,6 @@ function summarizePart(part) {
     const stamp = created > 0 ? ` · ${inline(created)}` : '';
     const reason = [label ? inline(label) : '', message].filter(Boolean).join(' · ');
     return `🔁 Retry ${attempt}${reason ? `: ${reason}` : ''}${stamp}`.trim();
-  }
-  if (type === 'compaction') {
-    return `🗜️ Compaction: ${inline(part.auto ? 'auto' : 'manual')}${part.overflow ? ' · overflow' : ''}`.trim();
-  }
-  if (type === 'snapshot') {
-    const snapshot = toText(part.snapshot).trim();
-    return snapshot ? `📸 Snapshot: ${inline(snapshot)}`.trim() : '📸 Snapshot';
   }
   if (type === 'patch') {
     const files = Array.isArray(part.files) ? part.files.map((v) => toText(v).trim()).filter(Boolean) : [];

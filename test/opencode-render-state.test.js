@@ -498,7 +498,7 @@ test('opencode render state removes messages and parts', () => {
   assert.deepEqual(state.messages.order, []);
 });
 
-test('opencode render state handles session lifecycle and extra part subtypes', () => {
+test('opencode render state keeps user-visible summaries while suppressing internal-only parts', () => {
   let state = createRenderState('ses-life');
   state = applyPayload(state, JSON.stringify({
     type: 'session.created',
@@ -541,14 +541,14 @@ test('opencode render state handles session lifecycle and extra part subtypes', 
     properties: { info: { id: 'ses-life', title: 'demo' } },
   }), 6);
 
-  assert.match(state.messages.byId['msg-life'].renderText, /🧩 Subtask: Inspect state · `metis`/);
   assert.match(state.messages.byId['msg-life'].renderText, /🩹 Patch: 2 files/);
   assert.match(state.messages.byId['msg-life'].renderText, /- `a\.js`/);
   assert.match(state.messages.byId['msg-life'].renderText, /- `b\.js`/);
-  assert.match(state.messages.byId['msg-life'].renderText, /🤖 Agent: `oracle` — `handoff\.md` \[4:12\]/);
   assert.match(state.messages.byId['msg-life'].renderText, /🔁 Retry 2: `ApiError` · rate limited · `123`/);
-  assert.match(state.messages.byId['msg-life'].renderText, /🗜️ Compaction: `manual` · overflow/);
-  assert.match(state.messages.byId['msg-life'].renderText, /📸 Snapshot: `snap-123`/);
+  assert.doesNotMatch(state.messages.byId['msg-life'].renderText, /Subtask:/);
+  assert.doesNotMatch(state.messages.byId['msg-life'].renderText, /🤖 Agent:/);
+  assert.doesNotMatch(state.messages.byId['msg-life'].renderText, /🗜️ Compaction:/);
+  assert.doesNotMatch(state.messages.byId['msg-life'].renderText, /📸 Snapshot:/);
   assert.ok(state.session.compactedAt > 0);
   assert.ok(state.session.deletedAt > 0);
   assert.equal(state.session.status, 'deleted');
