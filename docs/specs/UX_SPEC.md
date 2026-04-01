@@ -83,6 +83,7 @@ Lifecycle semantics:
 - status pane SHOULD append the latest reasoning preview as its final line when reasoning text exists, prefixed with a thinking emoji
 - status pane MUST render active upstream `question.asked` prompts as visible text instead of leaving them only in raw-event or draft-only paths, so the user can answer from Telegram immediately
 - status pane MUST render active upstream `permission.asked` prompts as visible text so Telegram users can approve or reject stalled work without opening another interface
+- user-visible transcript/final-output surfaces MUST strip internal orchestration artifacts such as `<!-- OMO_INTERNAL_INITIATOR -->`, `<system-reminder>...</system-reminder>`, background-task completion directives, TODO-continuation directives, and compaction handoff summaries; these artifacts MAY remain available only in internal audit/debug channels
 - unresolved button-only question prompts MUST NOT swallow later plain-text Telegram prompts; only explicit custom-input capture mode may treat free text as a question answer
 - removed message and part events MUST retract deleted content from future Telegram run-view reconciliation instead of leaving stale assistant text visible
 - session compaction and deletion MUST update projected state without breaking same-session event acceptance or leaving stale question/permission prompts open
@@ -95,6 +96,8 @@ Lifecycle semantics:
 - `/tunnel auth <token>` MUST only accept secrets in a private chat with the bot; group chats MUST be refused with guidance to switch to private chat
 - `/tunnel open <port>`, `/tunnel status`, and `/tunnel close` MUST be completable from Telegram in a mapped repo chat and MUST show the current public URL, local port, and tunnel lifecycle state in plain language; tunnel setup/help/status guidance SHOULD make the local bind requirement (`127.0.0.1` or `0.0.0.0`) explicit
 - `/tunnel open <port>` MUST validate the requested port and, when `http://127.0.0.1:<port>` is unreachable, tell the user the exact loopback address that failed and suggest binding the local service to `127.0.0.1` or `0.0.0.0` when `localhost`/`::1`-only dev server binding is the likely cause instead of silently opening a broken tunnel
+- tunnel lifecycle commands MUST NOT trust stale in-memory ngrok URLs after the underlying listener/session disappears; dead listener state MUST be dropped and `/tunnel open <port>` SHOULD recreate the listener instead of reusing a stale public URL
+- transient control-session startup failures (for example muxado stream open failures while the local port is still reachable) SHOULD be treated as retryable once after tearing down stale ngrok listener state, while persistent config/protocol failures still surface to the user
 - when stop-prompt fallback is used, the system MUST describe it as a prompt/request sent into the active session, not as a confirmed interrupt or kill
 - status surfaces SHOULD distinguish non-interruptible same-session background processing from normal busy execution with a simple third state, and SHOULD show a background count only when that count is derived from a trustworthy active-work signal
 - `<system-reminder>` content is rendered at the bottom of the live status panel and MUST appear as a code block
